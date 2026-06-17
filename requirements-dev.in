@@ -1,7 +1,7 @@
 -r requirements.in
 
 pytest>=7.0
-pytest-mock>=3.0
+pytest-mock>=3.15.1
 responses>=0.25
 ruff
 pre-commit
