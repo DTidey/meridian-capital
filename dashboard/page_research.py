@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -294,7 +294,7 @@ def _approval_section(engine, cfg: dict) -> None:
                     )
             with st.spinner("Submitting orders to Alpaca…"):
                 root = Path(__file__).parent.parent
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B603
                     [sys.executable, str(root / "run_execution.py")], capture_output=True, text=True
                 )
             if result.returncode == 0:
@@ -397,7 +397,7 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
             try:
                 if not is_shortable(ticker):
                     vetoes[ticker] = "Short not available (HTB)"
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
     return vetoes

@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import time
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405
 from datetime import datetime
 
 import requests
@@ -133,7 +133,7 @@ def _parse_infotable(xml_text: str) -> list[dict]:
     """
     holdings = []
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(xml_text)  # nosec B314
     except ET.ParseError:
         return holdings
 

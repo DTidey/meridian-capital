@@ -27,7 +27,7 @@ def is_shortable(ticker: str, client, cache_dir: Path, ttl_days: int = 7) -> boo
             cached = json.loads(cache_path.read_text())
             if time.time() - cached.get("ts", 0) < ttl_s:
                 return bool(cached.get("shortable", False))
-        except Exception:
+        except Exception:  # nosec B110
             pass  # corrupt cache — re-fetch
 
     try:

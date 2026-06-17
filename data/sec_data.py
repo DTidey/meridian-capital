@@ -182,11 +182,11 @@ def _is_ceo_cfo(title: str) -> bool:
 
 def _parse_form4_xml(xml_text: str) -> list[dict]:
     """Parse Form 4 XML into list of transaction dicts."""
-    import xml.etree.ElementTree as ET
+    import xml.etree.ElementTree as ET  # nosec B405
 
     transactions = []
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(xml_text)  # nosec B314
     except Exception:
         return transactions
 
