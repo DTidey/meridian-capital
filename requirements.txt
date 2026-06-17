@@ -1,39 +1,87 @@
 # Core data
-yfinance>=0.2.40
-sqlalchemy>=2.0
-psycopg2-binary>=2.9
-lxml>=5.0.0
-
-# Testing
-pytest>=7.0
-pytest-mock>=3.0
-responses>=0.25
-pandas>=2.0.0
-requests>=2.31.0
-
-# Config + env
-pyyaml>=6.0
-python-dotenv>=1.0.0
-
-# Layer 3 — AI analysis
-openai>=1.30.0
-tiktoken>=0.7.0
-
-# Layer 4 — Portfolio construction
-scipy>=1.13.0
-
-# Layer 5 — Risk management (parquet cache for predicted covariance + stress data)
-pyarrow>=14.0.0
-
-# Layer 6 — Execution (Alpaca)
-alpaca-py>=0.21.0
-
-# Layer 7 — Reporting & Dashboard
-streamlit>=1.35.0
-plotly>=5.22.0
-matplotlib>=3.8.0
-pytz>=2024.1
-
-# Optional — install if you have the API keys
-# polygon-api-client>=1.12.0   # Polygon prices
-# fredapi>=0.5.0               # FRED macro data
+alpaca-py==0.43.4
+altair==6.2.1
+annotated-types==0.7.0
+anyio==4.14.0
+attrs==26.1.0
+beautifulsoup4==4.15.0
+blinker==1.9.0
+cachetools==7.1.4
+certifi==2026.6.17
+cffi==2.0.0
+charset-normalizer==3.4.7
+click==8.4.1
+contourpy==1.3.3
+curl-cffi==0.15.0
+cycler==0.12.1
+distro==1.9.0
+fonttools==4.63.0
+gitdb==4.0.12
+gitpython==3.1.50
+greenlet==3.5.1
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.18
+itsdangerous==2.2.0
+jinja2==3.1.6
+jiter==0.15.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+kiwisolver==1.5.0
+lxml==6.1.1
+markdown-it-py==4.2.0
+markupsafe==3.0.3
+matplotlib==3.11.0
+mdurl==0.1.2
+msgpack==1.2.0
+multitasking==0.0.13
+narwhals==2.22.1
+numpy==2.4.6
+openai==2.42.0
+packaging==26.2
+pandas==3.0.3
+peewee==4.1.0
+pillow==12.2.0
+platformdirs==4.10.0
+plotly==6.8.0
+protobuf==7.35.1
+psycopg2-binary==2.9.12
+pyarrow==24.0.0
+pycparser==3.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pydeck==0.9.2
+pygments==2.20.0
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+python-multipart==0.0.32
+pytz==2026.2
+pyyaml==6.0.3
+referencing==0.37.0
+regex==2026.5.9
+requests==2.34.2
+rich==15.0.0
+rpds-py==2026.5.1
+scipy==1.17.1
+six==1.17.0
+smmap==5.0.3
+sniffio==1.3.1
+soupsieve==2.8.4
+sqlalchemy==2.0.51
+sseclient-py==1.9.0
+starlette==1.3.1
+streamlit==1.58.0
+tenacity==9.1.4
+tiktoken==0.13.0
+toml==0.10.2
+tqdm==4.68.3
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+urllib3==2.7.0
+uvicorn==0.49.0
+watchdog==6.0.0
+websockets==16.0
+yfinance==1.4.1
