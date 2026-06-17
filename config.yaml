@@ -1,0 +1,244 @@
+database:
+  url: postgresql+psycopg2://meridian:meridian@localhost:5432/meridian
+
+universe:
+  wikipedia_url: "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+  cache_refresh_days: 7
+  benchmark_tickers:
+    broad_market: [SPY, QQQ, IWM, DIA]
+    sector_etfs: [XLK, XLF, XLV, XLE, XLI, XLC, XLY, XLP, XLB, XLRE, XLU]
+    other: ["^VIX", TLT, HYG]
+
+market_data:
+  lookback_years: 3
+  price_table: daily_prices
+
+fundamentals:
+  statements: [income_stmt, balance_sheet, cashflow]
+  refresh_days: 7
+
+sec:
+  base_url: "https://efts.sec.gov/LATEST/search-index"
+  edgar_url: "https://data.sec.gov"
+  rate_limit_per_sec: 8
+  insider_lookback_days: 180
+  cluster_buy_window_days: 30
+  cluster_buy_min_insiders: 3
+  # How far back to fetch each form type
+  form_lookback_days:
+    "10-K": 400     # latest annual + one prior for comparison
+    "10-Q": 270     # last ~3 quarters
+    "8-K":  90      # recent material events only
+    "4":    180     # matches insider_lookback_days
+  forms:
+    - "10-K"
+    - "10-Q"
+    - "8-K"
+    - "4"
+
+institutional:
+  tracked_funds:
+    - name: "Citadel Advisors"
+      cik: "0001423053"
+    - name: "Point72 Asset Management"
+      cik: "0001603466"
+    - name: "Bridgewater Associates"
+      cik: "0001350694"
+    - name: "Tiger Global Management"
+      cik: "0001167483"
+    - name: "Third Point"
+      cik: "0001040570"
+    - name: "Berkshire Hathaway"
+      cik: "0001067983"
+    - name: "Appaloosa Management"
+      cik: "0001070154"
+    - name: "Baupost Group"
+      cik: "0001061768"
+    - name: "Pershing Square Capital"
+      cik: "0001336528"
+  new_position_flag_count: 3
+
+estimates:
+  snapshot_table: analyst_estimates
+  revision_windows_days: [30, 60, 90]
+
+earnings_calendar:
+  lookahead_days: 90
+
+transcripts:
+  fmp_base_url: "https://financialmodelingprep.com/api/v3"
+  table: earnings_transcripts
+
+logging:
+  log_file: output/run.log
+  level: INFO
+
+scoring:
+  score_date: null
+  output_csv: output/scored_universe_latest.csv
+  long_quintile_threshold: 80
+  short_quintile_threshold: 20
+  min_sector_size: 5
+  regime_conditional_weights: true
+
+  factor_weights:
+    momentum:       0.20
+    quality:        0.20
+    value:          0.15
+    revisions:      0.15
+    insider:        0.10
+    growth:         0.10
+    short_interest: 0.05
+    institutional:  0.05
+
+  regime_weights:
+    low_vol:
+      vix_below: 15
+      momentum:  0.28
+      value:     0.10
+    high_vol:
+      vix_above: 25
+      quality:   0.28
+      value:     0.22
+      momentum:  0.10
+
+  crowding:
+    window_days: 60
+    deviation_threshold: 0.40
+    baselines:
+      momentum_value:    -0.30
+      momentum_quality:   0.10
+
+  sector_etf_map:
+    Information Technology:   XLK
+    Financials:               XLF
+    Health Care:              XLV
+    Energy:                   XLE
+    Industrials:              XLI
+    Communication Services:   XLC
+    Consumer Discretionary:   XLY
+    Consumer Staples:         XLP
+    Materials:                XLB
+    Real Estate:              XLRE
+    Utilities:                XLU
+
+analysis:
+  openai_model: gpt-4o
+  openai_model_cheap: gpt-4o-mini
+  cost_ceiling_usd: 25.0
+  cache_ttl_days: 30
+  score_date: null
+  output_dir: output/reports
+
+  analyzer_models:
+    earnings: gpt-4o
+    filing:   gpt-4o-mini
+    risk:     gpt-4o
+    insider:  gpt-4o-mini
+
+  combined_score:
+    quant_weight: 0.60
+    ai_weight:    0.40
+
+  transcript_max_chars: 120000
+  filing_risk_max_chars: 80000
+
+portfolio:
+  num_longs:              20
+  num_shorts:             20
+  gross_exposure:         1.50
+  target_long_gross:      0.90
+  target_short_gross:     0.60
+  net_exposure_min:       0.00
+  net_exposure_max:       0.10
+  max_position_pct:       0.05
+  min_position_pct:       0.005
+  max_sector_pct:         0.25
+  max_sector_net_pct:     0.05
+  max_beta:               0.15
+  turnover_budget_pct:    0.30
+  nav_usd:                100_000
+  earnings_blackout_days: 5
+  adv_lookback_days:      20
+  adv_max_pct:            0.05
+  beta_lookback_days:     60
+
+  conviction_tilt:
+    top5_multiplier:      1.50
+    top10_multiplier:     1.25
+
+  mvo:
+    risk_aversion:        1.0
+    cov_lookback_days:    120
+    score_to_return_map:
+      score_100:           0.15
+      score_0:            -0.15
+    max_iter:             1000
+
+  transaction_costs:
+    commission_per_share: 0.0
+    spread_hl_fraction:   0.05
+    market_impact_coef:   0.10
+
+risk:
+  factor_risk_lookback_days: 120
+
+  pre_trade:
+    adv_lookback:         20
+    adv_pct:              0.05
+    max_position_pct:     0.05
+    max_sector_pct:       0.25
+    max_gross:            1.65
+    net_min:             -0.10
+    net_max:              0.15
+    max_net_beta:         0.20
+    max_pairwise_corr:    0.80
+    corr_lookback:        60
+    earnings_blackout_days: 5
+
+  circuit_breakers:
+    drawdown_kill:          0.08
+    daily_close_all:        0.025
+    daily_size_down:        0.015
+    weekly_size_down:       0.040
+    max_single_position_pct: 0.030
+
+  tail_risk:
+    vix_caution:            25
+    vix_stress:             35
+    credit_spread_sigma:    1.0
+    credit_lookback_days:   252
+
+  factor_monitor:
+    alert_z_threshold:      1.5
+
+  correlation_monitor:
+    alert_avg_corr:         0.60
+    lookback_days:          60
+
+  stress:
+    cache_ttl_days: 30
+    scenarios:
+      - financial_crisis_2008
+      - covid_crash_2020
+      - rate_hike_2022
+      - sector_shock
+      - momentum_reversal
+      - short_squeeze
+
+execution:
+  alpaca_paper:         true    # false → live trading endpoint
+  limit_slippage_pct:   0.005   # 0.5% limit buffer above/below mid
+  max_adv_pct:          0.02    # chunk orders larger than 2% of ADV
+  poll_timeout_s:       120
+  poll_interval_s:      5
+  shortable_cache_days: 7
+
+reporting:
+  inception_date:       "2024-01-02"
+  commentary_weekday:   4           # 0=Mon … 4=Fri
+  tear_sheet_path:      output/tear_sheet.md
+  attribution_csv:      output/daily_attribution.csv
+  tax_rates:
+    short_term:         0.37
+    long_term:          0.20
