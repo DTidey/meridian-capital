@@ -1,0 +1,29 @@
+PYTHON ?= python3
+
+.PHONY: venv sync compile lint test security precommit
+
+venv:
+	$(PYTHON) -m venv .venv
+
+compile:
+	. .venv/bin/activate && $(PYTHON) -m pip install -U pip setuptools wheel pip-tools
+	. .venv/bin/activate && pip-compile requirements.in -o requirements.txt
+	. .venv/bin/activate && pip-compile requirements-dev.in -o requirements-dev.txt
+
+sync:
+	. .venv/bin/activate && $(PYTHON) -m pip install -U pip setuptools wheel
+	. .venv/bin/activate && pip-sync requirements.txt requirements-dev.txt
+
+lint:
+	. .venv/bin/activate && ruff check .
+	. .venv/bin/activate && ruff format --check .
+
+test:
+	. .venv/bin/activate && pytest
+
+security:
+	. .venv/bin/activate && bandit -q -r analysis data execution factors portfolio reporting risk dashboard .github/scripts
+	. .venv/bin/activate && XDG_CACHE_HOME=/tmp/.cache pip-audit --no-deps --disable-pip -r requirements.txt -r requirements-dev.txt
+
+precommit:
+	. .venv/bin/activate && pre-commit run --all-files

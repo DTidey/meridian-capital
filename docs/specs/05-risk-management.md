@@ -1,8 +1,54 @@
+# Risk Management
+
+**Spec file:** `docs/specs/05-risk-management.md`
+**Status:** Done
+**Date:** 2026-06-15
+
+## Purpose
+
+Layer 5 is a post-optimisation, pre-execution risk gate that sits between Layer 4 (portfolio construction) and Layer 6 (order execution). It stamps each pending trade as APPROVED or REJECTED, applies circuit-breaker sizing adjustments or halts, persists daily risk metrics to `cache/risk_state.json`, and produces on-demand stress test P&L reports.
+
+## Acceptance criteria
+
+- AC1: The system runs the full daily pipeline (factor risk model, pre-trade veto, circuit breakers, factor monitor, correlation monitor, risk state save) when `run_risk_check.py` is invoked with no flags.
+- AC2: The pre-trade veto evaluates all 8 checks in order for each PENDING trade and stamps each row APPROVED or REJECTED in `position_approvals`; closing/covering trades skip checks 2-8 and are always APPROVED.
+- AC3: The earnings blackout check (check 2) resizes the trade to 50% of target shares and marks it APPROVED with reason `BLACKOUT_REDUCED` rather than rejecting it.
+- AC4: The circuit breaker triggers SIZE_DOWN_30, CLOSE_ALL, or KILL_SWITCH based on daily/weekly P&L and drawdown thresholds, evaluated in priority order (drawdown first), and writes `cache/halt.lock` on KILL_SWITCH.
+- AC5: The tail risk monitor reduces APPROVED non-closure target shares by 50% when VIX >= 35, by 20% when VIX >= 25, and by 20% on credit spread z-score >= 1.0 sigma; VIX >= 35 dominates if both fire simultaneously.
+- AC6: The factor risk model decomposes portfolio variance into factor and specific components, computes MCTR per position, flags tickers where `|MCTR_pct| > 1.5 * |weight_pct|`, and writes `cache/predicted_cov_<date>.parquet`.
+- AC7: The correlation monitor computes per-book average pairwise correlation over 60 days, raises an alert when either exceeds 0.60, and computes effective number of bets via eigendecomposition of the combined correlation matrix.
+- AC8: The factor monitor raises a HIGH-priority alert when a long-minus-short factor z-score exceeds 1.5 in magnitude and that factor also has an active crowding flag from Layer 2.
+- AC9: `cache/risk_state.json` is read at startup and written at the end of every run, serving as the single source of truth for circuit-breaker memory and dashboard display; `is_halted()` checks `cache/halt.lock` file existence, not the JSON.
+- AC10: The `--whatif` flag runs all checks and computes all metrics but does not commit any changes to the database; `--clear-halt` deletes `cache/halt.lock` and exits.
+
+## Security considerations
+
+- Auth/authz impact: No user authentication in this layer; access to risk outputs is controlled by filesystem permissions on `cache/` and `data.db`.
+- Secrets or credential handling: API keys read from environment variables only, never hardcoded. `FRED_API_KEY` is optional; if absent the system falls back to the HYG proxy without error.
+- Network or external service impact: FRED API (`api.stlouisfed.org`) for credit spread data (optional); yfinance for stress test historical returns (cached to parquet, TTL 30 days). Both calls are read-only and results are cached locally.
+- Input handling: All DB inputs are parameterised via SQLAlchemy; parquet files written to `cache/` are derived from trusted internal data; no user-supplied input is written to DB or filesystem paths without validation.
+- No meaningful security impact beyond the above.
+
+## Test guidance
+
+- AC1 -> `tests/test_risk_state.py` (full pipeline wiring via entry point)
+- AC2 -> `tests/test_risk_pre_trade.py` (each of the 8 checks in isolation; closing trades always pass)
+- AC3 -> `tests/test_risk_pre_trade.py` (earnings blackout size reduction)
+- AC4 -> `tests/test_risk_circuit_breakers.py` (each trigger threshold; KILL_SWITCH creates halt.lock; SIZE_DOWN modifies target_shares)
+- AC5 -> `tests/test_risk_tail_risk.py` (VIX thresholds; HYG proxy z-score; no double-reduction)
+- AC6 -> `tests/test_risk_factor_risk.py` (variance decomposition sums to total; MCTR flagging; predicted_cov shape)
+- AC7 -> `tests/test_risk_correlation.py` (effective N bets formula; high-corr alert)
+- AC8 -> `tests/test_risk_factor_risk.py` (HIGH priority alert logic)
+- AC9 -> `tests/test_risk_state.py` (halt.lock create/clear/check; JSON round-trip)
+- AC10 -> `tests/test_risk_pre_trade.py`, `tests/test_risk_circuit_breakers.py` (--whatif no-commit behaviour)
+
+---
+
 # Layer 5 — Risk Management Specification
 # Meridian Capital Partners
 
-**Status:** Complete  
-**Depends on:** Layers 1–4 complete and working  
+**Status:** Complete
+**Depends on:** Layers 1-4 complete and working
 **Entry point:** `run_risk_check.py`
 
 ---
@@ -22,11 +68,11 @@ APPROVED trades via Alpaca). Layer 5's outputs are:
 
 ### Execution order (normal daily flow)
 ```
-run_data.py  →  run_scoring.py  →  run_analysis.py  →  run_portfolio.py  →  run_risk_check.py  →  (Layer 6)
+run_data.py  ->  run_scoring.py  ->  run_analysis.py  ->  run_portfolio.py  ->  run_risk_check.py  ->  (Layer 6)
 ```
 
 `run_risk_check.py` (no flags) runs the full daily pipeline:
-factor risk model → pre-trade veto → circuit breakers → factor/correlation/tail monitors → update risk_state.json.
+factor risk model -> pre-trade veto -> circuit breakers -> factor/correlation/tail monitors -> update risk_state.json.
 
 ---
 
@@ -60,7 +106,7 @@ Records every individual check result.
 | `id`         | Integer | PK autoincrement |
 | `run_date`   | String  | YYYY-MM-DD |
 | `check_type` | String  | e.g. `pre_trade`, `circuit_breaker`, `tail_risk` |
-| `ticker`     | String  | nullable — NULL for portfolio-level checks |
+| `ticker`     | String  | nullable -- NULL for portfolio-level checks |
 | `result`     | String  | `APPROVED`, `REJECTED`, `WARNING`, `TRIGGERED` |
 | `reason`     | String  | Human-readable explanation |
 | `recorded_at`| String  | ISO timestamp |
@@ -125,7 +171,7 @@ the dashboard (Layer 7). It is read at startup and written at the end of every r
     "alerts": []
   },
   "alerts": [
-    {"type": "MCTR_CONCENTRATION", "ticker": "NVDA", "message": "MCTR% 8.2 > 1.5× weight% 4.8"}
+    {"type": "MCTR_CONCENTRATION", "ticker": "NVDA", "message": "MCTR% 8.2 > 1.5x weight% 4.8"}
   ]
 }
 ```
@@ -152,21 +198,21 @@ Decompose portfolio variance into factor-driven and stock-specific components.
 Produce a Barra-style predicted covariance matrix for optional use by Layer 4's MVO.
 
 ### Inputs
-- `daily_prices` table — 120-day lookback, all portfolio tickers plus universe
-- `factor_scores` table — 8 factor columns (0–100 sector ranks) for the score date
-- `portfolio_positions` — current open positions with weights
+- `daily_prices` table -- 120-day lookback, all portfolio tickers plus universe
+- `factor_scores` table -- 8 factor columns (0-100 sector ranks) for the score date
+- `portfolio_positions` -- current open positions with weights
 
 ### Algorithm
 
-**Step 1 — Standardise factor exposures**
+**Step 1 -- Standardise factor exposures**
 
-For each factor k, convert the 0–100 sector rank to a z-score across the universe:
+For each factor k, convert the 0-100 sector rank to a z-score across the universe:
 
 ```
 F_k,i = (score_k,i - mean(score_k)) / std(score_k)
 ```
 
-**Step 2 — Rolling cross-sectional regression (120 days)**
+**Step 2 -- Rolling cross-sectional regression (120 days)**
 
 For each day t with at least 50 stocks having both returns and factor scores:
 
@@ -175,23 +221,23 @@ r_i,t = alpha_t + sum_k(beta_k,t * F_k,i) + eps_i,t
 ```
 
 OLS via `numpy.linalg.lstsq`. Requires the factor scores to be static (use the current
-score date's exposures as a proxy for historical exposures — acceptable for a 120-day
+score date's exposures as a proxy for historical exposures -- acceptable for a 120-day
 window where factor ranks are slow-moving).
 
 Produces:
-- `factor_returns[t, k]` — daily factor return time series (T × 8 matrix)
-- `specific_returns[t, i]` — residual per stock per day
+- `factor_returns[t, k]` -- daily factor return time series (T x 8 matrix)
+- `specific_returns[t, i]` -- residual per stock per day
 
-**Step 3 — Covariance estimation**
+**Step 3 -- Covariance estimation**
 
 ```
-F_cov  = annualise(cov(factor_returns))   # 8×8, × 252
+F_cov  = annualise(cov(factor_returns))   # 8x8, x 252
 spec_var[i] = annualise(var(specific_returns[:, i]))
 ```
 
-**Step 4 — Portfolio variance decomposition**
+**Step 4 -- Portfolio variance decomposition**
 
-Given weight vector `w` (signed: long positive, short negative) and exposure matrix `X` (N×8):
+Given weight vector `w` (signed: long positive, short negative) and exposure matrix `X` (Nx8):
 
 ```
 factor_var   = w' X F_cov X' w
@@ -213,25 +259,25 @@ cov_ri_rp[i] = (X F_cov X')[i,:] @ w + spec_var[i] * w[i]
 MCTR[i]      = w[i] * cov_ri_rp[i] / sigma_p
 ```
 
-Flag tickers where `|MCTR_pct| > 1.5 × |weight_pct|`.
+Flag tickers where `|MCTR_pct| > 1.5 x |weight_pct|`.
 
-**Step 5 — Output**
+**Step 5 -- Output**
 
 Returns a `FactorRiskResult` dataclass:
 
 ```python
 @dataclass
 class FactorRiskResult:
-    factor_cov: np.ndarray          # 8×8 annualised factor covariance
-    specific_var: dict[str, float]  # ticker → annualised specific variance
-    factor_returns: pd.DataFrame    # T×8 factor return history
-    factor_contributions: dict[str, float]  # factor → pct of total var
+    factor_cov: np.ndarray          # 8x8 annualised factor covariance
+    specific_var: dict[str, float]  # ticker -> annualised specific variance
+    factor_returns: pd.DataFrame    # Tx8 factor return history
+    factor_contributions: dict[str, float]  # factor -> pct of total var
     total_vol: float                # annualised portfolio vol
     factor_vol_pct: float           # factor_var / total_var
     specific_vol_pct: float         # specific_var / total_var
-    mctr: pd.Series                 # ticker → MCTR value
-    mctr_flags: list[str]           # tickers where MCTR% > 1.5× weight%
-    predicted_cov: np.ndarray       # N×N predicted covariance = X F X' + diag(spec)
+    mctr: pd.Series                 # ticker -> MCTR value
+    mctr_flags: list[str]           # tickers where MCTR% > 1.5x weight%
+    predicted_cov: np.ndarray       # NxN predicted covariance = X F X' + diag(spec)
 ```
 
 **MVO integration:** `predicted_cov` and the ticker list are written to
@@ -257,31 +303,31 @@ def compute_factor_risk(
 
 ### Purpose
 Inspect every PENDING row in `position_approvals` and mark it APPROVED or REJECTED.
-Closing/covering trades (target_shares ≈ 0) are always APPROVED without checks.
+Closing/covering trades (target_shares ~ 0) are always APPROVED without checks.
 
 ### Inputs (all computed inside the module)
-- `position_approvals` — PENDING rows from today's `rebalance_date`
-- `portfolio_positions` — current open positions (pre-trade state)
-- `daily_prices` — for ADV and pairwise correlations
-- `earnings_calendar` table — for earnings blackout
-- `factor_scores` table — for sector aggregation
-- Risk state JSON — for gross/net/beta current values
-- `halt.lock` — if present, reject all opening trades immediately
+- `position_approvals` -- PENDING rows from today's `rebalance_date`
+- `portfolio_positions` -- current open positions (pre-trade state)
+- `daily_prices` -- for ADV and pairwise correlations
+- `earnings_calendar` table -- for earnings blackout
+- `factor_scores` table -- for sector aggregation
+- Risk state JSON -- for gross/net/beta current values
+- `halt.lock` -- if present, reject all opening trades immediately
 
 ### The 8 Checks
 
-Evaluated in order. Any failure → REJECTED (and remaining checks are still logged).
-Closing/covering trades skip checks 2–8 (only check 1 applies).
+Evaluated in order. Any failure -> REJECTED (and remaining checks are still logged).
+Closing/covering trades skip checks 2-8 (only check 1 applies).
 
 | # | Check | Condition for REJECTION |
 |---|-------|------------------------|
 | 1 | **Halt lock** | `cache/halt.lock` exists |
-| 2 | **Earnings blackout** | Earnings within ±5 days → full position blocked (50% size cut applied as a sizing adjustment, not a rejection — trade is resized to 50% of target then approved) |
+| 2 | **Earnings blackout** | Earnings within +-5 days -> full position blocked (50% size cut applied as a sizing adjustment, not a rejection -- trade is resized to 50% of target then approved) |
 | 3 | **Liquidity** | Trade value > 5% of 20-day ADV for that ticker |
 | 4 | **Position size** | Resulting position > 5% of NAV (abs weight) |
 | 5 | **Sector concentration** | Resulting gross sector exposure > 25% of NAV |
-| 6 | **Gross / net** | Resulting gross > 165% OR net outside [−10%, +15%] |
-| 7 | **Net beta** | Resulting \|net beta\| > 0.20 |
+| 6 | **Gross / net** | Resulting gross > 165% OR net outside [-10%, +15%] |
+| 7 | **Net beta** | Resulting |net beta| > 0.20 |
 | 8 | **Pairwise correlation** | Correlation of new ticker vs any existing same-book position over 60 days > 0.80 |
 
 Note on check 2: The earnings blackout applies a **50% size reduction** rather than a
@@ -304,7 +350,7 @@ def run_pre_trade(
     """
 ```
 
-ADV computation: 20-day average of (close × volume) from `daily_prices`, loaded once
+ADV computation: 20-day average of (close x volume) from `daily_prices`, loaded once
 and cached for the run. Beta computation reuses `portfolio.beta.compute_betas`.
 
 Every check outcome is logged to `risk_log` with check_type=`pre_trade`.
@@ -347,8 +393,8 @@ If `portfolio_history` has no prior data, P&L is 0 and drawdown is 0.
 | Drawdown > 8% | Write `cache/halt.lock`; reject all non-closure trades | `KILL_SWITCH` |
 | Single position > 3% NAV | Force-close: set position_approvals entry to target_shares=0, action=SELL/COVER | `FORCE_CLOSE` |
 
-**Priority:** Evaluate in order drawdown → daily loss → weekly loss → single position.
-KILL_SWITCH overrides SIZE_DOWN — do not apply SIZE_DOWN if KILL_SWITCH fires.
+**Priority:** Evaluate in order drawdown -> daily loss -> weekly loss -> single position.
+KILL_SWITCH overrides SIZE_DOWN -- do not apply SIZE_DOWN if KILL_SWITCH fires.
 SIZE_DOWN adjustments run after pre-trade veto (they modify already-APPROVED rows).
 
 ### Public API
@@ -385,7 +431,7 @@ risk-elevated positioning.
 3. Z-score today's spread: `z = (spread - mean_hist) / std_hist` per factor.
 4. Alert if `|z| > 1.5`.
 5. Cross-reference with crowding flags from `factors.crowding` (already computed in
-   Layer 2 — query `factor_scores` where `crowding_flag IS NOT NULL` or use the
+   Layer 2 -- query `factor_scores` where `crowding_flag IS NOT NULL` or use the
    config `crowding.deviation_threshold`). If a flagged factor also has `|z| > 1.5`,
    upgrade to HIGH priority alert.
 
@@ -417,10 +463,10 @@ Measure within-book pairwise correlations and estimate effective diversification
 
 **Effective number of bets** (both books combined):
 
-Eigendecompose the combined portfolio correlation matrix. Let `λ_k` be eigenvalues:
+Eigendecompose the combined portfolio correlation matrix. Let `lambda_k` be eigenvalues:
 
 ```
-weights    = λ_k / sum(λ_k)
+weights    = lambda_k / sum(lambda_k)
 entropy    = -sum(weights * log(weights))
 eff_n_bets = exp(entropy)
 ```
@@ -464,7 +510,7 @@ Two sources in priority order:
 1. **FRED** (`FRED_API_KEY` env var): pull `BAMLH0A0HYM2` (ICE BofA US High Yield
    Option-Adjusted Spread) for the last 252 trading days. Cache response to
    `cache/fred_hy_spread.parquet`, refresh daily.
-2. **Fallback — HYG proxy**: HYG price is already in `daily_prices`. Use 
+2. **Fallback -- HYG proxy**: HYG price is already in `daily_prices`. Use
    `z_score = (today_hyg - mean_60d_hyg) / std_60d_hyg`. Widen signal: negative HYG
    z-score (HYG falling = spreads widening) maps to positive spread z-score.
 
@@ -495,9 +541,9 @@ directly (no yfinance call). The cache is considered stale if the file is older 
 
 | Scenario | Period | Tickers |
 |----------|--------|---------|
-| `financial_crisis_2008` | 2008-09-01 → 2009-03-31 | Current portfolio tickers |
-| `covid_crash_2020` | 2020-02-01 → 2020-04-30 | Current portfolio tickers |
-| `rate_hike_2022` | 2022-01-01 → 2022-10-31 | Current portfolio tickers |
+| `financial_crisis_2008` | 2008-09-01 -> 2009-03-31 | Current portfolio tickers |
+| `covid_crash_2020` | 2020-02-01 -> 2020-04-30 | Current portfolio tickers |
+| `rate_hike_2022` | 2022-01-01 -> 2022-10-31 | Current portfolio tickers |
 
 For each scenario:
 1. Compute cumulative total return per ticker over the period (or NaN if ticker didn't exist).
@@ -564,16 +610,16 @@ python run_risk_check.py --whatif         # run all checks but don't commit chan
 ### Execution Sequence (full run)
 
 1. Load config and resolve score_date
-2. Check `halt.lock` — if present and `--clear-halt` not given, print warning and exit
+2. Check `halt.lock` -- if present and `--clear-halt` not given, print warning and exit
 3. Load risk_state.json (or initialise empty if missing)
 4. Load `portfolio_positions` (current state) and `position_approvals` (PENDING for today)
 5. Load prices (120-day window for factor risk model; 60-day for correlation)
-6. **Factor risk model** — compute and write `cache/predicted_cov_<date>.parquet`; update risk_state
-7. **Pre-trade veto** — stamp PENDING rows as APPROVED/REJECTED; log to risk_log
-8. **Circuit breakers** — evaluate P&L; apply SIZE_DOWN or KILL_SWITCH; log events
-9. **Tail risk** — evaluate VIX/credit; apply REDUCE_GROSS; log events
-10. **Factor monitor** — compute z-scores; append to risk_state alerts
-11. **Correlation monitor** — compute effective N bets; append to risk_state alerts
+6. **Factor risk model** -- compute and write `cache/predicted_cov_<date>.parquet`; update risk_state
+7. **Pre-trade veto** -- stamp PENDING rows as APPROVED/REJECTED; log to risk_log
+8. **Circuit breakers** -- evaluate P&L; apply SIZE_DOWN or KILL_SWITCH; log events
+9. **Tail risk** -- evaluate VIX/credit; apply REDUCE_GROSS; log events
+10. **Factor monitor** -- compute z-scores; append to risk_state alerts
+11. **Correlation monitor** -- compute effective N bets; append to risk_state alerts
 12. **Save risk_state.json**
 13. **Print summary** (see below)
 14. If `--stress`: run stress tests and print results
@@ -581,7 +627,7 @@ python run_risk_check.py --whatif         # run all checks but don't commit chan
 ### Console Output (normal run)
 
 ```
-=== Layer 5 Risk Management — 2026-05-06 ===
+=== Layer 5 Risk Management -- 2026-05-06 ===
 
 Portfolio Risk Decomposition:
   Annualised vol   :  11.2%
@@ -590,12 +636,12 @@ Portfolio Risk Decomposition:
   Top factor       :  momentum_score  21%
 
   MCTR concentrations (flagged):
-    NVDA   weight 4.8%  MCTR 8.2%  ⚠
+    NVDA   weight 4.8%  MCTR 8.2%
 
 Pre-Trade Veto (18 pending trades):
   APPROVED : 15
-  REJECTED :  2  (AAPL — liquidity, DE — sector limit)
-  REDUCED  :  1  (MSFT — earnings blackout, 50% size cut)
+  REJECTED :  2  (AAPL -- liquidity, DE -- sector limit)
+  REDUCED  :  1  (MSFT -- earnings blackout, 50% size cut)
 
 Circuit Breakers: NORMAL
   Daily P&L    :  +0.32%
@@ -603,8 +649,8 @@ Circuit Breakers: NORMAL
   Drawdown     :   3.8%
 
 Tail Risk: CAUTION
-  VIX          :  27.4  → REDUCE_GROSS_20 applied (13 trades resized)
-  Credit spread:  +0.8σ (below threshold)
+  VIX          :  27.4  -> REDUCE_GROSS_20 applied (13 trades resized)
+  Credit spread:  +0.8s (below threshold)
 
 Factor Monitor:
   momentum_score  z=+2.1  HIGH PRIORITY  (crowding + spread)
@@ -612,13 +658,13 @@ Factor Monitor:
 
 Correlation Monitor:
   Long book avg corr  : 0.48  OK
-  Short book avg corr : 0.61  ⚠ ALERT
+  Short book avg corr : 0.61  ALERT
   Effective N bets    : 14.2
 
 Alerts: 3
   [HIGH]  FACTOR_SPREAD: momentum_score z=2.1 (crowding confirmed)
   [MED]   CORR: short book avg correlation 0.61 > 0.60 threshold
-  [MED]   MCTR: NVDA MCTR% 8.2 > 1.5× weight% 4.8
+  [MED]   MCTR: NVDA MCTR% 8.2 > 1.5x weight% 4.8
 
 === Done ===
 ```
@@ -695,10 +741,10 @@ network). Key coverage:
 ## 15. Dependencies
 
 No new packages required. Uses existing stack:
-- `numpy`, `pandas`, `scipy` — factor regression, covariance, eigendecomposition
-- `sqlalchemy` — DB reads/writes
-- `yfinance` — stress test historical returns (cached)
-- `requests` — FRED API (optional)
-- `pyarrow` — parquet cache for predicted covariance and stress scenario returns
+- `numpy`, `pandas`, `scipy` -- factor regression, covariance, eigendecomposition
+- `sqlalchemy` -- DB reads/writes
+- `yfinance` -- stress test historical returns (cached)
+- `requests` -- FRED API (optional)
+- `pyarrow` -- parquet cache for predicted covariance and stress scenario returns
 
 `pyarrow` may need adding to `requirements.txt` if not already present (check before implementing).

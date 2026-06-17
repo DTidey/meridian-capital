@@ -1,3 +1,49 @@
+# Data Ingestion
+
+**Spec file:** `docs/specs/01-data-ingestion.md`
+**Status:** Done
+**Date:** 2026-06-15
+
+## Purpose
+
+Layer 1 is the data foundation for the entire system. It populates a PostgreSQL database with S&P 500 universe data, 3 years of daily OHLCV prices, quarterly fundamentals with 24 derived ratios, SEC EDGAR filings, 13-F institutional holdings, short interest, analyst estimates, earnings calendar snapshots, and earnings transcripts — everything the scoring, analysis, portfolio, risk, and execution layers need.
+
+## Acceptance criteria
+
+- AC1: The system scrapes S&P 500 constituents from Wikipedia (with a 7-day cache TTL) and stores them in `sp500_universe`, and adds 18 benchmark/ETF tickers to `benchmark_tickers`, so that `get_all_tickers()` returns the combined deduplicated list.
+- AC2: The system fetches up to 3 years of daily OHLCV prices incrementally (only bars newer than the stored max date) and upserts them into `daily_prices` using a dialect-aware `INSERT … ON CONFLICT` statement, so that re-runs are safe and do not duplicate rows.
+- AC3: The system fetches quarterly and annual financial statements and computes 24 derived ratios (margins, returns, growth, leverage, cash, efficiency) in-process, storing both raw fields and ratios in the `fundamentals` table, so that downstream layers never need to re-derive them.
+- AC4: The system fetches SEC EDGAR 10-K, 10-Q, 8-K, and Form 4 filings at no more than 8 requests/second, using `SEC_USER_AGENT` and `SEC_USER_EMAIL` from environment variables as required by the SEC, and stores results in `sec_filings` and `insider_transactions`.
+- AC5: The system parses Form 4 transactions to set `is_open_market = 1` for codes P and S, `is_ceo_cfo = 1` when the insider title contains CEO or CFO, and raises a cluster flag in `insider_cluster_flags` when 3 or more insiders buy within a 30-day window.
+- AC6: The system fetches 13-F institutional holdings for 9 tracked funds from SEC EDGAR, stores per-fund rows in `institutional_holdings`, and aggregates them into `institutional_summary` (funds_holding count, net_share_change, new_positions count).
+- AC7: The system stores daily snapshots of short interest and analyst estimates (appending one row per ticker per run date) into `short_interest` and `analyst_estimates` respectively, so that time-series history accumulates for Layer 2 revision scoring.
+- AC8: All tables across all layers are created in a single `initialise_schema(engine)` call via a shared SQLAlchemy `metadata` object, and all tests pass using an in-memory SQLite engine without code changes to business logic.
+- AC9: The entry point `run_data.py` supports `--no-filings`, `--no-13f`, `--forms`, `--force-universe`, `--tickers`, and `--verbose` flags, and prints a structured summary on completion.
+- AC10: Provider selection (yfinance vs Polygon for prices; yfinance vs FMP for fundamentals) is determined at startup by the presence of `POLYGON_API_KEY` or `FMP_API_KEY` environment variables, centralised in `data/providers.py`.
+
+## Security considerations
+
+- Auth/authz impact: No authentication or authorisation layer; database credentials control access to all stored data.
+- Secrets or credential handling: API keys (`POLYGON_API_KEY`, `FMP_API_KEY`, `OPENAI_API_KEY`, `DATABASE_URL`) are read from environment variables only, never hardcoded. `SEC_USER_AGENT` and `SEC_USER_EMAIL` are similarly environment-sourced.
+- Network or external service impact: Outbound HTTP to Wikipedia, SEC EDGAR (`sec.gov`), yfinance (Yahoo Finance), Polygon.io, and Financial Modeling Prep. Rate limiting (8 req/s) is enforced for SEC. No inbound network exposure.
+- Input handling: Wikipedia HTML is parsed via `pandas.read_html`; SEC filing XML/text is fetched and stored as-is without execution. Ticker normalisation (`.` → `-`) is applied before passing to yfinance.
+- No meaningful security impact beyond the above.
+
+## Test guidance
+
+- AC1 -> `tests/test_universe.py`
+- AC2 -> `tests/test_market_data.py`
+- AC3 -> `tests/test_fundamentals.py`
+- AC4 -> `tests/test_sec_data.py`
+- AC5 -> `tests/test_sec_data.py`
+- AC6 -> `tests/test_institutional.py`
+- AC7 -> `tests/test_short_interest.py`, `tests/test_estimates.py`
+- AC8 -> `tests/test_db.py`
+- AC9 -> `tests/test_run_data.py`
+- AC10 -> `tests/test_providers.py`
+
+---
+
 # Meridian Capital Partners — Layer 1: Data Ingestion
 ## Implementation Specification
 

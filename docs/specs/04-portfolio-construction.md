@@ -1,3 +1,49 @@
+# Portfolio Construction
+
+**Spec file:** `docs/specs/04-portfolio-construction.md`
+**Status:** Done
+**Date:** 2026-06-15
+
+## Purpose
+
+Layer 4 consumes the ranked long/short candidate list produced by Layer 3 (`combined_scores` table) and produces a target portfolio: specific tickers, weights, and share counts for a long book and a short book, subject to risk, liquidity, and concentration constraints, using either a conviction-tilt or Markowitz MVO optimiser.
+
+## Acceptance criteria
+
+- AC1: The conviction-tilt optimiser produces a target portfolio where long weights sum to `target_long_gross` (default 0.90) and short weights sum to `target_short_gross` (default 0.60), with every individual position clamped to `[min_position_pct, max_position_pct]` (default 0.5%-5% of NAV).
+- AC2: The conviction-tilt optimiser applies a 1.5x weight multiplier to the top-5% scoring positions and a 1.25x multiplier to the top-10% scoring positions (within each book), then re-normalises each book to its gross target.
+- AC3: For any ticker with earnings within `earnings_blackout_days` (default 5) days, the optimiser halves the position weight and redistributes the surplus equally across remaining positions in the same book.
+- AC4: The liquidity cap limits each position to no more than `adv_max_pct` (default 5%) of its 20-day average daily volume; positions exceeding this cap are trimmed and the surplus is redistributed.
+- AC5: Sector neutrality is enforced so that the net sector weight (long minus short) for any GICS sector does not exceed `max_sector_net_pct` (default 5% of NAV); the portfolio net beta is kept within `max_beta` (default 0.15) by scaling the short book.
+- AC6: The MVO optimiser uses SLSQP to maximise `mu^T w - lambda * w^T Sigma w` subject to long/short gross targets, position bounds, beta constraint, and per-sector caps; if `result.success == False` or any exception occurs, it falls back to conviction-tilt and logs a warning.
+- AC7: The rebalance generator diffs the current `portfolio_positions` against the target, maps deltas to BUY/SELL/SHORT/COVER/HOLD actions, respects the `turnover_budget_pct` (default 30%) by trimming the smallest-delta-score trades first (full closures are never trimmed), and estimates transaction costs for each trade.
+- AC8: When `--rebalance` is run without `--whatif`, the system writes proposed trades to `position_approvals` (status PENDING), upserts `portfolio_positions`, and appends a snapshot row to `portfolio_history`.
+- AC9: The rebalance schedule checker returns advisory warning strings (never blocks execution) for: earnings within 2 days, FOMC meeting within 5 days, and options expiration within 3 days.
+- AC10: The entry point `run_portfolio.py` supports `--rebalance`, `--whatif`, `--current`, and `--optimize-method mvo|conviction` flags, and prints a portfolio summary including gross/net exposure, sector breakdown, and net beta.
+
+## Security considerations
+
+- Auth/authz impact: Layer 4 reads from and writes to the shared PostgreSQL database; database credentials control access to portfolio state, history, and approval records.
+- Secrets or credential handling: No additional API keys introduced in Layer 4; `DATABASE_URL` is read from environment variables only, never hardcoded. Alpaca keys (used in Layer 6) are not accessed here.
+- Network or external service impact: No outbound network calls in Layer 4; all data is read from the internal PostgreSQL database.
+- Input handling: All portfolio input (candidates, prices, betas) comes from the trusted internal database; no external user input is processed directly. The `--whatif` flag provides a safe preview mode that commits nothing.
+- No meaningful security impact beyond the above.
+
+## Test guidance
+
+- AC1 -> `tests/test_optimizer.py`
+- AC2 -> `tests/test_optimizer.py`
+- AC3 -> `tests/test_optimizer.py`
+- AC4 -> `tests/test_optimizer.py`
+- AC5 -> `tests/test_optimizer.py`
+- AC6 -> `tests/test_mvo_optimizer.py`
+- AC7 -> `tests/test_rebalance.py`
+- AC8 -> `tests/test_state.py`, `tests/test_rebalance.py`
+- AC9 -> `tests/test_rebalance_schedule.py`
+- AC10 -> `tests/test_state.py`
+
+---
+
 # Layer 4 — Portfolio Construction Specification
 
 **Status:** Complete  

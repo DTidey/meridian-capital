@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create virtualenv
+        run: |
+          make venv
+
+      - name: Compile requirements
+        run: |
+          make compile
+
+      - name: Install dependencies
+        run: |
+          make sync
+
+      - name: Validate PR template and spec linkage
+        if: github.event_name == 'pull_request'
+        run: |
+          python .github/scripts/validate_pr.py
+
+      - name: Lint
+        run: |
+          make lint
+
+      - name: Security
+        run: |
+          make security
+
+      - name: Test
+        run: |
+          make test

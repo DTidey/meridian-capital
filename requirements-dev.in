@@ -1,0 +1,10 @@
+-r requirements.in
+
+pytest>=7.0
+pytest-mock>=3.0
+responses>=0.25
+ruff
+pre-commit
+pip-tools
+bandit
+pip-audit

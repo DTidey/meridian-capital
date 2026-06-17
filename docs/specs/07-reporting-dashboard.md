@@ -1,8 +1,54 @@
-# Layer 7 — Reporting & Dashboard
+# Reporting & Dashboard
 
-**Status:** Complete  
-**Depends on:** Layers 1–6 (all tables in `data.db.metadata`)  
-**Entry points:** `run_reporting.py`, `dashboard/app.py`  
+**Spec file:** `docs/specs/07-reporting-dashboard.md`
+**Status:** Done
+**Date:** 2026-06-15
+
+## Purpose
+
+Layer 7 provides a nightly reporting engine (P&L decomposition, tear sheet, LP letter, JARVIS commentary) and a six-page Streamlit dashboard. Both components are read-only with respect to Layers 1-6 and never write to tables owned by earlier layers.
+
+## Acceptance criteria
+
+- AC1: Running `python run_reporting.py` (no flags) sequentially executes nav_series, pnl_attribution, and position_attribution; all steps are idempotent (upsert on primary key; rerunning produces no duplicate rows).
+- AC2: `pnl_attribution.run()` decomposes each day's portfolio return into four additive components (beta_pnl, sector_pnl, factor_pnl, alpha_pnl) that sum to the total portfolio return within a floating-point tolerance of 1e-9.
+- AC3: `position_attribution.build_trades()` applies FIFO lot matching to `portfolio_history` snapshots and records entry date, exit date, realized P&L, and holding days for each closed round-trip in `position_trades`.
+- AC4: The Streamlit dashboard serves all six pages (Portfolio, Research, Risk, Performance, Execution, Letter) at `http://localhost:8502` and auto-refreshes every 300 seconds during market hours (09:30-16:00 ET, weekdays only).
+- AC5: The JARVIS commentary is generated via the `gpt-4o` model only on the configured weekday (default Friday) and is cached in `weekly_commentary`; subsequent calls on the same week return the cached content without a new API call.
+- AC6: The LP letter is generated via the `gpt-4o` model, cached by date in `lp_letters`, and rendered with a full letterhead block, CONFIDENTIAL stamp, JARVIS signature, and compliance footer; the Regenerate button forces a fresh API call and overwrites the cached row.
+- AC7: The tear sheet written to `output/tear_sheet.md` includes at minimum: performance vs SPY (Sharpe, Sortino, max drawdown, alpha), monthly returns grid, ASCII equity-curve sparkline, factor and sector exposure tables, turnover, and recent slippage stats.
+- AC8: The Research page (Page II) displays an amber warning banner when any held ticker has earnings within the configured blackout window, an FOMC meeting is within 3 days, or monthly OpEx Friday is within 3 days.
+- AC9: The tax estimate returned by `turnover.compute()` applies short-term rate 37% to gains on positions held <= 365 days and long-term rate 20% to gains on positions held > 365 days, derived from FIFO-matched `position_trades`.
+- AC10: `win_loss.compute()` returns win rate and P/L ratio sliced by side (LONG/SHORT), holding period bucket, sector, VIX regime at entry, and factor quintile at entry; an empty `position_trades` table returns zeroed dicts without raising an exception.
+
+## Security considerations
+
+- Auth/authz impact: The Streamlit dashboard has no authentication layer; it must be run on a trusted local or VPN-restricted network. The LP letter and commentary endpoints are internal only.
+- Secrets or credential handling: API keys read from environment variables only, never hardcoded. `OPENAI_API_KEY` is required for JARVIS commentary, LP letters, and dashboard chat; absent key causes a runtime error on the first AI call, not at import time.
+- Network or external service impact: OpenAI API (`api.openai.com`) for `gpt-4o` completions (commentary, LP letter, JARVIS chat). All calls are outbound HTTPS with no inbound network exposure beyond the Streamlit port.
+- Input handling: The JARVIS chat input (`st.chat_input`) is passed directly to the OpenAI API as a user message; no SQL interpolation is performed on user input. Snapshot data injected into the system prompt is derived from trusted DB reads only.
+- No meaningful security impact beyond the above.
+
+## Test guidance
+
+- AC1 -> `tests/test_reporting_nav.py` (build_nav_series idempotency; empty history no-crash)
+- AC2 -> `tests/test_reporting_attribution.py` (beta_pnl formula; alpha residual sums to total; Brinson zero when weights match benchmark)
+- AC3 -> `tests/test_reporting_fifo.py` (full exit; partial exit; direction flip)
+- AC4 -> manual dashboard smoke test (page routing; auto-refresh thread initialisation)
+- AC5 -> `tests/test_reporting_commentary.py` (weekday gate; cache hit prevents API call)
+- AC6 -> `tests/test_reporting_lp_letter.py` (cache hit; force=True overwrites; render_full structure)
+- AC7 -> `tests/test_reporting_tearsheet.py` (section presence; Sharpe formula; sparkline length)
+- AC8 -> `tests/test_reporting_dashboard.py` or `tests/test_page_research.py` (banner conditions)
+- AC9 -> `tests/test_reporting_win_loss.py` or `tests/test_reporting_turnover.py` (FIFO tax bucketing; short-term vs long-term threshold)
+- AC10 -> `tests/test_reporting_win_loss.py` (all-winners; no-trades; holding period bucketing)
+
+---
+
+# Layer 7 -- Reporting & Dashboard
+
+**Status:** Complete
+**Depends on:** Layers 1-6 (all tables in `data.db.metadata`)
+**Entry points:** `run_reporting.py`, `dashboard/app.py`
 **Served at:** `http://localhost:8502`
 
 ---
@@ -16,7 +62,7 @@ Layer 7 has two independently runnable parts:
 | Reporting engine | Nightly P&L decomposition, tear sheet, LP letter, commentary | `python run_reporting.py` |
 | Streamlit dashboard | Live 6-page JARVIS UI | `streamlit run dashboard/app.py --server.port 8502` |
 
-Both parts are read-only with respect to Layers 1–6; they never write to tables owned by earlier layers.
+Both parts are read-only with respect to Layers 1-6; they never write to tables owned by earlier layers.
 
 ---
 
@@ -28,7 +74,7 @@ Both parts are read-only with respect to Layers 1–6; they never write to table
 | AI model | `gpt-4o` via existing `openai.OpenAI` client | JARVIS persona; reuses `OPENAI_API_KEY` already in env |
 | SPY benchmark | Pulled from `daily_prices` (ticker='SPY') | Already ingested by Layer 1 |
 | FIFO implementation | In-memory over `portfolio_history` snapshots | No separate trade ledger exists |
-| Auto-refresh | `st.rerun()` + `time.sleep(300)` in a thread | Market-hours gate (9:30–16:00 ET) |
+| Auto-refresh | `st.rerun()` + `time.sleep(300)` in a thread | Market-hours gate (9:30-16:00 ET) |
 | LP letter cache | `lp_letters` table keyed by date | Regenerate button writes a new row |
 | Commentary cache | `weekly_commentary` table keyed by week_start | Fired on configurable weekday |
 | Tax estimate | FIFO with short-term @ 37%, long-term @ 20% | Holding period threshold: 365 days |
@@ -37,7 +83,7 @@ Both parts are read-only with respect to Layers 1–6; they never write to table
 
 ---
 
-## Database — `reporting/db.py`
+## Database -- `reporting/db.py`
 
 All tables registered on `data.db.metadata`.
 
@@ -48,10 +94,10 @@ All tables registered on `data.db.metadata`.
 | date | String PK | ISO date |
 | portfolio_return | Float | Total daily return (%) |
 | spy_return | Float | SPY daily return (%) |
-| beta_pnl | Float | `net_beta × spy_return` |
+| beta_pnl | Float | `net_beta x spy_return` |
 | sector_pnl | Float | Brinson allocation + selection |
 | factor_pnl | Float | OLS residual attributable to factor spreads |
-| alpha_pnl | Float | `portfolio_return − beta_pnl − sector_pnl − factor_pnl` |
+| alpha_pnl | Float | `portfolio_return - beta_pnl - sector_pnl - factor_pnl` |
 | net_beta | Float | Portfolio net beta at day open |
 | computed_at | String | ISO timestamp |
 
@@ -144,18 +190,18 @@ ls_equity_fund/
 usage: python run_reporting.py [--date YYYY-MM-DD] [--commentary] [--letter] [--tearsheet] [--all]
 ```
 
-Default (no flags): runs nav_series + pnl_attribution + position_attribution only.  
-`--commentary`: also generate JARVIS weekly commentary (respects weekday config).  
-`--letter`: also generate daily LP letter.  
-`--tearsheet`: also write tear sheet markdown.  
+Default (no flags): runs nav_series + pnl_attribution + position_attribution only.
+`--commentary`: also generate JARVIS weekly commentary (respects weekday config).
+`--letter`: also generate daily LP letter.
+`--tearsheet`: also write tear sheet markdown.
 `--all`: all of the above.
 
 Execution order (sequential, shared engine):
 
-1. `nav_series.build_nav_series(engine)` → populates `portfolio_nav`
-2. `pnl_attribution.run(engine)` → populates `pnl_attribution`
-3. `position_attribution.build_trades(engine)` → populates `position_trades`
-4. *(if `--tearsheet` or `--all`)* `tear_sheet.write(engine)` → `output/tear_sheet.md`
+1. `nav_series.build_nav_series(engine)` -> populates `portfolio_nav`
+2. `pnl_attribution.run(engine)` -> populates `pnl_attribution`
+3. `position_attribution.build_trades(engine)` -> populates `position_trades`
+4. *(if `--tearsheet` or `--all`)* `tear_sheet.write(engine)` -> `output/tear_sheet.md`
 5. *(if `--commentary` or `--all`)* `commentary.generate_if_due(engine, cfg)`
 6. *(if `--letter` or `--all`)* `lp_letter.generate(engine, cfg)`
 
@@ -194,10 +240,10 @@ def run(engine) -> pd.DataFrame:
       2. sector_pnl = Brinson (allocation + selection) across GICS sectors
          - sector weights from portfolio_history at date open
          - sector returns from daily_prices for sector ETFs
-      3. factor_pnl = OLS(portfolio_return ~ factor_return_spreads)[fitted] − beta_pnl
-         - factor spreads: for each of 8 factors, long-quintile mean return − short-quintile mean return
-           derived from factor_scores composite sub-factor scores × daily_prices returns
-      4. alpha_pnl = portfolio_return − beta_pnl − sector_pnl − factor_pnl
+      3. factor_pnl = OLS(portfolio_return ~ factor_return_spreads)[fitted] - beta_pnl
+         - factor spreads: for each of 8 factors, long-quintile mean return - short-quintile mean return
+           derived from factor_scores composite sub-factor scores x daily_prices returns
+      4. alpha_pnl = portfolio_return - beta_pnl - sector_pnl - factor_pnl
     Upsert into pnl_attribution.
     Also writes output/daily_attribution.csv (full history, appended idempotently).
     """
@@ -207,12 +253,12 @@ Net beta at open: sum of `portfolio_positions.beta * weight` at that date's `por
 
 Factor return spreads method:
 - Group tickers by factor quintile on each `score_date`
-- Q5 mean daily return − Q1 mean daily return = factor spread for that day
+- Q5 mean daily return - Q1 mean daily return = factor spread for that day
 - Run `scipy.stats.linregress` (or `numpy.linalg.lstsq`) over 60-day rolling window
 - `factor_pnl` = dot(beta_coefficients, factor_spreads_today)
 
 Brinson sector method:
-- For each sector `s`: allocation effect = `(w_s − bm_w_s) * (bm_s_ret − bm_ret)`; selection effect = `w_s * (port_s_ret − bm_s_ret)`
+- For each sector `s`: allocation effect = `(w_s - bm_w_s) * (bm_s_ret - bm_ret)`; selection effect = `w_s * (port_s_ret - bm_s_ret)`
 - Benchmark weights = equal-weighted across sector ETFs
 - `sector_pnl` = sum of allocation + selection effects
 
@@ -262,8 +308,8 @@ def compute(engine) -> dict:
     """
 ```
 
-Win = `realized_pnl > 0`. P/L ratio = `mean(winning trades) / abs(mean(losing trades))`.  
-VIX regime at entry: look up `entry_vix` from `position_trades.entry_vix`.  
+Win = `realized_pnl > 0`. P/L ratio = `mean(winning trades) / abs(mean(losing trades))`.
+VIX regime at entry: look up `entry_vix` from `position_trades.entry_vix`.
 Factor quintile at entry: `entry_score` bucketed into quintiles over all tickers that date.
 
 ---
@@ -278,7 +324,7 @@ def compute(engine, lookback_days: int = 90) -> pd.DataFrame:
     For each sector:
       - portfolio sector return = weighted avg return of held stocks (from portfolio_history + daily_prices)
       - benchmark sector return = sector ETF return (from daily_prices)
-      - alpha = portfolio_sector_return − benchmark_sector_return
+      - alpha = portfolio_sector_return - benchmark_sector_return
     Aggregated over lookback_days.
     Returns DataFrame(sector, portfolio_return, etf_return, alpha, num_longs, num_shorts).
     Also returns: total_alpha (sum), winner_count, loser_count.
@@ -297,7 +343,7 @@ def compute(engine) -> dict:
     Returns:
       turnover_30d_pct:   float   # (buys+sells) / 2 / avg_nav over 30d
       turnover_90d_pct:   float
-      turnover_annualized: float  # 30d annualized × 12
+      turnover_annualized: float  # 30d annualized x 12
       budget_pct:         float   # from config.portfolio.turnover_budget_pct
       tax_estimate_usd:   float   # FIFO: short-term gains * 0.37 + long-term gains * 0.20
       short_term_gains:   float
@@ -305,27 +351,27 @@ def compute(engine) -> dict:
     """
 ```
 
-Turnover denominator: average NAV over the period from `portfolio_nav`.  
+Turnover denominator: average NAV over the period from `portfolio_nav`.
 Turnover numerator: sum of `|market_value_change|` per ticker per day from `portfolio_history`.
 
 ---
 
 ### `reporting/tear_sheet.py`
 
-**Purpose:** write `output/tear_sheet.md` — institutional-format markdown.
+**Purpose:** write `output/tear_sheet.md` -- institutional-format markdown.
 
 Sections (in order):
 
-1. **Header** — Fund name, inception date, AUM (latest NAV), report date
-2. **Performance vs SPY** — annualized return, Sharpe, Sortino, max drawdown, beta, alpha (Jensen's), Calmar; side-by-side with SPY equivalents
-3. **Monthly Returns Grid** — calendar table, rows=years, cols=months + annual; green/red shading via markdown bold
-4. **Equity Curve** — ASCII sparkline (80 chars) using `▁▂▃▄▅▆▇█` characters; portfolio rebased to 100 vs SPY
-5. **Drawdown** — peak date, trough date, recovery date (if recovered), max drawdown %
-6. **Rolling 12-Month Sharpe** — last 12 data points as ASCII sparkline
-7. **Factor Exposures** — table: factor name, current z-score, 30d avg; from `factor_scores` composite sub-scores
-8. **Sector Exposures** — table: sector, long weight, short weight, net weight
-9. **Turnover** — 30d, 90d, annualized, vs budget
-10. **Recent Execution** — last 30d slippage stats (from `execution.costs.slippage_stats`)
+1. **Header** -- Fund name, inception date, AUM (latest NAV), report date
+2. **Performance vs SPY** -- annualized return, Sharpe, Sortino, max drawdown, beta, alpha (Jensen's), Calmar; side-by-side with SPY equivalents
+3. **Monthly Returns Grid** -- calendar table, rows=years, cols=months + annual; green/red shading via markdown bold
+4. **Equity Curve** -- ASCII sparkline (80 chars) using block characters; portfolio rebased to 100 vs SPY
+5. **Drawdown** -- peak date, trough date, recovery date (if recovered), max drawdown %
+6. **Rolling 12-Month Sharpe** -- last 12 data points as ASCII sparkline
+7. **Factor Exposures** -- table: factor name, current z-score, 30d avg; from `factor_scores` composite sub-scores
+8. **Sector Exposures** -- table: sector, long weight, short weight, net weight
+9. **Turnover** -- 30d, 90d, annualized, vs budget
+10. **Recent Execution** -- last 30d slippage stats (from `execution.costs.slippage_stats`)
 
 ```python
 def write(engine, output_path: str = "output/tear_sheet.md") -> None: ...
@@ -352,8 +398,8 @@ def generate_if_due(engine, cfg: dict) -> str | None:
 
 OpenAI call:
 - Model: `gpt-4o` (from `config.analysis.openai_model`)
-- Client: `openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])` — same key used by Layer 3
-- System: JARVIS persona (see §JARVIS Persona)
+- Client: `openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])` -- same key used by Layer 3
+- System: JARVIS persona (see section JARVIS Persona)
 - User prompt: last 5 days of `pnl_attribution`, top 5 / bottom 5 contributors from `position_trades`, current `portfolio_nav`, VIX level, any `risk_events` from this week
 - `json_mode=False` (prose output); call `response.choices[0].message.content` directly
 - Max tokens: 800
@@ -375,7 +421,7 @@ def render_full(letter_date: str, content: str) -> str:
     """
     Returns full rendered markdown including letterhead and footer.
     Letterhead: fund name, 'Wilmington, Delaware', inception date, AUM, doc_id, date.
-    Stamp: 'CONFIDENTIAL · LIMITED PARTNERS ONLY'
+    Stamp: 'CONFIDENTIAL - LIMITED PARTNERS ONLY'
     Body: 'Dear Limited Partners,' + content
     Signature: 'JARVIS\nPortfolio Intelligence System\nMeridian Capital Partners'
     Compliance footer: standard fund disclaimer (not investment advice, etc.)
@@ -396,7 +442,7 @@ OpenAI call:
 System prompt (shared across commentary, LP letter, and dashboard chat):
 
 ```
-You are JARVIS — the portfolio intelligence system for Meridian Capital Partners,
+You are JARVIS -- the portfolio intelligence system for Meridian Capital Partners,
 a quantitative long/short equity hedge fund. You speak with authority, precision,
 and a dry wit. You reference specific positions, factor scores, and risk metrics.
 You never hedge with "I think" or "perhaps". You write like a seasoned PM who
@@ -410,11 +456,11 @@ happens to have read every 10-K and knows every basis point.
 ### `dashboard/app.py`
 
 Entry point. Responsibilities:
-1. `st.set_page_config(layout="wide", page_title="JARVIS", page_icon="🤖")`
+1. `st.set_page_config(layout="wide", page_title="JARVIS", page_icon="...")`
 2. Inject global CSS from `theme.inject_css()`
 3. Render nav pill bar; read `st.session_state.page` (default `"I"`)
 4. Route to page module `render()` function
-5. Auto-refresh thread: if market hours (09:30–16:00 ET, weekday), `st.rerun()` every 300 seconds
+5. Auto-refresh thread: if market hours (09:30-16:00 ET, weekday), `st.rerun()` every 300 seconds
 
 Auto-refresh implementation:
 ```python
@@ -518,7 +564,7 @@ OpenAI call for chat:
 
 ---
 
-### Page I — Portfolio (`dashboard/page_portfolio.py`)
+### Page I -- Portfolio (`dashboard/page_portfolio.py`)
 
 ```python
 def render(engine) -> None:
@@ -551,41 +597,41 @@ Layout: two columns, `[0.44, 0.56]`.
 
 ---
 
-### Page II — Research (`dashboard/page_research.py`)
+### Page II -- Research (`dashboard/page_research.py`)
 
 ```python
 def render(engine) -> None:
 ```
 
-**Section 1 — KPIs**
+**Section 1 -- KPIs**
 
 Row of 5: Universe, Long/Short Candidates, Crowding Flags, Latest Score Date, Regime.
 
-**Section 2 — Rebalance Advisory Banner**
+**Section 2 -- Rebalance Advisory Banner**
 
 Check three conditions, show amber warning banner if any true:
 - Any held ticker has earnings within `config.portfolio.earnings_blackout_days` days
-- FOMC meeting within 3 days (hardcoded list of known 2025–2026 dates in `FOMC_DATES` constant)
+- FOMC meeting within 3 days (hardcoded list of known 2025-2026 dates in `FOMC_DATES` constant)
 - Monthly OpEx Friday within 3 days (third Friday of month)
 
-**Section 3 — Optimization Toggle**
+**Section 3 -- Optimization Toggle**
 
-`st.radio("Portfolio construction", ["MVO", "Conviction-weighted"])` — stores choice in `st.session_state.opt_mode`. Passed to execution pre-trade note only (does not re-run Layer 4).
+`st.radio("Portfolio construction", ["MVO", "Conviction-weighted"])` -- stores choice in `st.session_state.opt_mode`. Passed to execution pre-trade note only (does not re-run Layer 4).
 
-**Section 4 — Factor Heatmap**
+**Section 4 -- Factor Heatmap**
 
-Top 30 longs + bottom 30 shorts × 8 factor scores.  
-Source: latest `factor_scores` joined with `sp500_universe` for sector.  
-Rendered as `st.dataframe` with pandas Styler background gradient per column.  
+Top 30 longs + bottom 30 shorts x 8 factor scores.
+Source: latest `factor_scores` joined with `sp500_universe` for sector.
+Rendered as `st.dataframe` with pandas Styler background gradient per column.
 Columns: ticker, sector, momentum, value, quality, growth, revisions, insider, institutional, short_interest, composite.
 
-**Section 5 — Approval Banner**
+**Section 5 -- Approval Banner**
 
 If any rows in `position_approvals` with status=PENDING:
 - Yellow banner: "{N} trades pending approval"
-- **Execute** button: on click → call `_execute_approved(engine)` which:
+- **Execute** button: on click -> call `_execute_approved(engine)` which:
   1. Runs 8 pre-trade veto checks (see below)
-  2. For each trade passing all checks: sets approval status to APPROVED (only if currently PENDING — no re-approving already reviewed rows)
+  2. For each trade passing all checks: sets approval status to APPROVED (only if currently PENDING -- no re-approving already reviewed rows)
   3. Triggers `run_execution.py` as subprocess with `--date TODAY`
   4. Shows spinner; on completion shows success toast
 
@@ -594,7 +640,7 @@ If any rows in `position_approvals` with status=PENDING:
 | # | Check | Source |
 |---|---|---|
 | 1 | Halt lock active | `cache/halt.lock` file exists |
-| 2 | Market closed | Alpaca market clock or 09:30–16:00 ET gate |
+| 2 | Market closed | Alpaca market clock or 09:30-16:00 ET gate |
 | 3 | Daily loss circuit breaker | `risk_events` today with event_type containing 'CLOSE_ALL' or 'SIZE_DOWN' |
 | 4 | Kill switch triggered | `risk_events` today with event_type='KILL_SWITCH' |
 | 5 | Gross exposure would exceed `config.risk.pre_trade.max_gross` | Compute post-trade gross from `portfolio_positions` + pending trades |
@@ -604,16 +650,16 @@ If any rows in `position_approvals` with status=PENDING:
 
 Failed checks: show per-trade veto reason in `.veto-reason` styled div; do not execute that trade.
 
-**Section 6 — Candidate Cards (2 × 10)**
+**Section 6 -- Candidate Cards (2 x 10)**
 
-Two columns: Longs (green accent) | Shorts (red accent).  
-Each card shows: ticker, company name, sector, composite score, Piotroski score, Altman-Z score, unrealized PnL if held.  
-Expander: Claude `analysis_results` for this ticker (latest `result_json`), rendered as markdown.  
+Two columns: Longs (green accent) | Shorts (red accent).
+Each card shows: ticker, company name, sector, composite score, Piotroski score, Altman-Z score, unrealized PnL if held.
+Expander: Claude `analysis_results` for this ticker (latest `result_json`), rendered as markdown.
 Approve / Reject / Reset buttons update `position_approvals.status` for this ticker's latest pending row.
 
 ---
 
-### Page III — Risk (`dashboard/page_risk.py`)
+### Page III -- Risk (`dashboard/page_risk.py`)
 
 ```python
 def render(engine) -> None:
@@ -621,66 +667,66 @@ def render(engine) -> None:
 
 All data sourced from existing Layer 5 tables + live computation.
 
-**Section 1 — Circuit Breaker Bars**
+**Section 1 -- Circuit Breaker Bars**
 
-Three horizontal progress bars (0–100%) with colour thresholds:
+Three horizontal progress bars (0-100%) with colour thresholds:
 - Daily loss: `risk.circuit_breakers.daily_size_down` (amber) / `daily_close_all` (red)
 - Weekly loss: `risk.circuit_breakers.weekly_size_down`
 - Drawdown: from latest `portfolio_nav.drawdown_pct` vs `risk.circuit_breakers.drawdown_kill`
 
 Values sourced from `portfolio_nav` (today + 5 days ago + rolling peak).
 
-**Section 2 — Tail Risk KPIs**
+**Section 2 -- Tail Risk KPIs**
 
-Row: VIX, VIX 30d avg, Credit Spread (HYG–TLT proxy from `daily_prices`), Credit Spread z-score.
+Row: VIX, VIX 30d avg, Credit Spread (HYG-TLT proxy from `daily_prices`), Credit Spread z-score.
 
-**Section 3 — Risk Decomposition Donut**
+**Section 3 -- Risk Decomposition Donut**
 
-Pie chart (Plotly): factor variance vs specific variance.  
-Sourced from `cache/predicted_cov_latest.parquet` (written by Layer 5).  
+Pie chart (Plotly): factor variance vs specific variance.
+Sourced from `cache/predicted_cov_latest.parquet` (written by Layer 5).
 Factor variance = sum of diagonal of `B @ F @ B.T`; specific = sum of diagonal of `D`.
 
-**Section 4 — Factor Risk Contributions Table**
+**Section 4 -- Factor Risk Contributions Table**
 
-Table: factor name, contribution to portfolio variance (%), marginal contribution.  
+Table: factor name, contribution to portfolio variance (%), marginal contribution.
 From `predicted_cov_latest.parquet`.
 
-**Section 5 — MCTR Table**
+**Section 5 -- MCTR Table**
 
-Marginal Contribution to Risk per position.  
-Flag positions where MCTR > `config.risk.circuit_breakers.max_single_position_pct * 1.5`.  
-Computed from covariance matrix × current portfolio weights.
+Marginal Contribution to Risk per position.
+Flag positions where MCTR > `config.risk.circuit_breakers.max_single_position_pct * 1.5`.
+Computed from covariance matrix x current portfolio weights.
 
-**Section 6 — Factor Exposure Bars**
+**Section 6 -- Factor Exposure Bars**
 
-Horizontal bars for each of 8 factors, showing portfolio-weighted average z-score.  
+Horizontal bars for each of 8 factors, showing portfolio-weighted average z-score.
 Red warning annotation if `|z| > config.risk.factor_monitor.alert_z_threshold`.
 
-**Section 7 — Stress Test Table**
+**Section 7 -- Stress Test Table**
 
-6 scenarios from `config.risk.stress.scenarios`.  
-Source: rerun `risk.stress_test.run_all()` or read from `risk_log` where `check_type='stress'`.  
+6 scenarios from `config.risk.stress.scenarios`.
+Source: rerun `risk.stress_test.run_all()` or read from `risk_log` where `check_type='stress'`.
 Columns: scenario, estimated loss ($), estimated loss (%), confidence.
 
-**Section 8 — Correlation Heatmap**
+**Section 8 -- Correlation Heatmap**
 
-60-day pairwise correlation of current positions using `daily_prices`.  
+60-day pairwise correlation of current positions using `daily_prices`.
 Plotly heatmap. Below chart: "Effective Bets" = `1 / mean(|pairwise_corr|)`.
 
-**Section 9 — 72-Hour Alerts**
+**Section 9 -- 72-Hour Alerts**
 
-`risk_log` rows from last 72 hours where result in ('WARNING', 'REJECTED', 'TRIGGERED').  
+`risk_log` rows from last 72 hours where result in ('WARNING', 'REJECTED', 'TRIGGERED').
 Shown as coloured alert boxes.
 
 ---
 
-### Page IV — Performance (`dashboard/page_performance.py`)
+### Page IV -- Performance (`dashboard/page_performance.py`)
 
 ```python
 def render(engine) -> None:
 ```
 
-**Section 1 — Equity Curve**
+**Section 1 -- Equity Curve**
 
 Plotly line chart. Two traces:
 - Portfolio NAV rebased to 100 (from `portfolio_nav`)
@@ -688,67 +734,67 @@ Plotly line chart. Two traces:
 
 x-axis: date, y-axis: index value.
 
-**Section 2 — Monthly Returns Grid**
+**Section 2 -- Monthly Returns Grid**
 
-Pivot: rows=year, cols=Jan–Dec + Annual.  
-Source: `portfolio_nav` daily returns aggregated to monthly.  
-Rendered via `st.dataframe` with Styler — green for positive, red for negative, intensity proportional to magnitude (diverging at 0).
+Pivot: rows=year, cols=Jan-Dec + Annual.
+Source: `portfolio_nav` daily returns aggregated to monthly.
+Rendered via `st.dataframe` with Styler -- green for positive, red for negative, intensity proportional to magnitude (diverging at 0).
 
-**Section 3 — Drawdown Chart**
+**Section 3 -- Drawdown Chart**
 
 Plotly area chart (filled red) of `portfolio_nav.drawdown_pct` over time.
 
-**Section 4 — P&L Attribution**
+**Section 4 -- P&L Attribution**
 
-Stacked bar chart (Plotly): one bar per day, coloured segments for Beta / Sector / Factor / Alpha.  
+Stacked bar chart (Plotly): one bar per day, coloured segments for Beta / Sector / Factor / Alpha.
 Source: `pnl_attribution`. Limit to last 90 days; slider to extend.
 
-**Section 5 — Rolling 12-Month Sharpe**
+**Section 5 -- Rolling 12-Month Sharpe**
 
-Line chart: 252-day rolling Sharpe computed from `portfolio_nav.nav` daily returns.  
+Line chart: 252-day rolling Sharpe computed from `portfolio_nav.nav` daily returns.
 Reference line at 0 and at 1.0.
 
-**Section 6 — Sector-Relative Alpha**
+**Section 6 -- Sector-Relative Alpha**
 
-Bar chart: one bar per sector, showing 90d alpha vs sector ETF (from `sector_performance.compute()`).  
+Bar chart: one bar per sector, showing 90d alpha vs sector ETF (from `sector_performance.compute()`).
 Total alpha KPI above chart. Below chart: winner sectors (green), loser sectors (red) with counts.
 
-**Section 7 — Turnover Panel**
+**Section 7 -- Turnover Panel**
 
-4 KPI tiles: 30d turnover %, annualised %, budget %, tax estimate $.  
+4 KPI tiles: 30d turnover %, annualised %, budget %, tax estimate $.
 Source: `turnover.compute()`.
 
-**Section 8 — Transaction Cost Panel**
+**Section 8 -- Transaction Cost Panel**
 
-Table: estimated cost (from Layer 4 `portfolio.transaction_costs` model), actual slippage cost (from `execution_orders.slippage_bps × filled_shares × avg_fill_price / 10000`), model error = actual − estimated.
+Table: estimated cost (from Layer 4 `portfolio.transaction_costs` model), actual slippage cost (from `execution_orders.slippage_bps x filled_shares x avg_fill_price / 10000`), model error = actual - estimated.
 
-**Section 9 — Best/Worst 5 Contributors**
+**Section 9 -- Best/Worst 5 Contributors**
 
-Two `st.dataframe` tables side by side.  
-Source: `position_trades` closed trades sorted by `realized_pnl` desc / asc.  
+Two `st.dataframe` tables side by side.
+Source: `position_trades` closed trades sorted by `realized_pnl` desc / asc.
 Columns: ticker, direction, holding_days, entry_price, exit_price, realized_pnl.
 
-**Section 10 — Win/Loss Panel**
+**Section 10 -- Win/Loss Panel**
 
 From `win_loss.compute()`:
 - Overall win rate, P/L ratio
 - `st.tabs` for: By Side | By Holding Period | By Sector | By VIX Regime | By Factor Quintile
 - Streak display
 
-**Section 11 — JARVIS Weekly Commentary**
+**Section 11 -- JARVIS Weekly Commentary**
 
-Card showing latest `weekly_commentary.content` rendered as markdown.  
+Card showing latest `weekly_commentary.content` rendered as markdown.
 "Week of {week_start}" label. Regenerate button (sets `force=True`).
 
 ---
 
-### Page V — Execution (`dashboard/page_execution.py`)
+### Page V -- Execution (`dashboard/page_execution.py`)
 
 ```python
 def render(engine) -> None:
 ```
 
-**Section 1 — KPI Row**
+**Section 1 -- KPI Row**
 
 4 tiles:
 - Filled Orders 30d: count from `execution_orders` where `status='FILLED'` and `created_at >= 30d ago`
@@ -756,53 +802,53 @@ def render(engine) -> None:
 - Total Slippage $: sum of `slippage_bps / 10000 * filled_shares * avg_fill_price` for FILLED last 30d
 - Open Orders: count where `status='PENDING'` or `status='PARTIAL'`
 
-**Section 2 — Open Orders Table**
+**Section 2 -- Open Orders Table**
 
-Poll Alpaca via `execution.broker.AlpacaClient().get_open_orders()`.  
-Columns: ticker, action, ordered_shares, filled_shares, status, created_at.  
+Poll Alpaca via `execution.broker.AlpacaClient().get_open_orders()`.
+Columns: ticker, action, ordered_shares, filled_shares, status, created_at.
 Auto-refresh: `st.button("Refresh")` re-queries.
 
-**Section 3 — Recent Trades Log**
+**Section 3 -- Recent Trades Log**
 
-Last 200 rows of `execution_orders` ordered by `created_at desc`.  
-Columns: date, ticker, action, ordered, filled, avg_price, slippage_bps, status.  
+Last 200 rows of `execution_orders` ordered by `created_at desc`.
+Columns: date, ticker, action, ordered, filled, avg_price, slippage_bps, status.
 Highlight FAILED and CANCELLED rows in red.
 
-**Section 4 — Worst 5 Fills**
+**Section 4 -- Worst 5 Fills**
 
 Top 5 by slippage_bps from `execution_orders` (FILLED only, last 90d).
 
-**Section 5 — Short Availability Panel**
+**Section 5 -- Short Availability Panel**
 
-For each ticker in `portfolio_positions` where `direction='SHORT'`:  
-Call `execution.short_check.is_shortable(ticker)` (uses 7-day cache).  
-Display as table: ticker, shortable (✓/✗), days in cache.
+For each ticker in `portfolio_positions` where `direction='SHORT'`:
+Call `execution.short_check.is_shortable(ticker)` (uses 7-day cache).
+Display as table: ticker, shortable (yes/no), days in cache.
 
-**Section 6 — Daily Notional Turnover**
+**Section 6 -- Daily Notional Turnover**
 
-Group `execution_orders` by `rebalance_date`, sum `filled_shares * avg_fill_price` → daily notional.  
+Group `execution_orders` by `rebalance_date`, sum `filled_shares * avg_fill_price` -> daily notional.
 Last 30 rows as bar chart.
 
 ---
 
-### Page VI — Letter (`dashboard/page_letter.py`)
+### Page VI -- Letter (`dashboard/page_letter.py`)
 
 ```python
 def render(engine) -> None:
 ```
 
-**Letter card styling:** warm off-white background (`#f8f6f1`), dark text (`#1a1a1a`), warm border (`#d4c9b0`), border-radius 8px. Georgia serif font. CONFIDENTIAL stamp in dark red (`#8b1a1a`). Subheadings in muted grey (`#5a5a5a`). Deliberately light — designed to read like real letterhead against the dark dashboard.
+**Letter card styling:** warm off-white background (`#f8f6f1`), dark text (`#1a1a1a`), warm border (`#d4c9b0`), border-radius 8px. Georgia serif font. CONFIDENTIAL stamp in dark red (`#8b1a1a`). Subheadings in muted grey (`#5a5a5a`). Deliberately light -- designed to read like real letterhead against the dark dashboard.
 
 **Letterhead block:**
 
 ```
 MERIDIAN CAPITAL PARTNERS
-Wilmington, Delaware  ·  Inception: {inception_date}  ·  AUM: ${nav:,.0f}
+Wilmington, Delaware  -  Inception: {inception_date}  -  AUM: ${nav:,.0f}
 Doc: MCP-IM-{YYYY}-{MMDD}                                        {date}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CONFIDENTIAL · LIMITED PARTNERS ONLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-------------------------------------------------------------------
+CONFIDENTIAL - LIMITED PARTNERS ONLY
+-------------------------------------------------------------------
 ```
 
 **Body:** "Dear Limited Partners," followed by `lp_letters.content` for today rendered as markdown paragraphs.
@@ -816,7 +862,7 @@ Portfolio Intelligence System
 Meridian Capital Partners
 ```
 
-**Compliance footer:** standard disclaimer paragraph — not investment advice, for accredited investors only, past performance not indicative of future results, subject to material risks.
+**Compliance footer:** standard disclaimer paragraph -- not investment advice, for accredited investors only, past performance not indicative of future results, subject to material risks.
 
 **"Regenerate letter" button:** calls `lp_letter.generate(engine, cfg, force=True)`, spinner, then reruns.
 
@@ -830,7 +876,7 @@ Add new top-level `reporting:` section:
 
 ```yaml
 reporting:
-  commentary_weekday: 4        # 0=Mon … 4=Fri
+  commentary_weekday: 4        # 0=Mon ... 4=Fri
   inception_date: "2024-01-02" # for letterhead
   tax_rates:
     short_term: 0.37
@@ -896,7 +942,7 @@ The prompt specifies a macOS launchd plist; however the runtime environment is L
 </plist>
 ```
 
-Note: launchd `Weekday=0` means Monday; for Mon–Fri, the plist would need five separate entries or a script-level weekday check. The Linux cron `* * 1-5` is cleaner.
+Note: launchd `Weekday=0` means Monday; for Mon-Fri, the plist would need five separate entries or a script-level weekday check. The Linux cron `* * 1-5` is cleaner.
 
 ---
 
@@ -904,42 +950,42 @@ Note: launchd `Weekday=0` means Monday; for Mon–Fri, the plist would need five
 
 ### `tests/test_reporting_nav.py`
 
-- `test_build_nav_series_empty` — empty `portfolio_history` → empty DataFrame, no crash
-- `test_build_nav_series_known_values` — fixture with 3 snapshot dates, assert NAV = `nav_usd + sum(unrealized_pnl)` per day
-- `test_drawdown_calculation` — assert drawdown correct on simulated peak/trough
+- `test_build_nav_series_empty` -- empty `portfolio_history` -> empty DataFrame, no crash
+- `test_build_nav_series_known_values` -- fixture with 3 snapshot dates, assert NAV = `nav_usd + sum(unrealized_pnl)` per day
+- `test_drawdown_calculation` -- assert drawdown correct on simulated peak/trough
 
 ### `tests/test_reporting_attribution.py`
 
-- `test_beta_pnl_formula` — assert `beta_pnl = net_beta * spy_return` to 6 decimal places
-- `test_alpha_residual_sums_to_total` — assert `beta + sector + factor + alpha ≈ total_return` (float tol 1e-9)
-- `test_brinson_zero_when_weights_match_benchmark` — allocation effect = 0 when weights match
+- `test_beta_pnl_formula` -- assert `beta_pnl = net_beta * spy_return` to 6 decimal places
+- `test_alpha_residual_sums_to_total` -- assert `beta + sector + factor + alpha ~= total_return` (float tol 1e-9)
+- `test_brinson_zero_when_weights_match_benchmark` -- allocation effect = 0 when weights match
 
 ### `tests/test_reporting_win_loss.py`
 
-- `test_win_rate_all_winners` — 5 winning trades → win_rate = 1.0
-- `test_win_rate_no_trades` — empty → return zeroed dict, no KeyError
-- `test_holding_period_bucketing` — 3 trades at 2d, 10d, 50d → correct bucket counts
+- `test_win_rate_all_winners` -- 5 winning trades -> win_rate = 1.0
+- `test_win_rate_no_trades` -- empty -> return zeroed dict, no KeyError
+- `test_holding_period_bucketing` -- 3 trades at 2d, 10d, 50d -> correct bucket counts
 
 ### `tests/test_reporting_fifo.py`
 
-- `test_fifo_full_exit` — enter 100 shares, exit all → one closed trade, `realized_pnl` correct
-- `test_fifo_partial_exit` — enter 100, exit 60 → one closed 60-share trade, one open 40-share trade
-- `test_fifo_direction_flip` — long → short → treat as close + new short
+- `test_fifo_full_exit` -- enter 100 shares, exit all -> one closed trade, `realized_pnl` correct
+- `test_fifo_partial_exit` -- enter 100, exit 60 -> one closed 60-share trade, one open 40-share trade
+- `test_fifo_direction_flip` -- long -> short -> treat as close + new short
 
 ---
 
 ## Implementation Order
 
-1. `reporting/db.py` — define 5 tables, extend `data.db.initialise_schema`
-2. `reporting/nav_series.py` — unblocks all performance metrics
-3. `reporting/pnl_attribution.py` — depends on nav_series
-4. `reporting/position_attribution.py` — FIFO logic; most complex module
-5. `reporting/win_loss.py`, `sector_performance.py`, `turnover.py` — pure analytics, no new DB writes
-6. `reporting/tear_sheet.py`, `commentary.py`, `lp_letter.py` — Claude calls; add after analytics
-7. `run_reporting.py` — wires modules together
-8. `dashboard/theme.py`, `dashboard/jarvis.py` — foundation before pages
-9. `dashboard/app.py` — nav shell
-10. Pages I → VI in order
+1. `reporting/db.py` -- define 5 tables, extend `data.db.initialise_schema`
+2. `reporting/nav_series.py` -- unblocks all performance metrics
+3. `reporting/pnl_attribution.py` -- depends on nav_series
+4. `reporting/position_attribution.py` -- FIFO logic; most complex module
+5. `reporting/win_loss.py`, `sector_performance.py`, `turnover.py` -- pure analytics, no new DB writes
+6. `reporting/tear_sheet.py`, `commentary.py`, `lp_letter.py` -- Claude calls; add after analytics
+7. `run_reporting.py` -- wires modules together
+8. `dashboard/theme.py`, `dashboard/jarvis.py` -- foundation before pages
+9. `dashboard/app.py` -- nav shell
+10. Pages I -> VI in order
 11. Tests
 12. Cron entry
 

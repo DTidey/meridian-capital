@@ -1,3 +1,49 @@
+# AI Qualitative Analysis Engine
+
+**Spec file:** `docs/specs/03-ai-analysis.md`
+**Status:** Done
+**Date:** 2026-06-15
+
+## Purpose
+
+Layer 3 reads LONG and SHORT candidates produced by Layer 2 and enriches each with qualitative AI analysis — earnings call sentiment, filing forensics, 10-K risk factor extraction, and insider signal interpretation — then blends the results with the Layer 2 quantitative composite (60% quant / 40% AI) to produce a final conviction score that feeds Layer 4.
+
+## Acceptance criteria
+
+- AC1: The system calls the OpenAI API using `OPENAI_API_KEY` from the environment; if the key is absent, `run_analysis.py` exits with a clear error message before making any API calls.
+- AC2: All API calls use `response_format={"type": "json_object"}` (JSON mode), eliminating the need for fence stripping or regex extraction; the client retries on `openai.RateLimitError` and HTTP 5xx with exponential backoff (delays 2, 4, 8, 16, 32 s; max 5 attempts).
+- AC3: The cost tracker checks `cost_tracker.would_exceed_ceiling()` before each API call and raises `CostCeilingExceeded` (skipping remaining analyses with a logged warning) if the cumulative spend would exceed `cost_ceiling_usd` (default $25.00).
+- AC4: The analysis cache reads and writes the `analysis_results` table keyed by `(analyzer, ticker, artifact_id)`; a cached result within its TTL is returned without an API call, and `evict_expired()` removes stale rows at startup.
+- AC5: The earnings analyzer returns None when no transcript exists for the ticker; otherwise it scores 6 categories (1-10) and stores the mean as `earnings_score` in `ai_scores`.
+- AC6: The risk analyzer strips HTML tags from 10-K `content_text`, truncates to `filing_risk_max_chars`, returns None when no 10-K is cached, and maps `risk_severity` (LOW/MEDIUM/HIGH/CRITICAL) to `risk_score` values of 10, 8, 6, 4.
+- AC7: The insider analyzer returns None when no open-market transactions (`is_open_market = 1`) exist in the 90-day window; otherwise it maps `signal_strength` (STRONG_BUY/MODERATE_BUY/NEUTRAL/MODERATE_SELL/STRONG_SELL) to `insider_ai_score` values of 10, 7.5, 5, 2.5, 1.
+- AC8: The combined score blends Layer 2 `quant_composite` (0-100) and AI `ai_composite` (normalised from 1-10 to 0-100) at 60%/40%; tickers with `analyzers_used == 0` use 100% quant weighting; the combined score is re-ranked within GICS sector and LONG/SHORT labels are re-applied using the same thresholds as Layer 2.
+- AC9: The report generator writes one markdown file per LONG/SHORT candidate to `output/reports_{YYYYMMDD}/`, covering quantitative scores, all four analyzer outputs (gracefully omitting any that returned None), upcoming catalysts from `earnings_calendar`, and sector context.
+- AC10: The entry point `run_analysis.py` supports `--estimate-cost` (token count via tiktoken, exit without API calls), `--ticker`, `--sector`, `--date`, and `--no-cache` flags, and prints a cost summary on completion.
+
+## Security considerations
+
+- Auth/authz impact: No per-user authentication; database credentials control access to cached results and scores.
+- Secrets or credential handling: `OPENAI_API_KEY` is loaded from the `.env` file via `python-dotenv` and never hardcoded. Absence of the key causes an immediate, clean exit before any API call is made.
+- Network or external service impact: Outbound HTTPS to `api.openai.com` only. No inbound exposure. API responses are parsed as JSON before storage; raw response text is not executed.
+- Input handling: Transcript and filing text from the database is passed directly to the OpenAI API; content is truncated (`transcript_max_chars`, `filing_risk_max_chars`) before sending to limit both cost and potential prompt-injection surface. The API response is parsed via `json.loads` from guaranteed-valid JSON (OpenAI JSON mode).
+- No meaningful security impact beyond the above.
+
+## Test guidance
+
+- AC1 -> `tests/test_api_client.py`
+- AC2 -> `tests/test_api_client.py`
+- AC3 -> `tests/test_cost_tracker.py`, `tests/test_api_client.py`
+- AC4 -> `tests/test_analysis_cache.py`, `tests/test_analysis_db.py`
+- AC5 -> `tests/test_earnings_analyzer.py`
+- AC6 -> `tests/test_risk_analyzer.py`
+- AC7 -> `tests/test_insider_analyzer.py`
+- AC8 -> `tests/test_combined_score.py`
+- AC9 -> `tests/test_report_generator.py`
+- AC10 -> `tests/test_api_client.py`, `tests/test_cost_tracker.py`
+
+---
+
 # Meridian Capital Partners — Layer 3: AI Qualitative Analysis Engine
 ## Implementation Specification
 

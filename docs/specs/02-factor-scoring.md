@@ -1,3 +1,49 @@
+# Factor Scoring Engine
+
+**Spec file:** `docs/specs/02-factor-scoring.md`
+**Status:** Done
+**Date:** 2026-06-15
+
+## Purpose
+
+Layer 2 reads from the Layer 1 PostgreSQL tables and produces a daily scored universe. Every S&P 500 stock receives 27 sub-factor scores across 8 factor groups and one composite score, each expressed as a 0-100 percentile rank within its GICS sector, with LONG/SHORT labels assigned to the top and bottom quintiles.
+
+## Acceptance criteria
+
+- AC1: The system computes 27 sub-factor scores across 8 factors (momentum 6, value 6, quality 8, growth 5, revisions 3, short interest 3, insider 2, institutional 3) for every ticker in the S&P 500 universe, expressed as sector-percentile ranks on a 0-100 scale.
+- AC2: Tickers with NaN raw values receive the sector median score (50.0) after ranking; if a sector has fewer than `min_sector_size` (default 5) non-NaN tickers for a sub-factor, the system falls back to universe-wide ranking and logs a warning.
+- AC3: The composite score is computed as a weighted sum of the 8 factor scores (weights from config, validated to sum to 1.0 at startup) and re-ranked within sector; tickers with composite >= 80 are labelled LONG and composite <= 20 are labelled SHORT.
+- AC4: The regime module reads the latest ^VIX close and adjusts factor weights — LOW_VOL (VIX < 15): momentum 0.28, value 0.10; HIGH_VOL (VIX > 25): quality 0.28, value 0.22, momentum 0.10 — re-normalising to sum to 1.0; if VIX data is unavailable, NORMAL weights are used with a logged warning.
+- AC5: The revisions factor defaults all three sub-factors to 50.0 when fewer than 30 days of `analyst_estimates` history exist for a ticker (degenerate mode), and logs a warning if more than 50% of the universe is degenerate.
+- AC6: The short interest factor stores LONG-convention scores (lower short interest = higher score); `composite.py` applies `100 - score` when computing the SHORT composite, without storing a separate column.
+- AC7: The insider factor weights CEO/CFO open-market transactions at 3x versus other insiders, and defaults both sub-factors to 50.0 when no open-market transactions (is_open_market = 1) exist in the 90-day window.
+- AC8: Crowding detection computes 60-day rolling pairwise Pearson correlations of factor return series and flags any pair where the deviation from its academic baseline exceeds 0.40; when fewer than 60 days of `factor_scores` history exist, the step is skipped with an informational log.
+- AC9: All scoring results, the resolved regime state, and crowding flags are upserted into `factor_scores`, `regime_state`, and `crowding_flags` tables and also written to `output/scored_universe_latest.csv`.
+- AC10: The entry point `run_scoring.py` accepts `--ticker`, `--date`, and `--no-crowding` flags and prints a structured summary including regime, LONG/SHORT counts, and degenerate factor warnings.
+
+## Security considerations
+
+- Auth/authz impact: Layer 2 reads from and writes to the shared PostgreSQL database; database credentials control all access.
+- Secrets or credential handling: No additional API keys introduced in Layer 2; `DATABASE_URL` is read from environment variables only, never hardcoded.
+- Network or external service impact: No outbound network calls; all data is read from the Layer 1 PostgreSQL tables.
+- Input handling: All input comes from the trusted internal database; no external user input is processed.
+- No meaningful security impact beyond the above.
+
+## Test guidance
+
+- AC1 -> `tests/test_momentum.py`, `tests/test_value.py`, `tests/test_quality.py`, `tests/test_growth.py`, `tests/test_revisions.py`, `tests/test_short_interest.py`, `tests/test_insider.py`, `tests/test_institutional.py`
+- AC2 -> `tests/test_composite.py`, `tests/test_loader.py`
+- AC3 -> `tests/test_composite.py`
+- AC4 -> `tests/test_regime_weights.py`
+- AC5 -> `tests/test_revisions.py`
+- AC6 -> `tests/test_short_interest.py`, `tests/test_composite.py`
+- AC7 -> `tests/test_insider.py`
+- AC8 -> `tests/test_crowding.py`
+- AC9 -> `tests/test_scoring_db.py`
+- AC10 -> `tests/test_scoring_db.py`
+
+---
+
 # Meridian Capital Partners — Layer 2: Factor Scoring Engine
 ## Implementation Specification
 
