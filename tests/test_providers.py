@@ -1,7 +1,5 @@
 """Provider selection based on environment variables."""
 
-import pytest
-
 from data.providers import (
     FundamentalsProvider,
     MacroProvider,

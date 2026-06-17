@@ -4,29 +4,27 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db   # noqa: F401
-import factors.db     # noqa: F401
-import risk.db        # noqa: F401
-import analysis.db    # noqa: F401
-import execution.db   # noqa: F401
-
 from unittest.mock import MagicMock, patch
 
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import execution.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import initialise_schema
-from portfolio.db import portfolio_positions, position_approvals
 from execution.db import execution_orders
-from execution.executor import _limit_price, _chunk_orders, execute_approvals
-
+from execution.executor import _chunk_orders, _limit_price, execute_approvals
+from portfolio.db import portfolio_positions, position_approvals
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _DATE = "2026-05-06"
-_NAV  = 10_000_000.0
+_NAV = 10_000_000.0
 
 
 @pytest.fixture
@@ -45,45 +43,49 @@ def conn(mem_engine):
 
 
 def _insert_position(conn, ticker, shares=100.0, current_price=150.0, direction="LONG"):
-    conn.execute(portfolio_positions.insert().values(
-        ticker=ticker,
-        direction=direction,
-        shares=shares,
-        entry_price=current_price,
-        entry_date="2026-01-01",
-        current_price=current_price,
-        market_value=shares * current_price,
-        weight=0.05,
-        unrealized_pnl=0.0,
-        sector="Technology",
-        combined_score=60.0,
-        beta=1.0,
-        updated_at=f"{_DATE}T10:00:00",
-    ))
+    conn.execute(
+        portfolio_positions.insert().values(
+            ticker=ticker,
+            direction=direction,
+            shares=shares,
+            entry_price=current_price,
+            entry_date="2026-01-01",
+            current_price=current_price,
+            market_value=shares * current_price,
+            weight=0.05,
+            unrealized_pnl=0.0,
+            sector="Technology",
+            combined_score=60.0,
+            beta=1.0,
+            updated_at=f"{_DATE}T10:00:00",
+        )
+    )
     conn.commit()
 
 
 def _insert_approval(conn, ticker, action="BUY", target=200.0, current=100.0, status="APPROVED"):
-    conn.execute(position_approvals.insert().values(
-        rebalance_date=_DATE,
-        ticker=ticker,
-        action=action,
-        target_shares=target,
-        current_shares=current,
-        delta_shares=target - current,
-        status=status,
-        created_at=f"{_DATE}T09:00:00",
-    ))
+    conn.execute(
+        position_approvals.insert().values(
+            rebalance_date=_DATE,
+            ticker=ticker,
+            action=action,
+            target_shares=target,
+            current_shares=current,
+            delta_shares=target - current,
+            status=status,
+            created_at=f"{_DATE}T09:00:00",
+        )
+    )
     conn.commit()
 
 
 def _base_config():
     return {
         "execution": {
-            "limit_slippage_pct":   0.005,
-            "max_adv_pct":          0.02,
-            "poll_timeout_s":       5,
-            "poll_interval_s":      1,
+            "limit_slippage_pct": 0.005,
+            "max_adv_pct": 0.02,
+            "poll_timeout_s": 5,
+            "poll_interval_s": 1,
             "shortable_cache_days": 7,
         }
     }
@@ -175,7 +177,9 @@ class TestExecuteApprovalsFilled:
         client.get_order_by_id.return_value = filled_order
 
         with patch("execution.executor.is_shortable", return_value=True):
-            results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+            results = execute_approvals(
+                conn, client, _DATE, _base_config(), tmp_path, dry_run=False
+            )
 
         assert len(results) == 1
         row = conn.execute(
@@ -214,7 +218,9 @@ class TestExecuteApprovalsFilled:
 
         client = MagicMock()
         with patch("execution.executor.is_shortable", return_value=False):
-            results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+            results = execute_approvals(
+                conn, client, _DATE, _base_config(), tmp_path, dry_run=False
+            )
 
         assert len(results) == 1
         assert results[0]["status"] == "SKIPPED"

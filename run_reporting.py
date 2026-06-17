@@ -24,20 +24,19 @@ _ROOT = Path(__file__).parent
 load_dotenv(_ROOT / ".env")
 sys.path.insert(0, str(_ROOT))
 
-import reporting.db        # noqa: F401, E402 — registers tables
-import execution.db        # noqa: F401, E402
-import risk.db             # noqa: F401, E402
-import portfolio.db        # noqa: F401, E402
-import analysis.db         # noqa: F401, E402
-import factors.db          # noqa: F401, E402
-
-from data.db import get_engine, initialise_schema    # noqa: E402
-from reporting.nav_series          import build_nav_series    # noqa: E402
-from reporting.pnl_attribution     import run as run_attribution   # noqa: E402
-from reporting.position_attribution import build_trades            # noqa: E402
-from reporting.tear_sheet          import write as write_tear_sheet # noqa: E402
-from reporting.commentary          import generate_if_due          # noqa: E402
-from reporting.lp_letter           import generate as generate_letter  # noqa: E402
+import analysis.db  # noqa: F401, E402
+import execution.db  # noqa: F401, E402
+import factors.db  # noqa: F401, E402
+import portfolio.db  # noqa: F401, E402
+import reporting.db  # noqa: F401, E402 — registers tables
+import risk.db  # noqa: F401, E402
+from data.db import get_engine, initialise_schema  # noqa: E402
+from reporting.commentary import generate_if_due  # noqa: E402
+from reporting.lp_letter import generate as generate_letter  # noqa: E402
+from reporting.nav_series import build_nav_series  # noqa: E402
+from reporting.pnl_attribution import run as run_attribution  # noqa: E402
+from reporting.position_attribution import build_trades  # noqa: E402
+from reporting.tear_sheet import write as write_tear_sheet  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,26 +53,28 @@ def _load_cfg(root: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Meridian Layer 7 — Reporting Engine")
-    parser.add_argument("--date",        default=None, help="Override report date (YYYY-MM-DD)")
-    parser.add_argument("--tearsheet",   action="store_true")
-    parser.add_argument("--commentary",  action="store_true")
-    parser.add_argument("--letter",      action="store_true")
-    parser.add_argument("--all",         action="store_true")
+    parser.add_argument("--date", default=None, help="Override report date (YYYY-MM-DD)")
+    parser.add_argument("--tearsheet", action="store_true")
+    parser.add_argument("--commentary", action="store_true")
+    parser.add_argument("--letter", action="store_true")
+    parser.add_argument("--all", action="store_true")
     args = parser.parse_args()
 
-    do_tearsheet  = args.tearsheet  or args.all
+    do_tearsheet = args.tearsheet or args.all
     do_commentary = args.commentary or args.all
-    do_letter     = args.letter     or args.all
+    do_letter = args.letter or args.all
 
-    cfg    = _load_cfg(_ROOT)
+    cfg = _load_cfg(_ROOT)
     db_url = os.environ.get("DATABASE_URL", cfg["database"]["url"])
     engine = get_engine(db_url)
     initialise_schema(engine)
 
-    cfg_port    = cfg.get("portfolio", {})
-    nav_usd     = float(cfg_port.get("nav_usd", 10_000_000))
-    etf_map     = cfg.get("scoring", {}).get("sector_etf_map") or {}
-    output_dir  = Path(cfg.get("reporting", {}).get("attribution_csv", "output/daily_attribution.csv")).parent
+    cfg_port = cfg.get("portfolio", {})
+    nav_usd = float(cfg_port.get("nav_usd", 10_000_000))
+    etf_map = cfg.get("scoring", {}).get("sector_etf_map") or {}
+    output_dir = Path(
+        cfg.get("reporting", {}).get("attribution_csv", "output/daily_attribution.csv")
+    ).parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 1 — NAV series
@@ -92,7 +93,7 @@ def main() -> None:
     if do_tearsheet:
         log.info("=== Tear Sheet ===")
         tear_path = cfg.get("reporting", {}).get("tear_sheet_path", "output/tear_sheet.md")
-        inception  = cfg.get("reporting", {}).get("inception_date", "2024-01-02")
+        inception = cfg.get("reporting", {}).get("inception_date", "2024-01-02")
         write_tear_sheet(engine, cfg=cfg, output_path=tear_path, inception_date=inception)
 
     if do_commentary:

@@ -15,17 +15,17 @@ from factors.db import factor_scores as factor_scores_table
 logger = logging.getLogger(__name__)
 
 _FACTOR_SCORE_COLS = {
-    "momentum":       "momentum_score",
-    "quality":        "quality_score",
-    "value":          "value_score",
-    "revisions":      "revisions_score",
-    "insider":        "insider_score",
-    "growth":         "growth_score",
+    "momentum": "momentum_score",
+    "quality": "quality_score",
+    "value": "value_score",
+    "revisions": "revisions_score",
+    "insider": "insider_score",
+    "growth": "growth_score",
     "short_interest": "short_interest_score",
-    "institutional":  "institutional_score",
+    "institutional": "institutional_score",
 }
 
-_LONG_QUINTILE  = 80
+_LONG_QUINTILE = 80
 _SHORT_QUINTILE = 20
 
 
@@ -47,12 +47,12 @@ def detect(
         List of dicts, one per factor pair, suitable for inserting into
         crowding_flags table.
     """
-    window_days        = crowding_config.get("window_days", 60)
+    window_days = crowding_config.get("window_days", 60)
     deviation_threshold = crowding_config.get("deviation_threshold", 0.40)
-    baselines          = crowding_config.get("baselines", {})
+    baselines = crowding_config.get("baselines", {})
 
     cutoff = date.fromisoformat(score_date)
-    start  = (cutoff - timedelta(days=window_days + 5)).isoformat()
+    start = (cutoff - timedelta(days=window_days + 5)).isoformat()
 
     # Load historical factor scores
     hist = _load_history(conn, start, score_date)
@@ -65,7 +65,8 @@ def detect(
     if dates_available < window_days // 2:
         logger.info(
             "Crowding: only %d days of history (need ~%d) — skipping",
-            dates_available, window_days,
+            dates_available,
+            window_days,
         )
         return []
 
@@ -83,28 +84,34 @@ def detect(
     factors = list(_FACTOR_SCORE_COLS.keys())
 
     for i, fa in enumerate(factors):
-        for fb in factors[i + 1:]:
+        for fb in factors[i + 1 :]:
             if fa not in corr_matrix.index or fb not in corr_matrix.columns:
                 continue
             rolling_corr = corr_matrix.loc[fa, fb]
             if np.isnan(rolling_corr):
                 continue
 
-            baseline_key  = f"{fa}_{fb}"
+            baseline_key = f"{fa}_{fb}"
             baseline_corr = baselines.get(baseline_key)
-            deviation     = abs(rolling_corr - baseline_corr) if baseline_corr is not None else abs(rolling_corr)
-            flagged       = 1 if deviation > deviation_threshold else 0
+            deviation = (
+                abs(rolling_corr - baseline_corr)
+                if baseline_corr is not None
+                else abs(rolling_corr)
+            )
+            flagged = 1 if deviation > deviation_threshold else 0
 
-            results.append({
-                "score_date":    score_date,
-                "factor_a":      fa,
-                "factor_b":      fb,
-                "rolling_corr":  float(rolling_corr),
-                "baseline_corr": float(baseline_corr) if baseline_corr is not None else None,
-                "deviation":     float(deviation),
-                "flagged":       flagged,
-                "computed_at":   computed_at,
-            })
+            results.append(
+                {
+                    "score_date": score_date,
+                    "factor_a": fa,
+                    "factor_b": fb,
+                    "rolling_corr": float(rolling_corr),
+                    "baseline_corr": float(baseline_corr) if baseline_corr is not None else None,
+                    "deviation": float(deviation),
+                    "flagged": flagged,
+                    "computed_at": computed_at,
+                }
+            )
 
     n_flagged = sum(r["flagged"] for r in results)
     if n_flagged:
@@ -133,8 +140,7 @@ def _load_history(
             factor_scores_table.c.short_interest_score,
             factor_scores_table.c.institutional_score,
         ).where(
-            (factor_scores_table.c.score_date >= start) &
-            (factor_scores_table.c.score_date <= end)
+            (factor_scores_table.c.score_date >= start) & (factor_scores_table.c.score_date <= end)
         )
     ).fetchall()
 
@@ -163,12 +169,12 @@ def _compute_factor_returns(
             if score_col not in day_group.columns:
                 continue
 
-            long_tickers  = day_group.index[day_group[score_col] >= _LONG_QUINTILE].tolist()
+            long_tickers = day_group.index[day_group[score_col] >= _LONG_QUINTILE].tolist()
             short_tickers = day_group.index[day_group[score_col] <= _SHORT_QUINTILE].tolist()
 
             # Find next trading day's return
             date_ts = pd.Timestamp(score_date)
-            future  = price_wide[price_wide.index > date_ts]
+            future = price_wide[price_wide.index > date_ts]
             if future.empty:
                 continue
             next_day = future.index[0]
@@ -178,14 +184,14 @@ def _compute_factor_returns(
                 continue
             prev_day = prev_day_prices.index[-1]
 
-            def _mean_ret(tickers):
+            def _mean_ret(tickers, _prev=prev_day, _next=next_day):
                 cols = [t for t in tickers if t in price_wide.columns]
                 if not cols:
                     return np.nan
-                ret = (price_wide.loc[next_day, cols] / price_wide.loc[prev_day, cols] - 1)
+                ret = price_wide.loc[_next, cols] / price_wide.loc[_prev, cols] - 1
                 return float(ret.mean())
 
-            long_ret  = _mean_ret(long_tickers)
+            long_ret = _mean_ret(long_tickers)
             short_ret = _mean_ret(short_tickers)
 
             if not np.isnan(long_ret) and not np.isnan(short_ret):

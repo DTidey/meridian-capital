@@ -21,7 +21,7 @@ COLS = [
 def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     """Return DataFrame indexed by ticker with growth sub-factor scores (0–100)."""
     universe = data["universe"]
-    funds    = data["fundamentals"]
+    funds = data["fundamentals"]
     min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
@@ -38,13 +38,13 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             continue
 
         latest = tf.iloc[-1]
-        raw.loc[ticker, "grw_rev_yoy"]     = _yoy(tf, "revenue")
-        raw.loc[ticker, "grw_earn_yoy"]    = _yoy(tf, "net_income")
-        raw.loc[ticker, "grw_rev_accel"]   = _acceleration(tf, "revenue")
+        raw.loc[ticker, "grw_rev_yoy"] = _yoy(tf, "revenue")
+        raw.loc[ticker, "grw_earn_yoy"] = _yoy(tf, "net_income")
+        raw.loc[ticker, "grw_rev_accel"] = _acceleration(tf, "revenue")
         raw.loc[ticker, "grw_rd_intensity"] = safe_div(
             latest.get("rd_expense"), latest.get("revenue")
         )
-        raw.loc[ticker, "grw_fcf_yoy"]     = _yoy(tf, "fcf")
+        raw.loc[ticker, "grw_fcf_yoy"] = _yoy(tf, "fcf")
 
     raw = raw.astype(float)
 
@@ -63,7 +63,7 @@ def _yoy(df: pd.DataFrame, col: str) -> float:
     if len(df) < 5:
         return np.nan
     latest = df.iloc[-1][col]
-    prior  = df.iloc[-5][col]
+    prior = df.iloc[-5][col]
     return pct_change(latest, prior)
 
 
@@ -71,8 +71,8 @@ def _acceleration(df: pd.DataFrame, col: str) -> float:
     """YoY growth acceleration: latest YoY minus YoY from 4 quarters ago."""
     if len(df) < 9:
         return np.nan
-    current_yoy = pct_change(df.iloc[-1][col],  df.iloc[-5][col])
-    prior_yoy   = pct_change(df.iloc[-5][col],  df.iloc[-9][col])
+    current_yoy = pct_change(df.iloc[-1][col], df.iloc[-5][col])
+    prior_yoy = pct_change(df.iloc[-5][col], df.iloc[-9][col])
     if current_yoy is None or prior_yoy is None:
         return np.nan
     return current_yoy - prior_yoy

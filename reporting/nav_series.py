@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -37,7 +37,8 @@ def build_nav_series(
             sa.select(
                 portfolio_history.c.snapshot_date,
                 sa.func.sum(portfolio_history.c.unrealized_pnl).label("total_pnl"),
-            ).group_by(portfolio_history.c.snapshot_date)
+            )
+            .group_by(portfolio_history.c.snapshot_date)
             .order_by(portfolio_history.c.snapshot_date)
         ).fetchall()
 
@@ -58,21 +59,26 @@ def build_nav_series(
 
         df = pd.DataFrame({"date": dates, "nav": nav_series})
         df["spy_close"] = df["date"].map(spy_map)
-        df["peak_nav"]  = df["nav"].cummax()
+        df["peak_nav"] = df["nav"].cummax()
         df["drawdown_pct"] = (df["peak_nav"] - df["nav"]) / df["peak_nav"]
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ins = insert_or_replace(conn, portfolio_nav)
-        conn.execute(ins, [
-            {
-                "date":         row.date,
-                "nav":          float(row.nav),
-                "spy_close":    float(row.spy_close) if row.spy_close is not None and row.spy_close == row.spy_close else None,
-                "drawdown_pct": float(row.drawdown_pct),
-                "computed_at":  now,
-            }
-            for row in df.itertuples()
-        ])
+        conn.execute(
+            ins,
+            [
+                {
+                    "date": row.date,
+                    "nav": float(row.nav),
+                    "spy_close": float(row.spy_close)
+                    if row.spy_close is not None and row.spy_close == row.spy_close
+                    else None,
+                    "drawdown_pct": float(row.drawdown_pct),
+                    "computed_at": now,
+                }
+                for row in df.itertuples()
+            ],
+        )
 
     log.info("NAV series: %d rows written", len(df))
     return df[["date", "nav", "spy_close", "drawdown_pct"]]

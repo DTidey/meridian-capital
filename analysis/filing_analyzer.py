@@ -1,6 +1,5 @@
 """Forensic filing analyzer — uses 8 quarters of fundamental metrics."""
 
-import json
 import logging
 
 import pandas as pd
@@ -34,10 +33,20 @@ _RESPONSE_SCHEMA = """\
 }"""
 
 _FUND_COLS = [
-    "period_end", "revenue", "net_income", "cfo", "total_assets",
-    "total_debt", "total_equity", "accounts_receivable",
-    "gross_margin", "operating_margin", "debt_to_equity",
-    "cfo_to_ni", "accruals_ratio", "current_ratio",
+    "period_end",
+    "revenue",
+    "net_income",
+    "cfo",
+    "total_assets",
+    "total_debt",
+    "total_equity",
+    "accounts_receivable",
+    "gross_margin",
+    "operating_margin",
+    "debt_to_equity",
+    "cfo_to_ni",
+    "accruals_ratio",
+    "current_ratio",
 ]
 
 
@@ -56,15 +65,18 @@ def analyse(
         return None
 
     latest_period = str(fund_df["period_end"].max())[:10]
-    artifact_id   = AnalysisCache.artifact_id_filing(ticker, latest_period)
+    artifact_id = AnalysisCache.artifact_id_filing(ticker, latest_period)
 
     cached = cache.get("filing", ticker, artifact_id)
     if cached is not None:
         logger.debug("Filing: cache hit for %s (%s)", ticker, latest_period)
         return cached
 
-    model = config.get("analysis", {}).get("analyzer_models", {}).get("filing",
-            config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
+    model = (
+        config.get("analysis", {})
+        .get("analyzer_models", {})
+        .get("filing", config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
+    )
 
     table_json = fund_df.tail(8).to_json(orient="records", date_format="iso")
     user_prompt = (
@@ -78,8 +90,7 @@ def analyse(
     result = client.chat(_SYSTEM_PROMPT, user_prompt, model=model)
     result = _validate(result)
 
-    cache.set("filing", ticker, artifact_id, model, result,
-              _zero_usage(), _last_cost(client))
+    cache.set("filing", ticker, artifact_id, model, result, _zero_usage(), _last_cost(client))
     return result
 
 
@@ -95,12 +106,17 @@ def filing_score(result: dict) -> float | None:
 
 def _fetch_fundamentals(conn, ticker: str, score_date: str) -> pd.DataFrame:
     rows = conn.execute(
-        sa.select(*[fundamentals_table.c[c] for c in _FUND_COLS if c in
-                    [col.name for col in fundamentals_table.columns]])
+        sa.select(
+            *[
+                fundamentals_table.c[c]
+                for c in _FUND_COLS
+                if c in [col.name for col in fundamentals_table.columns]
+            ]
+        )
         .where(
-            (fundamentals_table.c.ticker      == ticker) &
-            (fundamentals_table.c.period_type == "quarterly") &
-            (fundamentals_table.c.period_end  <= score_date)
+            (fundamentals_table.c.ticker == ticker)
+            & (fundamentals_table.c.period_type == "quarterly")
+            & (fundamentals_table.c.period_end <= score_date)
         )
         .order_by(fundamentals_table.c.period_end.desc())
         .limit(8)
@@ -122,6 +138,7 @@ def _validate(result: dict) -> dict:
 
 def _zero_usage():
     from unittest.mock import MagicMock
+
     u = MagicMock()
     u.prompt_tokens = 0
     u.completion_tokens = 0

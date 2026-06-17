@@ -4,15 +4,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db   # noqa: F401
-import factors.db     # noqa: F401
-import risk.db        # noqa: F401
-import analysis.db    # noqa: F401
-import execution.db   # noqa: F401
-
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import execution.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import initialise_schema
 from execution.db import execution_orders
 
@@ -33,19 +32,21 @@ def conn(mem_engine):
 
 
 def _insert_order(conn, ticker="AAPL", action="BUY", status="PENDING", slippage_bps=None):
-    conn.execute(execution_orders.insert().values(
-        rebalance_date="2026-05-06",
-        ticker=ticker,
-        action=action,
-        ordered_shares=100.0,
-        filled_shares=0.0,
-        avg_fill_price=None,
-        order_id=None,
-        status=status,
-        slippage_bps=slippage_bps,
-        created_at="2026-05-06T10:00:00",
-        updated_at="2026-05-06T10:00:00",
-    ))
+    conn.execute(
+        execution_orders.insert().values(
+            rebalance_date="2026-05-06",
+            ticker=ticker,
+            action=action,
+            ordered_shares=100.0,
+            filled_shares=0.0,
+            avg_fill_price=None,
+            order_id=None,
+            status=status,
+            slippage_bps=slippage_bps,
+            created_at="2026-05-06T10:00:00",
+            updated_at="2026-05-06T10:00:00",
+        )
+    )
     conn.commit()
 
 

@@ -11,8 +11,6 @@ log = logging.getLogger(__name__)
 
 def cancel_open_orders(client) -> int:
     """Cancel all open Alpaca orders. Returns the count cancelled."""
-    from alpaca.trading.requests import GetOrdersRequest
-    from alpaca.trading.enums import QueryOrderStatus
 
     try:
         cancel_statuses = client.cancel_orders()

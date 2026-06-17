@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
-from data.db import insider_cluster_flags, insider_transactions
+from data.db import insider_transactions
 from data.sec_data import _flag_cluster_buys, _is_ceo_cfo, _parse_form4_xml
 
 # ---------------------------------------------------------------------------
@@ -82,30 +82,37 @@ FORM4_XML_MISSING_FIELDS = """\
 # _is_ceo_cfo
 # ---------------------------------------------------------------------------
 
+
 class TestIsCeoCfo:
-    @pytest.mark.parametrize("title", [
-        "Chief Executive Officer",
-        "CEO",
-        "ceo",
-        "Chief Financial Officer",
-        "CFO",
-        "cfo",
-        "chief executive",
-        "Chief Financial",
-        "Interim Chief Executive Officer",
-    ])
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Chief Executive Officer",
+            "CEO",
+            "ceo",
+            "Chief Financial Officer",
+            "CFO",
+            "cfo",
+            "chief executive",
+            "Chief Financial",
+            "Interim Chief Executive Officer",
+        ],
+    )
     def test_executive_titles_detected(self, title):
         assert _is_ceo_cfo(title) is True
 
-    @pytest.mark.parametrize("title", [
-        "Vice President",
-        "Director",
-        "Senior Vice President",
-        "General Counsel",
-        "Chief Operating Officer",
-        "Chief Technology Officer",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Vice President",
+            "Director",
+            "Senior Vice President",
+            "General Counsel",
+            "Chief Operating Officer",
+            "Chief Technology Officer",
+            "",
+        ],
+    )
     def test_non_executive_titles_not_detected(self, title):
         assert _is_ceo_cfo(title) is False
 
@@ -116,6 +123,7 @@ class TestIsCeoCfo:
 # ---------------------------------------------------------------------------
 # _parse_form4_xml
 # ---------------------------------------------------------------------------
+
 
 class TestParseForm4Xml:
     def test_open_market_purchase(self):
@@ -166,8 +174,9 @@ class TestParseForm4Xml:
         assert t["date"] is None
 
     def test_unknown_code_mapped_to_other(self):
-        xml = FORM4_XML_PURCHASE.replace("<transactionCode>P</transactionCode>",
-                                         "<transactionCode>X</transactionCode>")
+        xml = FORM4_XML_PURCHASE.replace(
+            "<transactionCode>P</transactionCode>", "<transactionCode>X</transactionCode>"
+        )
         txns = _parse_form4_xml(xml)
         assert txns[0]["transaction_type"] == "Other"
         assert txns[0]["is_open_market"] == 0
@@ -177,13 +186,21 @@ class TestParseForm4Xml:
 # _flag_cluster_buys
 # ---------------------------------------------------------------------------
 
+
 def _insert_purchase(conn, ticker, insider_name, date_str, shares=1000):
     conn.execute(
         sa.insert(insider_transactions).values(
-            ticker=ticker, insider_name=insider_name, insider_title="Director",
-            transaction_type="Purchase", transaction_code="P",
-            shares=shares, price=100.0, date=date_str,
-            ownership_type="D", is_open_market=1, is_ceo_cfo=0,
+            ticker=ticker,
+            insider_name=insider_name,
+            insider_title="Director",
+            transaction_type="Purchase",
+            transaction_code="P",
+            shares=shares,
+            price=100.0,
+            date=date_str,
+            ownership_type="D",
+            is_open_market=1,
+            is_ceo_cfo=0,
             accession_no=f"acc-{insider_name}-{date_str}",
         )
     )
@@ -221,7 +238,9 @@ class TestFlagClusterBuys:
         # Alice buys 3 times — should not count as 3 distinct insiders
         for i in range(3):
             _insert_purchase(
-                tmp_db, "NVDA", "Alice",
+                tmp_db,
+                "NVDA",
+                "Alice",
                 (base + timedelta(days=i)).strftime("%Y-%m-%d"),
                 shares=1000 + i,
             )
@@ -250,15 +269,14 @@ class TestFlagClusterBuys:
     def test_insiders_outside_window_not_grouped(self, tmp_db, config):
         window = config["sec"]["cluster_buy_window_days"]
         # Space purchases > window apart so they can't be in the same window
-        dates = [
+        _dates = [
             datetime(2024, 1, 1),
             datetime(2024, 1, 1) + timedelta(days=window + 5),
             datetime(2024, 1, 1) + timedelta(days=window * 2 + 10),
         ]
         # All within lookback
-        recent_dates = [
-            (datetime.utcnow() - timedelta(days=30 - i * 2)).strftime("%Y-%m-%d")
-            for i in range(3)
+        _recent_dates = [
+            (datetime.utcnow() - timedelta(days=30 - i * 2)).strftime("%Y-%m-%d") for i in range(3)
         ]
         # Use recent dates that ARE within lookback but spaced > window apart
         spaced_dates = [
@@ -266,7 +284,7 @@ class TestFlagClusterBuys:
             for i in range(3)
         ]
         # Only the most recent two will be within lookback
-        for name, date in zip(["Alice", "Bob", "Charlie"], spaced_dates):
+        for name, date in zip(["Alice", "Bob", "Charlie"], spaced_dates, strict=False):
             _insert_purchase(tmp_db, "AMZN", name, date)
         tmp_db.commit()
 

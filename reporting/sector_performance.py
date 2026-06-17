@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 
-from data.db import daily_prices, sp500_universe
+from data.db import daily_prices
 from portfolio.db import portfolio_history
 
 if TYPE_CHECKING:
@@ -19,17 +19,17 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _SECTOR_ETF_MAP = {
-    "Information Technology":  "XLK",
-    "Financials":              "XLF",
-    "Health Care":             "XLV",
-    "Energy":                  "XLE",
-    "Industrials":             "XLI",
-    "Communication Services":  "XLC",
-    "Consumer Discretionary":  "XLY",
-    "Consumer Staples":        "XLP",
-    "Materials":               "XLB",
-    "Real Estate":             "XLRE",
-    "Utilities":               "XLU",
+    "Information Technology": "XLK",
+    "Financials": "XLF",
+    "Health Care": "XLV",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Communication Services": "XLC",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
 }
 
 
@@ -45,7 +45,7 @@ def compute(
     Also attaches attributes: total_alpha, winner_count, loser_count.
     """
     etf_map = sector_etf_map or _SECTOR_ETF_MAP
-    cutoff  = (date.today() - timedelta(days=lookback_days)).isoformat()
+    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
 
     with engine.connect() as conn:
         hist = conn.execute(
@@ -55,12 +55,13 @@ def compute(
                 portfolio_history.c.direction,
                 portfolio_history.c.weight,
                 portfolio_history.c.sector,
-            ).where(portfolio_history.c.snapshot_date >= cutoff)
+            )
+            .where(portfolio_history.c.snapshot_date >= cutoff)
             .order_by(portfolio_history.c.snapshot_date)
         ).fetchall()
 
         all_etfs = list(set(etf_map.values()))
-        tickers  = list({r[1] for r in hist}) + all_etfs
+        tickers = list({r[1] for r in hist}) + all_etfs
         price_rows = conn.execute(
             sa.select(daily_prices.c.date, daily_prices.c.ticker, daily_prices.c.adj_close)
             .where(daily_prices.c.ticker.in_(tickers))
@@ -69,19 +70,29 @@ def compute(
         ).fetchall()
 
     if not hist:
-        return pd.DataFrame(columns=["sector", "portfolio_return", "etf_return", "alpha", "num_longs", "num_shorts", "winner"])
+        return pd.DataFrame(
+            columns=[
+                "sector",
+                "portfolio_return",
+                "etf_return",
+                "alpha",
+                "num_longs",
+                "num_shorts",
+                "winner",
+            ]
+        )
 
     hist_df = pd.DataFrame(hist, columns=["date", "ticker", "direction", "weight", "sector"])
     price_df = pd.DataFrame(price_rows, columns=["date", "ticker", "close"])
     price_pivot = price_df.pivot(index="date", columns="ticker", values="close")
-    price_rets  = price_pivot.pct_change()
+    price_rets = price_pivot.pct_change()
 
     # Cumulative return from first date to last date
     dates = sorted(price_rets.index.tolist())
     if len(dates) < 2:
         return pd.DataFrame()
 
-    first_d, last_d = dates[0], dates[-1]
+    _first_d, _last_d = dates[0], dates[-1]
 
     rows = []
     for sector, etf in etf_map.items():
@@ -89,7 +100,7 @@ def compute(
         if sector_hist.empty:
             continue
 
-        n_longs  = sector_hist[sector_hist["direction"] == "LONG"]["ticker"].nunique()
+        n_longs = sector_hist[sector_hist["direction"] == "LONG"]["ticker"].nunique()
         n_shorts = sector_hist[sector_hist["direction"] == "SHORT"]["ticker"].nunique()
 
         # Portfolio sector return: weighted average of position returns
@@ -99,7 +110,7 @@ def compute(
             if t not in price_pivot.columns:
                 continue
             p_start = price_pivot[t].dropna().iloc[0] if not price_pivot[t].dropna().empty else None
-            p_end   = price_pivot[t].dropna().iloc[-1] if not price_pivot[t].dropna().empty else None
+            p_end = price_pivot[t].dropna().iloc[-1] if not price_pivot[t].dropna().empty else None
             if p_start and p_end and p_start > 0:
                 ticker_rets[t] = (p_end - p_start) / p_start
 
@@ -119,21 +130,23 @@ def compute(
             etf_ret = 0.0
 
         alpha = port_sector_ret - etf_ret
-        rows.append({
-            "sector":           sector,
-            "portfolio_return": round(port_sector_ret, 6),
-            "etf_return":       round(etf_ret, 6),
-            "alpha":            round(alpha, 6),
-            "num_longs":        n_longs,
-            "num_shorts":       n_shorts,
-            "winner":           alpha > 0,
-        })
+        rows.append(
+            {
+                "sector": sector,
+                "portfolio_return": round(port_sector_ret, 6),
+                "etf_return": round(etf_ret, 6),
+                "alpha": round(alpha, 6),
+                "num_longs": n_longs,
+                "num_shorts": n_shorts,
+                "winner": alpha > 0,
+            }
+        )
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
 
-    df.total_alpha    = float(df["alpha"].sum())
-    df.winner_count   = int(df["winner"].sum())
-    df.loser_count    = int((~df["winner"]).sum())
+    df.total_alpha = float(df["alpha"].sum())
+    df.winner_count = int(df["winner"].sum())
+    df.loser_count = int((~df["winner"]).sum())
     return df

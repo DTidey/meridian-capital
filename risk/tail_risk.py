@@ -18,7 +18,7 @@ fallback is used on any error or when the API key is absent.
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -27,22 +27,23 @@ import sqlalchemy as sa
 
 from data.db import daily_prices
 from portfolio.db import position_approvals
-from risk.db import risk_log, risk_events
+from risk.db import risk_events, risk_log
 
 logger = logging.getLogger(__name__)
 
-_CLOSING_ACTIONS  = {"SELL", "COVER"}
-_OPENING_ACTIONS  = {"BUY", "SHORT"}
+_CLOSING_ACTIONS = {"SELL", "COVER"}
+_OPENING_ACTIONS = {"BUY", "SHORT"}
 _SHARE_ZERO_THRESHOLD = 1.0
-_FRED_SERIES      = "BAMLH0A0HYM2"
-_FRED_BASE_URL    = "https://api.stlouisfed.org/fred/series/observations"
-_HYG_TICKER       = "HYG"
-_VIX_TICKER       = "^VIX"
+_FRED_SERIES = "BAMLH0A0HYM2"
+_FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+_HYG_TICKER = "HYG"
+_VIX_TICKER = "^VIX"
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_tail_risk(
     conn: sa.engine.Connection,
@@ -79,28 +80,24 @@ def run_tail_risk(
     """
     cfg = _load_config(config)
 
-    vix             = _get_vix(conn, score_date)
+    vix = _get_vix(conn, score_date)
     credit_spread_z = _get_credit_spread_z(conn, score_date, cfg, cache_dir)
 
     # -----------------------------------------------------------------------
     # Determine state and action
     # -----------------------------------------------------------------------
     if vix >= cfg["vix_stress"]:
-        state          = "STRESS"
-        action         = "REDUCE_GROSS_50"
-        reduction_pct  = 0.50
-    elif vix >= cfg["vix_caution"]:
-        state          = "CAUTION"
-        action         = "REDUCE_GROSS_20"
-        reduction_pct  = 0.20
-    elif credit_spread_z >= cfg["credit_spread_sigma"]:
-        state          = "CAUTION"
-        action         = "REDUCE_GROSS_20"
-        reduction_pct  = 0.20
+        state = "STRESS"
+        action = "REDUCE_GROSS_50"
+        reduction_pct = 0.50
+    elif vix >= cfg["vix_caution"] or credit_spread_z >= cfg["credit_spread_sigma"]:
+        state = "CAUTION"
+        action = "REDUCE_GROSS_20"
+        reduction_pct = 0.20
     else:
-        state          = "NORMAL"
-        action         = None
-        reduction_pct  = 0.0
+        state = "NORMAL"
+        action = None
+        reduction_pct = 0.0
 
     actions_taken: list[str] = []
 
@@ -108,31 +105,53 @@ def run_tail_risk(
         actions_taken.append(action)
         logger.warning(
             "tail_risk: %s triggered (%s) | vix=%.2f credit_z=%.3f reduction=%.0f%%",
-            state, action, vix, credit_spread_z, reduction_pct * 100,
+            state,
+            action,
+            vix,
+            credit_spread_z,
+            reduction_pct * 100,
         )
         if not whatif:
             modified = _apply_reduce_gross(conn, score_date, reduction_pct)
-            _log_event(conn, score_date, action, state, {
-                "vix":             round(vix, 4),
-                "credit_spread_z": round(credit_spread_z, 4),
-                "reduction_pct":   reduction_pct,
-                "modified_count":  modified,
-            })
-            _log_check(conn, score_date, "tail_risk", "TRIGGERED",
-                       f"{action}: vix={vix:.2f} credit_z={credit_spread_z:.3f}")
+            _log_event(
+                conn,
+                score_date,
+                action,
+                state,
+                {
+                    "vix": round(vix, 4),
+                    "credit_spread_z": round(credit_spread_z, 4),
+                    "reduction_pct": reduction_pct,
+                    "modified_count": modified,
+                },
+            )
+            _log_check(
+                conn,
+                score_date,
+                "tail_risk",
+                "TRIGGERED",
+                f"{action}: vix={vix:.2f} credit_z={credit_spread_z:.3f}",
+            )
     else:
         logger.info(
-            "tail_risk: NORMAL | vix=%.2f credit_z=%.3f", vix, credit_spread_z,
+            "tail_risk: NORMAL | vix=%.2f credit_z=%.3f",
+            vix,
+            credit_spread_z,
         )
         if not whatif:
-            _log_check(conn, score_date, "tail_risk", "OK",
-                       f"NORMAL: vix={vix:.2f} credit_z={credit_spread_z:.3f}")
+            _log_check(
+                conn,
+                score_date,
+                "tail_risk",
+                "OK",
+                f"NORMAL: vix={vix:.2f} credit_z={credit_spread_z:.3f}",
+            )
 
     return {
-        "tail_risk_state":  state,
-        "vix":              round(vix, 4),
-        "credit_spread_z":  round(credit_spread_z, 4),
-        "actions":          actions_taken,
+        "tail_risk_state": state,
+        "vix": round(vix, 4),
+        "credit_spread_z": round(credit_spread_z, 4),
+        "actions": actions_taken,
     }
 
 
@@ -140,15 +159,13 @@ def run_tail_risk(
 # VIX loader
 # ---------------------------------------------------------------------------
 
+
 def _get_vix(conn: sa.engine.Connection, score_date: str) -> float:
     """Return the most recent VIX close on or before score_date. Returns 0.0 if absent."""
     try:
         row = conn.execute(
             sa.select(daily_prices.c.close)
-            .where(
-                (daily_prices.c.ticker == _VIX_TICKER) &
-                (daily_prices.c.date   <= score_date)
-            )
+            .where((daily_prices.c.ticker == _VIX_TICKER) & (daily_prices.c.date <= score_date))
             .order_by(daily_prices.c.date.desc())
             .limit(1)
         ).fetchone()
@@ -164,6 +181,7 @@ def _get_vix(conn: sa.engine.Connection, score_date: str) -> float:
 # ---------------------------------------------------------------------------
 # Credit spread loader
 # ---------------------------------------------------------------------------
+
 
 def _get_credit_spread_z(
     conn: sa.engine.Connection,
@@ -183,9 +201,7 @@ def _get_credit_spread_z(
         try:
             return _get_credit_spread_z_fred(score_date, fred_key, cfg, cache_dir)
         except Exception:
-            logger.exception(
-                "tail_risk: FRED API failed — falling back to HYG price method"
-            )
+            logger.exception("tail_risk: FRED API failed — falling back to HYG price method")
 
     try:
         return _get_credit_spread_z_hyg(conn, score_date, cfg)
@@ -204,24 +220,22 @@ def _get_credit_spread_z_fred(
     import requests  # noqa: PLC0415
 
     lookback = cfg["credit_lookback_days"]
-    start_date_dt = (
-        datetime.fromisoformat(score_date) - timedelta(days=lookback + 30)
-    )
+    start_date_dt = datetime.fromisoformat(score_date) - timedelta(days=lookback + 30)
     start_str = start_date_dt.strftime("%Y-%m-%d")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "fred_hy_spread.parquet"
 
     params = {
-        "series_id":         _FRED_SERIES,
+        "series_id": _FRED_SERIES,
         "observation_start": start_str,
-        "api_key":           fred_key,
-        "file_type":         "json",
+        "api_key": fred_key,
+        "file_type": "json",
     }
     response = requests.get(_FRED_BASE_URL, params=params, timeout=15)
     response.raise_for_status()
 
-    payload      = response.json()
+    payload = response.json()
     observations = payload.get("observations", [])
     if not observations:
         raise ValueError("FRED returned empty observations list")
@@ -250,10 +264,10 @@ def _get_credit_spread_z_fred(
     if len(fred_df) < 10:
         raise ValueError(f"Insufficient FRED observations: {len(fred_df)}")
 
-    latest   = float(fred_df["spread"].iloc[-1])
+    latest = float(fred_df["spread"].iloc[-1])
     hist_arr = fred_df["spread"].values.astype(float)
     mean_val = float(np.mean(hist_arr))
-    std_val  = float(np.std(hist_arr, ddof=1))
+    std_val = float(np.std(hist_arr, ddof=1))
 
     if std_val < 1e-9:
         return 0.0
@@ -277,10 +291,9 @@ def _get_credit_spread_z_hyg(
         sa.select(
             daily_prices.c.date,
             daily_prices.c.close,
-        ).where(
-            (daily_prices.c.ticker == _HYG_TICKER) &
-            (daily_prices.c.date   <= score_date)
-        ).order_by(daily_prices.c.date.desc())
+        )
+        .where((daily_prices.c.ticker == _HYG_TICKER) & (daily_prices.c.date <= score_date))
+        .order_by(daily_prices.c.date.desc())
         .limit(lookback)
     ).fetchall()
 
@@ -296,8 +309,8 @@ def _get_credit_spread_z_hyg(
         return 0.0
 
     today_close = float(closes.iloc[-1])
-    mean_close  = float(closes.mean())
-    std_close   = float(closes.std(ddof=1))
+    mean_close = float(closes.mean())
+    std_close = float(closes.std(ddof=1))
 
     if std_close < 1e-9:
         return 0.0
@@ -309,6 +322,7 @@ def _get_credit_spread_z_hyg(
 # ---------------------------------------------------------------------------
 # Gross reduction action
 # ---------------------------------------------------------------------------
+
 
 def _is_closing(action: str, target_shares: float) -> bool:
     """Return True for closing trades (SELL/COVER or near-zero shares)."""
@@ -327,22 +341,22 @@ def _apply_reduce_gross(
     """
     rows = conn.execute(
         sa.select(position_approvals).where(
-            (position_approvals.c.rebalance_date == score_date) &
-            (position_approvals.c.status         == "APPROVED")
+            (position_approvals.c.rebalance_date == score_date)
+            & (position_approvals.c.status == "APPROVED")
         )
     ).fetchall()
 
     if not rows:
         return 0
 
-    cols  = [c.name for c in position_approvals.columns]
-    now   = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cols = [c.name for c in position_approvals.columns]
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     scale = 1.0 - reduction_pct
     count = 0
 
     for row in rows:
-        d             = dict(zip(cols, row))
-        action        = str(d.get("action", "") or "")
+        d = dict(zip(cols, row, strict=False))
+        action = str(d.get("action", "") or "")
         target_shares = float(d.get("target_shares", 0.0) or 0.0)
 
         if _is_closing(action, target_shares):
@@ -351,8 +365,8 @@ def _apply_reduce_gross(
             continue
 
         current_shares = float(d.get("current_shares", 0.0) or 0.0)
-        new_target     = round(target_shares * scale)
-        new_delta      = new_target - current_shares
+        new_target = round(target_shares * scale)
+        new_delta = new_target - current_shares
 
         conn.execute(
             position_approvals.update()
@@ -368,7 +382,8 @@ def _apply_reduce_gross(
     conn.commit()
     logger.info(
         "tail_risk: reduce_gross (pct=%.0f%%) modified %d trades",
-        reduction_pct * 100, count,
+        reduction_pct * 100,
+        count,
     )
     return count
 
@@ -377,6 +392,7 @@ def _apply_reduce_gross(
 # Logging helpers
 # ---------------------------------------------------------------------------
 
+
 def _log_event(
     conn: sa.engine.Connection,
     event_date: str,
@@ -384,7 +400,7 @@ def _log_event(
     trigger: str,
     detail_dict: dict,
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
         risk_events.insert().values(
             event_date=event_date,
@@ -404,7 +420,7 @@ def _log_check(
     result: str,
     reason: str,
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
         risk_log.insert().values(
             run_date=run_date,
@@ -422,11 +438,12 @@ def _log_check(
 # Config loader
 # ---------------------------------------------------------------------------
 
+
 def _load_config(config: dict) -> dict:
     tr = config.get("risk", {}).get("tail_risk", {})
     return {
-        "vix_caution":          float(tr.get("vix_caution",          25)),
-        "vix_stress":           float(tr.get("vix_stress",           35)),
-        "credit_spread_sigma":  float(tr.get("credit_spread_sigma",  1.0)),
-        "credit_lookback_days": int(  tr.get("credit_lookback_days", 252)),
+        "vix_caution": float(tr.get("vix_caution", 25)),
+        "vix_stress": float(tr.get("vix_stress", 35)),
+        "credit_spread_sigma": float(tr.get("credit_spread_sigma", 1.0)),
+        "credit_lookback_days": int(tr.get("credit_lookback_days", 252)),
     }

@@ -5,7 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import json
 
 import pytest
 
@@ -18,10 +17,10 @@ from risk.risk_state import (
     set_halt,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDefaultState:
     def test_default_state_keys(self):

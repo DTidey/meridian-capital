@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _SHORT_TERM_RATE = 0.37
-_LONG_TERM_RATE  = 0.20
+_LONG_TERM_RATE = 0.20
 _LT_THRESHOLD_DAYS = 365
 
 
@@ -32,7 +32,7 @@ def compute(
       turnover_30d_pct, turnover_90d_pct, turnover_annualized,
       budget_pct, tax_estimate_usd, short_term_gains, long_term_gains.
     """
-    today = date.today().isoformat()
+    _today = date.today().isoformat()
     cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
     cutoff_90 = (date.today() - timedelta(days=90)).isoformat()
 
@@ -48,7 +48,8 @@ def compute(
                 portfolio_history.c.snapshot_date,
                 portfolio_history.c.ticker,
                 portfolio_history.c.market_value,
-            ).where(portfolio_history.c.snapshot_date >= cutoff_90)
+            )
+            .where(portfolio_history.c.snapshot_date >= cutoff_90)
             .order_by(portfolio_history.c.snapshot_date, portfolio_history.c.ticker)
         ).fetchall()
 
@@ -63,7 +64,7 @@ def compute(
             )
         ).fetchall()
 
-    nav_df  = pd.DataFrame(nav_rows,  columns=["date", "nav"])
+    nav_df = pd.DataFrame(nav_rows, columns=["date", "nav"])
     hist_df = pd.DataFrame(hist_rows, columns=["date", "ticker", "market_value"])
 
     avg_nav_30 = _avg_nav(nav_df, cutoff_30)
@@ -86,13 +87,13 @@ def compute(
     tax_estimate = st_gains * _SHORT_TERM_RATE + lt_gains * _LONG_TERM_RATE
 
     return {
-        "turnover_30d_pct":    round(turnover_30, 4),
-        "turnover_90d_pct":    round(turnover_90, 4),
+        "turnover_30d_pct": round(turnover_30, 4),
+        "turnover_90d_pct": round(turnover_90, 4),
         "turnover_annualized": round(turnover_ann, 4),
-        "budget_pct":          turnover_budget_pct,
-        "tax_estimate_usd":    round(tax_estimate, 2),
-        "short_term_gains":    round(st_gains, 2),
-        "long_term_gains":     round(lt_gains, 2),
+        "budget_pct": turnover_budget_pct,
+        "tax_estimate_usd": round(tax_estimate, 2),
+        "short_term_gains": round(st_gains, 2),
+        "long_term_gains": round(lt_gains, 2),
     }
 
 

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 COLS = ["rev_30d", "rev_60d", "rev_90d"]
 
 _WINDOWS = {"rev_30d": 30, "rev_60d": 60, "rev_90d": 90}
-_DEGENERATE_THRESHOLD = 30   # days of history required before factor is live
+_DEGENERATE_THRESHOLD = 30  # days of history required before factor is live
 
 
 def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
@@ -25,9 +25,9 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     If fewer than _DEGENERATE_THRESHOLD days of snapshots exist for a ticker,
     that ticker's sub-factors default to 50.0 (neutral).
     """
-    universe  = data["universe"]
+    universe = data["universe"]
     estimates = data["estimates"]
-    min_size  = config.get("scoring", {}).get("min_sector_size", 5)
+    min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
         return _empty_result(universe)
@@ -81,7 +81,9 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     if degenerate_count > len(tickers) * 0.5:
         logger.warning(
             "Revisions: %d/%d tickers degenerate (< %d days of history)",
-            degenerate_count, len(tickers), _DEGENERATE_THRESHOLD,
+            degenerate_count,
+            len(tickers),
+            _DEGENERATE_THRESHOLD,
         )
 
     raw = raw.astype(float)

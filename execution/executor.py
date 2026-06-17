@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import sqlalchemy as sa
 
+from data.db import daily_prices
+from execution.costs import compute_slippage
 from execution.db import execution_orders
 from execution.short_check import is_shortable
-from execution.costs import compute_slippage
 from portfolio.db import portfolio_positions, position_approvals
-from data.db import daily_prices
 
 log = logging.getLogger(__name__)
 
@@ -25,13 +24,14 @@ _CLOSING_ACTIONS = {"SELL", "COVER"}
 # Pricing helpers
 # ---------------------------------------------------------------------------
 
+
 def _limit_price(action: str, current_price: float, slippage_pct: float = 0.005) -> float:
     if action in ("BUY", "COVER"):
         return round(current_price * (1.0 + slippage_pct), 2)
     return round(current_price * (1.0 - slippage_pct), 2)
 
 
-def _chunk_orders(shares: float, adv: Optional[float], max_adv_pct: float = 0.02) -> list[float]:
+def _chunk_orders(shares: float, adv: float | None, max_adv_pct: float = 0.02) -> list[float]:
     """Split shares into chunks of at most max_adv_pct × ADV. Returns list of abs chunk sizes."""
     if adv is None or adv <= 0:
         return [abs(shares)]
@@ -50,6 +50,7 @@ def _chunk_orders(shares: float, adv: Optional[float], max_adv_pct: float = 0.02
 # Order submission
 # ---------------------------------------------------------------------------
 
+
 def submit_order(
     client,
     ticker: str,
@@ -58,39 +59,42 @@ def submit_order(
     current_price: float,
     config: dict,
     dry_run: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """
     Submit a limit order to Alpaca.
     Returns Alpaca order UUID or None on dry_run / failure.
     time_in_force: day (expires at market close).
     """
+    from alpaca.trading.enums import OrderSide, PositionIntent, TimeInForce
     from alpaca.trading.requests import LimitOrderRequest
-    from alpaca.trading.enums import OrderSide, TimeInForce, PositionIntent
 
     slippage_pct = config.get("execution", {}).get("limit_slippage_pct", 0.005)
     limit = _limit_price(action, current_price, slippage_pct)
 
     side_map = {
-        "BUY":   OrderSide.BUY,
+        "BUY": OrderSide.BUY,
         "COVER": OrderSide.BUY,
-        "SELL":  OrderSide.SELL,
+        "SELL": OrderSide.SELL,
         "SHORT": OrderSide.SELL,
     }
     intent_map = {
-        "BUY":   PositionIntent.BUY_TO_OPEN,
+        "BUY": PositionIntent.BUY_TO_OPEN,
         "COVER": PositionIntent.BUY_TO_CLOSE,
-        "SELL":  PositionIntent.SELL_TO_CLOSE,
+        "SELL": PositionIntent.SELL_TO_CLOSE,
         "SHORT": PositionIntent.SELL_TO_OPEN,
     }
 
-    side         = side_map[action]
-    intent       = intent_map[action]
-    qty          = int(round(abs(shares)))
+    side = side_map[action]
+    intent = intent_map[action]
+    qty = int(round(abs(shares)))
 
     if dry_run:
         log.info(
             "[DRY-RUN] %s %d %s @ limit %.2f (day)",
-            action, qty, ticker, limit,
+            action,
+            qty,
+            ticker,
+            limit,
         )
         return None
 
@@ -104,7 +108,14 @@ def submit_order(
     )
     try:
         order = client.submit_order(req)
-        log.info("Submitted %s order for %s: qty=%d limit=%.2f id=%s", action, ticker, qty, limit, order.id)
+        log.info(
+            "Submitted %s order for %s: qty=%d limit=%.2f id=%s",
+            action,
+            ticker,
+            qty,
+            limit,
+            order.id,
+        )
         return str(order.id)
     except Exception as exc:
         log.error("Failed to submit %s order for %s: %s", action, ticker, exc)
@@ -114,6 +125,7 @@ def submit_order(
 # ---------------------------------------------------------------------------
 # Order polling
 # ---------------------------------------------------------------------------
+
 
 def poll_order(client, order_id: str, timeout_s: int = 120, interval_s: int = 5) -> dict:
     """
@@ -129,9 +141,9 @@ def poll_order(client, order_id: str, timeout_s: int = 120, interval_s: int = 5)
             status = str(order.status).lower()
             if status in terminal:
                 return {
-                    "status":          status,
-                    "filled_qty":      float(order.filled_qty or 0),
-                    "avg_fill_price":  float(order.filled_avg_price or 0) or None,
+                    "status": status,
+                    "filled_qty": float(order.filled_qty or 0),
+                    "avg_fill_price": float(order.filled_avg_price or 0) or None,
                 }
         except Exception as exc:
             log.warning("Error polling order %s: %s", order_id, exc)
@@ -147,8 +159,9 @@ def poll_order(client, order_id: str, timeout_s: int = 120, interval_s: int = 5)
 # Main execution loop
 # ---------------------------------------------------------------------------
 
+
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def execute_approvals(
@@ -164,9 +177,9 @@ def execute_approvals(
     Returns list of result dicts (one per ticker).
     """
     ex_cfg = config.get("execution", {})
-    max_adv_pct    = ex_cfg.get("max_adv_pct", 0.02)
-    poll_timeout   = ex_cfg.get("poll_timeout_s", 120)
-    poll_interval  = ex_cfg.get("poll_interval_s", 5)
+    max_adv_pct = ex_cfg.get("max_adv_pct", 0.02)
+    poll_timeout = ex_cfg.get("poll_timeout_s", 120)
+    poll_interval = ex_cfg.get("poll_interval_s", 5)
     shortable_days = ex_cfg.get("shortable_cache_days", 7)
 
     approvals = conn.execute(
@@ -185,7 +198,7 @@ def execute_approvals(
     # Fetch actual Alpaca positions to guard against local-DB / broker drift.
     # None means the fetch failed (skip drift check); {} means fetch succeeded but no positions.
     try:
-        alpaca_positions: Optional[dict] = {p.symbol: p for p in client.get_all_positions()}
+        alpaca_positions: dict | None = {p.symbol: p for p in client.get_all_positions()}
     except Exception as exc:
         log.warning("Could not fetch Alpaca positions — skipping drift check: %s", exc)
         alpaca_positions = None
@@ -198,7 +211,7 @@ def execute_approvals(
             portfolio_positions.c.shares,
         )
     ).fetchall()
-    prices:     dict[str, float] = {r[0]: float(r[1] or 0) for r in price_rows}
+    prices: dict[str, float] = {r[0]: float(r[1] or 0) for r in price_rows}
     cur_shares: dict[str, float] = {r[0]: float(r[2] or 0) for r in price_rows}
 
     # For any approved ticker missing a price, fall back to the latest daily_prices close
@@ -223,11 +236,11 @@ def execute_approvals(
     results: list[dict] = []
 
     for appr in approvals:
-        ticker         = appr.ticker
-        action         = appr.action
-        target_shares  = float(appr.target_shares or 0)
-        current_price  = prices.get(ticker, 0.0)
-        adv: Optional[float] = None  # ADV not stored on approvals — chunk logic uses None
+        ticker = appr.ticker
+        action = appr.action
+        target_shares = float(appr.target_shares or 0)
+        current_price = prices.get(ticker, 0.0)
+        adv: float | None = None  # ADV not stored on approvals — chunk logic uses None
 
         if current_price <= 0:
             log.warning("No current price for %s — skipping.", ticker)
@@ -236,7 +249,7 @@ def execute_approvals(
         # Guard: closing orders require Alpaca to actually hold the position.
         if action in _CLOSING_ACTIONS and alpaca_positions is not None:
             ap = alpaca_positions.get(ticker)
-            has_long  = ap is not None and float(ap.qty) > 0
+            has_long = ap is not None and float(ap.qty) > 0
             has_short = ap is not None and float(ap.qty) < 0
             if action == "SELL" and not has_long:
                 log.warning(
@@ -247,8 +260,14 @@ def execute_approvals(
                     portfolio_positions.delete().where(portfolio_positions.c.ticker == ticker)
                 )
                 conn.commit()
-                results.append({"ticker": ticker, "action": action, "status": "SKIPPED",
-                                 "reason": "no_alpaca_position"})
+                results.append(
+                    {
+                        "ticker": ticker,
+                        "action": action,
+                        "status": "SKIPPED",
+                        "reason": "no_alpaca_position",
+                    }
+                )
                 continue
             if action == "COVER" and not has_short:
                 log.warning(
@@ -259,28 +278,39 @@ def execute_approvals(
                     portfolio_positions.delete().where(portfolio_positions.c.ticker == ticker)
                 )
                 conn.commit()
-                results.append({"ticker": ticker, "action": action, "status": "SKIPPED",
-                                 "reason": "no_alpaca_position"})
+                results.append(
+                    {
+                        "ticker": ticker,
+                        "action": action,
+                        "status": "SKIPPED",
+                        "reason": "no_alpaca_position",
+                    }
+                )
                 continue
 
         # Shortability gate for opening short positions
-        if action == "SHORT":
-            if not is_shortable(ticker, client, cache_dir, shortable_days):
-                log.warning("%s is not shortable — skipping SHORT.", ticker)
-                results.append({"ticker": ticker, "action": action, "status": "SKIPPED",
-                                 "reason": "not_shortable"})
-                continue
+        if action == "SHORT" and not is_shortable(ticker, client, cache_dir, shortable_days):
+            log.warning("%s is not shortable — skipping SHORT.", ticker)
+            results.append(
+                {
+                    "ticker": ticker,
+                    "action": action,
+                    "status": "SKIPPED",
+                    "reason": "not_shortable",
+                }
+            )
+            continue
 
         delta_shares = float(appr.delta_shares or (target_shares - cur_shares.get(ticker, 0)))
-        chunks       = _chunk_orders(delta_shares, adv, max_adv_pct)
+        chunks = _chunk_orders(delta_shares, adv, max_adv_pct)
 
         ticker_filled = 0.0
         ticker_status = "PENDING"
-        fill_prices:  list[float] = []
+        fill_prices: list[float] = []
 
         for chunk in chunks:
             # Insert execution_orders row
-            now_str    = _now()
+            now_str = _now()
             ins_result = conn.execute(
                 execution_orders.insert().values(
                     rebalance_date=score_date,
@@ -330,8 +360,8 @@ def execute_approvals(
             conn.commit()
 
             fill = poll_order(client, order_id, poll_timeout, poll_interval)
-            filled_qty   = fill["filled_qty"]
-            fill_price   = fill["avg_fill_price"]
+            filled_qty = fill["filled_qty"]
+            fill_price = fill["avg_fill_price"]
             final_status = fill["status"]
 
             if filled_qty == 0:
@@ -340,18 +370,17 @@ def execute_approvals(
 
             slip_bps = None
             if fill_price and fill_price > 0:
-                limit = _limit_price(action, current_price,
-                                     ex_cfg.get("limit_slippage_pct", 0.005))
+                limit = _limit_price(action, current_price, ex_cfg.get("limit_slippage_pct", 0.005))
                 slip_bps = compute_slippage(limit, fill_price, action)
                 fill_prices.append(fill_price)
 
             mapped_status = {
-                "filled":       "FILLED",
-                "cancelled":    "CANCELLED",
-                "expired":      "CANCELLED",
+                "filled": "FILLED",
+                "cancelled": "CANCELLED",
+                "expired": "CANCELLED",
                 "done_for_day": "CANCELLED",
-                "rejected":     "FAILED",
-                "partial":      "PARTIAL",
+                "rejected": "FAILED",
+                "partial": "PARTIAL",
             }.get(final_status, "PARTIAL" if filled_qty > 0 else "CANCELLED")
 
             conn.execute(
@@ -390,12 +419,14 @@ def execute_approvals(
                 )
             conn.commit()
 
-        results.append({
-            "ticker":        ticker,
-            "action":        action,
-            "ordered_shares": abs(delta_shares),
-            "filled_shares":  ticker_filled,
-            "status":         "DRY_RUN" if dry_run else ticker_status,
-        })
+        results.append(
+            {
+                "ticker": ticker,
+                "action": action,
+                "ordered_shares": abs(delta_shares),
+                "filled_shares": ticker_filled,
+                "status": "DRY_RUN" if dry_run else ticker_status,
+            }
+        )
 
     return results

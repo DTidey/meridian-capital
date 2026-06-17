@@ -7,14 +7,14 @@ logger = logging.getLogger(__name__)
 # Pricing per 1M tokens (USD) as of mid-2025; update if rates change
 _PRICING: dict[str, dict[str, float]] = {
     "gpt-4o": {
-        "input":          2.50,
-        "output":        10.00,
-        "cached_input":   1.25,   # 50% off
+        "input": 2.50,
+        "output": 10.00,
+        "cached_input": 1.25,  # 50% off
     },
     "gpt-4o-mini": {
-        "input":          0.15,
-        "output":         0.60,
-        "cached_input":   0.075,  # 50% off
+        "input": 0.15,
+        "output": 0.60,
+        "cached_input": 0.075,  # 50% off
     },
 }
 
@@ -39,31 +39,37 @@ class CostTracker:
 
     def record(self, usage, model: str) -> float:
         """Record usage from a completed API call; return incremental cost."""
-        prompt_tokens     = getattr(usage, "prompt_tokens",     0) or 0
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
 
         # OpenAI SDK ≥ 1.x may expose cached_tokens inside prompt_tokens_details
-        details       = getattr(usage, "prompt_tokens_details", None)
+        details = getattr(usage, "prompt_tokens_details", None)
         cached_tokens = getattr(details, "cached_tokens", 0) or 0
         regular_input = prompt_tokens - cached_tokens
 
         pricing = _PRICING.get(model, _DEFAULT_PRICING)
         cost = (
-            regular_input    * pricing["input"]         / 1_000_000
-            + cached_tokens  * pricing["cached_input"]  / 1_000_000
-            + completion_tokens * pricing["output"]     / 1_000_000
+            regular_input * pricing["input"] / 1_000_000
+            + cached_tokens * pricing["cached_input"] / 1_000_000
+            + completion_tokens * pricing["output"] / 1_000_000
         )
 
-        self._calls.append({
-            "model":             model,
-            "prompt_tokens":     prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "cached_tokens":     cached_tokens,
-            "cost_usd":          cost,
-        })
+        self._calls.append(
+            {
+                "model": model,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cached_tokens": cached_tokens,
+                "cost_usd": cost,
+            }
+        )
         logger.debug(
             "API call: model=%s prompt=%d completion=%d cached=%d cost=$%.4f",
-            model, prompt_tokens, completion_tokens, cached_tokens, cost,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+            cost,
         )
         return cost
 
@@ -91,12 +97,12 @@ class CostTracker:
 
     def summary(self) -> dict:
         return {
-            "calls":              len(self._calls),
-            "prompt_tokens":      self.total_prompt_tokens(),
-            "completion_tokens":  self.total_completion_tokens(),
-            "cached_tokens":      self.total_cached_tokens(),
-            "total_cost_usd":     round(self.total_cost_usd(), 4),
-            "ceiling_usd":        self._ceiling,
+            "calls": len(self._calls),
+            "prompt_tokens": self.total_prompt_tokens(),
+            "completion_tokens": self.total_completion_tokens(),
+            "cached_tokens": self.total_cached_tokens(),
+            "total_cost_usd": round(self.total_cost_usd(), 4),
+            "ceiling_usd": self._ceiling,
         }
 
     # ------------------------------------------------------------------

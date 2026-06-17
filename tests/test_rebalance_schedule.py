@@ -4,33 +4,33 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401
-
 from datetime import date, timedelta
 
-import pytest
-
+import portfolio.db  # noqa: F401
 from data.db import earnings_calendar
-from portfolio.rebalance_schedule import check_events, _third_friday
-
+from portfolio.rebalance_schedule import _third_friday, check_events
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_earnings(conn, ticker, earnings_date, eps_estimate=0.5):
-    conn.execute(earnings_calendar.insert().values(
-        ticker=ticker,
-        earnings_date=str(earnings_date),
-        eps_estimate=eps_estimate,
-        fetched_at="2026-01-01T00:00:00+00:00",
-    ))
+    conn.execute(
+        earnings_calendar.insert().values(
+            ticker=ticker,
+            earnings_date=str(earnings_date),
+            eps_estimate=eps_estimate,
+            fetched_at="2026-01-01T00:00:00+00:00",
+        )
+    )
     conn.commit()
 
 
 # ---------------------------------------------------------------------------
 # check_events — earnings
 # ---------------------------------------------------------------------------
+
 
 class TestEarningsWarnings:
     def test_no_warnings_when_clear(self, tmp_db):
@@ -41,20 +41,20 @@ class TestEarningsWarnings:
         # Use 2026-02-10: far from FOMC (2026-01-28 delta=13, 2026-03-18 delta=36)
         # Feb third Friday = Feb 20, delta=10 → > 3
         warnings = check_events([], "2026-02-10", tmp_db)
-        fomc_or_opex = [w for w in warnings if "FOMC" in w or "options expiration" in w]
+        _fomc_or_opex = [w for w in warnings if "FOMC" in w or "options expiration" in w]
         earnings_warns = [w for w in warnings if "earnings" in w.lower()]
         assert earnings_warns == []
 
     def test_earnings_within_two_days_warns(self, tmp_db):
         score_date = "2026-03-01"
-        earn_date  = date.fromisoformat(score_date) + timedelta(days=1)
+        earn_date = date.fromisoformat(score_date) + timedelta(days=1)
         _insert_earnings(tmp_db, "AAPL", earn_date)
         warnings = check_events(["AAPL"], score_date, tmp_db)
         assert any("AAPL" in w for w in warnings)
 
     def test_earnings_outside_window_no_warn(self, tmp_db):
         score_date = "2026-03-01"
-        earn_date  = date.fromisoformat(score_date) + timedelta(days=10)
+        earn_date = date.fromisoformat(score_date) + timedelta(days=10)
         _insert_earnings(tmp_db, "GOOG", earn_date)
         warnings = check_events(["GOOG"], score_date, tmp_db)
         earnings_warns = [w for w in warnings if "GOOG" in w]
@@ -70,6 +70,7 @@ class TestEarningsWarnings:
 # ---------------------------------------------------------------------------
 # check_events — FOMC
 # ---------------------------------------------------------------------------
+
 
 class TestFomcWarnings:
     def test_fomc_within_five_days_warns(self, tmp_db):
@@ -87,6 +88,7 @@ class TestFomcWarnings:
 # ---------------------------------------------------------------------------
 # check_events — options expiry
 # ---------------------------------------------------------------------------
+
 
 class TestOptionsExpiryWarnings:
     def test_options_expiry_within_three_days_warns(self, tmp_db):
@@ -108,6 +110,7 @@ class TestOptionsExpiryWarnings:
 # ---------------------------------------------------------------------------
 # _third_friday
 # ---------------------------------------------------------------------------
+
 
 class TestThirdFriday:
     def test_january_2026(self):

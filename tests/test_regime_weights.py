@@ -8,29 +8,29 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from factors.regime_weights import resolve_regime, adjust_weights, _normalise
-
+from factors.regime_weights import _normalise, adjust_weights, resolve_regime
 
 _BASE_WEIGHTS = {
-    "momentum":       0.20,
-    "quality":        0.20,
-    "value":          0.15,
-    "revisions":      0.15,
-    "insider":        0.10,
-    "growth":         0.10,
+    "momentum": 0.20,
+    "quality": 0.20,
+    "value": 0.15,
+    "revisions": 0.15,
+    "insider": 0.10,
+    "growth": 0.10,
     "short_interest": 0.05,
-    "institutional":  0.05,
+    "institutional": 0.05,
 }
 
 _REGIME_CFG = {
-    "low_vol":  {"vix_below": 15, "momentum": 0.28, "value": 0.10},
-    "high_vol": {"vix_above": 25, "quality":  0.28, "value": 0.22, "momentum": 0.10},
+    "low_vol": {"vix_below": 15, "momentum": 0.28, "value": 0.10},
+    "high_vol": {"vix_above": 25, "quality": 0.28, "value": 0.22, "momentum": 0.10},
 }
 
 
 # ---------------------------------------------------------------------------
 # resolve_regime
 # ---------------------------------------------------------------------------
+
 
 class TestResolveRegime:
     def test_vix_below_15_is_low_vol(self):
@@ -69,6 +69,7 @@ class TestResolveRegime:
 # ---------------------------------------------------------------------------
 # adjust_weights
 # ---------------------------------------------------------------------------
+
 
 class TestAdjustWeights:
     def test_normal_regime_returns_unchanged(self):
@@ -110,6 +111,7 @@ class TestAdjustWeights:
 # ---------------------------------------------------------------------------
 # _normalise
 # ---------------------------------------------------------------------------
+
 
 class TestNormalise:
     def test_sums_to_one(self):

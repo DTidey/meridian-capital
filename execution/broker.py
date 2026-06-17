@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 
@@ -17,18 +16,17 @@ log = logging.getLogger(__name__)
 # Client factory
 # ---------------------------------------------------------------------------
 
+
 def get_client():
     """Return an Alpaca TradingClient using environment credentials."""
     from alpaca.trading.client import TradingClient
 
     api_key = os.environ.get("ALPACA_API_KEY", "")
-    secret  = os.environ.get("ALPACA_SECRET_KEY", "")
-    paper   = os.environ.get("ALPACA_PAPER", "true").lower() != "false"
+    secret = os.environ.get("ALPACA_SECRET_KEY", "")
+    paper = os.environ.get("ALPACA_PAPER", "true").lower() != "false"
 
     if not api_key or not secret:
-        raise EnvironmentError(
-            "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment."
-        )
+        raise OSError("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment.")
     return TradingClient(api_key, secret, paper=paper)
 
 
@@ -36,16 +34,17 @@ def get_account(client) -> dict:
     """Return basic account info dict."""
     acct = client.get_account()
     return {
-        "equity":          float(acct.equity),
-        "buying_power":    float(acct.buying_power),
+        "equity": float(acct.equity),
+        "buying_power": float(acct.buying_power),
         "day_trade_count": int(acct.daytrade_count),
-        "status":          str(acct.status),
+        "status": str(acct.status),
     }
 
 
 # ---------------------------------------------------------------------------
 # Market clock
 # ---------------------------------------------------------------------------
+
 
 def market_is_open(client) -> bool:
     """Return True if market is currently open. Logs WARNING when closed."""
@@ -63,6 +62,7 @@ def market_is_open(client) -> bool:
 # Broker positions
 # ---------------------------------------------------------------------------
 
+
 def get_broker_positions(client) -> dict[str, float]:
     """Return {ticker: signed_qty} from Alpaca (positive=long, negative=short)."""
     positions = client.get_all_positions()
@@ -78,6 +78,7 @@ def get_broker_positions(client) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 # Reconciliation
 # ---------------------------------------------------------------------------
+
 
 def reconcile_positions(conn, client, cache_dir=None, dry_run: bool = False) -> list[dict]:
     """
@@ -103,7 +104,7 @@ def reconcile_positions(conn, client, cache_dir=None, dry_run: bool = False) -> 
 
     all_tickers = set(broker_qtys) | set(db_by_ticker)
     corrections: list[dict] = []
-    now_str = datetime.now(timezone.utc).isoformat()
+    now_str = datetime.now(UTC).isoformat()
 
     for ticker in all_tickers:
         bq = broker_qtys.get(ticker, 0.0)
@@ -115,7 +116,10 @@ def reconcile_positions(conn, client, cache_dir=None, dry_run: bool = False) -> 
         action = "would_correct" if dry_run else "corrected"
         log.warning(
             "Position discrepancy for %s: broker=%.2f db=%.2f — %s.",
-            ticker, bq, dq, "DRY-RUN (no DB change)" if dry_run else "auto-correcting DB",
+            ticker,
+            bq,
+            dq,
+            "DRY-RUN (no DB change)" if dry_run else "auto-correcting DB",
         )
 
         if not dry_run:
@@ -154,12 +158,14 @@ def reconcile_positions(conn, client, cache_dir=None, dry_run: bool = False) -> 
                 )
             conn.commit()
 
-        corrections.append({
-            "ticker":      ticker,
-            "broker_qty":  bq,
-            "db_qty":      dq,
-            "action":      action,
-            "corrected_at": now_str,
-        })
+        corrections.append(
+            {
+                "ticker": ticker,
+                "broker_qty": bq,
+                "db_qty": dq,
+                "action": action,
+                "corrected_at": now_str,
+            }
+        )
 
     return corrections

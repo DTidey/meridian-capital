@@ -1,9 +1,7 @@
 """Universe — cache freshness, Wikipedia parse, benchmark loading, deduplication."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-import pandas as pd
-import pytest
 import responses as rsps
 import sqlalchemy as sa
 
@@ -50,8 +48,10 @@ def _seed_universe(conn, tickers):
     now = datetime.utcnow().isoformat(timespec="seconds")
     conn.execute(
         insert_or_replace(conn, sp500_universe),
-        [{"ticker": t, "company_name": t, "gics_sector": "Technology", "updated_at": now}
-         for t in tickers],
+        [
+            {"ticker": t, "company_name": t, "gics_sector": "Technology", "updated_at": now}
+            for t in tickers
+        ],
     )
     conn.commit()
 
@@ -59,6 +59,7 @@ def _seed_universe(conn, tickers):
 # ---------------------------------------------------------------------------
 # _cache_is_fresh
 # ---------------------------------------------------------------------------
+
 
 class TestCacheIsFresh:
     def test_empty_table_is_not_fresh(self, tmp_db):
@@ -70,17 +71,25 @@ class TestCacheIsFresh:
 
     def test_old_record_is_stale(self, tmp_db):
         stale = (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")
-        tmp_db.execute(sa.insert(sp500_universe).values(
-            ticker="AAPL", company_name="Apple", updated_at=stale,
-        ))
+        tmp_db.execute(
+            sa.insert(sp500_universe).values(
+                ticker="AAPL",
+                company_name="Apple",
+                updated_at=stale,
+            )
+        )
         tmp_db.commit()
         assert _cache_is_fresh(tmp_db, 7) is False
 
     def test_exactly_at_boundary_is_stale(self, tmp_db):
         boundary = (datetime.utcnow() - timedelta(days=7, seconds=1)).isoformat(timespec="seconds")
-        tmp_db.execute(sa.insert(sp500_universe).values(
-            ticker="AAPL", company_name="Apple", updated_at=boundary,
-        ))
+        tmp_db.execute(
+            sa.insert(sp500_universe).values(
+                ticker="AAPL",
+                company_name="Apple",
+                updated_at=boundary,
+            )
+        )
         tmp_db.commit()
         assert _cache_is_fresh(tmp_db, 7) is False
 
@@ -88,6 +97,7 @@ class TestCacheIsFresh:
 # ---------------------------------------------------------------------------
 # fetch_sp500
 # ---------------------------------------------------------------------------
+
 
 class TestFetchSp500:
     @rsps.activate
@@ -109,8 +119,9 @@ class TestFetchSp500:
         rsps.add(rsps.GET, _WIKI_URL, body=_WIKI_HTML, content_type="text/html")
         fetch_sp500(tmp_db, config)
         row = tmp_db.execute(
-            sa.select(sp500_universe.c.gics_sector, sp500_universe.c.gics_sub_industry)
-            .where(sp500_universe.c.ticker == "AAPL")
+            sa.select(sp500_universe.c.gics_sector, sp500_universe.c.gics_sub_industry).where(
+                sp500_universe.c.ticker == "AAPL"
+            )
         ).fetchone()
         assert row[0] == "Information Technology"
         assert row[1] == "Technology Hardware"
@@ -145,7 +156,8 @@ class TestFetchSp500:
         tickers = fetch_sp500(tmp_db, config, force=True)
         assert "CTRA" not in tickers
         count = tmp_db.execute(
-            sa.select(sa.func.count()).select_from(sp500_universe)
+            sa.select(sa.func.count())
+            .select_from(sp500_universe)
             .where(sp500_universe.c.ticker == "CTRA")
         ).scalar()
         assert count == 0
@@ -169,6 +181,7 @@ class TestFetchSp500:
 # load_benchmarks
 # ---------------------------------------------------------------------------
 
+
 class TestLoadBenchmarks:
     def test_all_categories_stored(self, tmp_db, config):
         load_benchmarks(tmp_db, config)
@@ -182,18 +195,21 @@ class TestLoadBenchmarks:
 
     def test_expected_broad_market_tickers(self, tmp_db, config):
         load_benchmarks(tmp_db, config)
-        tickers = set(tmp_db.execute(
-            sa.select(benchmark_tickers.c.ticker)
-            .where(benchmark_tickers.c.category == "broad_market")
-        ).scalars().all())
+        tickers = set(
+            tmp_db.execute(
+                sa.select(benchmark_tickers.c.ticker).where(
+                    benchmark_tickers.c.category == "broad_market"
+                )
+            )
+            .scalars()
+            .all()
+        )
         assert {"SPY", "QQQ", "IWM", "DIA"} <= tickers
 
     def test_idempotent(self, tmp_db, config):
         load_benchmarks(tmp_db, config)
         load_benchmarks(tmp_db, config)
-        count = tmp_db.execute(
-            sa.select(sa.func.count()).select_from(benchmark_tickers)
-        ).scalar()
+        count = tmp_db.execute(sa.select(sa.func.count()).select_from(benchmark_tickers)).scalar()
         expected = (
             len(config["universe"]["benchmark_tickers"]["broad_market"])
             + len(config["universe"]["benchmark_tickers"]["sector_etfs"])
@@ -205,6 +221,7 @@ class TestLoadBenchmarks:
 # ---------------------------------------------------------------------------
 # get_all_tickers
 # ---------------------------------------------------------------------------
+
 
 class TestGetAllTickers:
     @rsps.activate

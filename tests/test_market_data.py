@@ -1,8 +1,5 @@
 """Market data ingestion — unit tests for helpers and DB round-trips."""
 
-import math
-from datetime import datetime, timedelta
-
 import pandas as pd
 import pytest
 import sqlalchemy as sa
@@ -10,10 +7,10 @@ import sqlalchemy as sa
 from data.db import daily_prices
 from data.market_data import _float, _last_stored_date, _upsert_prices
 
-
 # ---------------------------------------------------------------------------
 # _float
 # ---------------------------------------------------------------------------
+
 
 class TestFloat:
     def test_valid_number(self):
@@ -48,6 +45,7 @@ class TestFloat:
 # _last_stored_date
 # ---------------------------------------------------------------------------
 
+
 class TestLastStoredDate:
     def test_empty_table_returns_none(self, tmp_db):
         assert _last_stored_date(tmp_db, "AAPL") is None
@@ -71,18 +69,19 @@ class TestLastStoredDate:
 # _upsert_prices
 # ---------------------------------------------------------------------------
 
+
 def _make_price_df(dates, closes, volumes=None):
     """Build a minimal OHLCV DataFrame matching yfinance output."""
     idx = pd.to_datetime(dates)
     n = len(dates)
     return pd.DataFrame(
         {
-            "Open":      closes,
-            "High":      closes,
-            "Low":       closes,
-            "Close":     closes,
+            "Open": closes,
+            "High": closes,
+            "Low": closes,
+            "Close": closes,
             "Adj Close": closes,
-            "Volume":    volumes if volumes else [1_000_000] * n,
+            "Volume": volumes if volumes else [1_000_000] * n,
         },
         index=idx,
     )

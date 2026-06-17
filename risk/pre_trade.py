@@ -5,7 +5,7 @@ skip checks 2–8 and are subject only to the halt-lock check.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +29,7 @@ _SHARE_ZERO_THRESHOLD = 1.0  # shares below this are treated as zero / full clos
 # Public entry point
 # ---------------------------------------------------------------------------
 
+
 def run_pre_trade(
     conn: sa.engine.Connection,
     score_date: str,
@@ -51,9 +52,7 @@ def run_pre_trade(
         logger.info("pre_trade: no PENDING rows for %s", score_date)
         return pd.DataFrame(columns=["ticker", "action", "result", "reason"])
 
-    all_tickers = list(
-        set(pending["ticker"].tolist()) | set(positions_df["ticker"].tolist())
-    )
+    all_tickers = list(set(pending["ticker"].tolist()) | set(positions_df["ticker"].tolist()))
     latest_prices = _load_latest_prices(conn, all_tickers, score_date)
     adv_map = _load_adv(conn, all_tickers, score_date, cfg["adv_lookback"])
     sector_map = _load_sector_map(conn, score_date)
@@ -80,12 +79,14 @@ def run_pre_trade(
             conn=conn,
             score_date=score_date,
         )
-        results.append({
-            "ticker": row["ticker"],
-            "action": row["action"],
-            "result": result,
-            "reason": reason,
-        })
+        results.append(
+            {
+                "ticker": row["ticker"],
+                "action": row["action"],
+                "result": result,
+                "reason": reason,
+            }
+        )
         approval_updates.append((row["id"], result, reason, updated_row))
 
     if not whatif:
@@ -98,6 +99,7 @@ def run_pre_trade(
 # ---------------------------------------------------------------------------
 # Per-trade evaluation
 # ---------------------------------------------------------------------------
+
 
 def _evaluate_trade(
     row: pd.Series,
@@ -155,7 +157,7 @@ def _evaluate_trade(
         if trade_value > adv_limit:
             return (
                 "REJECTED",
-                f"LIQUIDITY: trade ${trade_value:,.0f} > {cfg['adv_pct']*100:.0f}% ADV ${adv_limit:,.0f}",
+                f"LIQUIDITY: trade ${trade_value:,.0f} > {cfg['adv_pct'] * 100:.0f}% ADV ${adv_limit:,.0f}",
                 None,
             )
 
@@ -231,6 +233,7 @@ def _evaluate_trade(
 # Individual check helpers
 # ---------------------------------------------------------------------------
 
+
 def _check_sector_concentration(
     proforma_weights: pd.Series,
     sector_map: dict[str, str],
@@ -283,10 +286,9 @@ def _check_pairwise_corr(
             daily_prices.c.ticker,
             daily_prices.c.date,
             daily_prices.c.adj_close,
-        ).where(
-            daily_prices.c.ticker.in_(tickers_to_load) &
-            (daily_prices.c.date <= score_date)
-        ).order_by(daily_prices.c.date.asc())
+        )
+        .where(daily_prices.c.ticker.in_(tickers_to_load) & (daily_prices.c.date <= score_date))
+        .order_by(daily_prices.c.date.asc())
     ).fetchall()
 
     if not rows:
@@ -325,6 +327,7 @@ def _check_pairwise_corr(
 # Pro-forma weight builder
 # ---------------------------------------------------------------------------
 
+
 def _build_proforma_weights(
     ticker: str,
     action: str,
@@ -358,19 +361,20 @@ def _build_proforma_weights(
 # Data loaders
 # ---------------------------------------------------------------------------
 
+
 def _load_config(config: dict) -> dict:
     pt = config.get("risk", {}).get("pre_trade", {})
     return {
-        "adv_lookback":           int(pt.get("adv_lookback", 20)),
-        "adv_pct":                float(pt.get("adv_pct", 0.05)),
-        "max_position_pct":       float(pt.get("max_position_pct", 0.05)),
-        "max_sector_pct":         float(pt.get("max_sector_pct", 0.25)),
-        "max_gross":              float(pt.get("max_gross", 1.65)),
-        "net_min":                float(pt.get("net_min", -0.10)),
-        "net_max":                float(pt.get("net_max", 0.15)),
-        "max_net_beta":           float(pt.get("max_net_beta", 0.20)),
-        "max_pairwise_corr":      float(pt.get("max_pairwise_corr", 0.80)),
-        "corr_lookback":          int(pt.get("corr_lookback", 60)),
+        "adv_lookback": int(pt.get("adv_lookback", 20)),
+        "adv_pct": float(pt.get("adv_pct", 0.05)),
+        "max_position_pct": float(pt.get("max_position_pct", 0.05)),
+        "max_sector_pct": float(pt.get("max_sector_pct", 0.25)),
+        "max_gross": float(pt.get("max_gross", 1.65)),
+        "net_min": float(pt.get("net_min", -0.10)),
+        "net_max": float(pt.get("net_max", 0.15)),
+        "max_net_beta": float(pt.get("max_net_beta", 0.20)),
+        "max_pairwise_corr": float(pt.get("max_pairwise_corr", 0.80)),
+        "corr_lookback": int(pt.get("corr_lookback", 60)),
         "earnings_blackout_days": int(pt.get("earnings_blackout_days", 5)),
     }
 
@@ -384,8 +388,8 @@ def _load_positions(conn: sa.engine.Connection) -> pd.DataFrame:
 def _load_pending(conn: sa.engine.Connection, score_date: str) -> pd.DataFrame:
     rows = conn.execute(
         sa.select(position_approvals).where(
-            (position_approvals.c.rebalance_date == score_date) &
-            (position_approvals.c.status == "PENDING")
+            (position_approvals.c.rebalance_date == score_date)
+            & (position_approvals.c.status == "PENDING")
         )
     ).fetchall()
     cols = [c.name for c in position_approvals.columns]
@@ -405,10 +409,9 @@ def _load_latest_prices(
         sa.select(
             daily_prices.c.ticker,
             sa.func.max(daily_prices.c.date).label("max_date"),
-        ).where(
-            daily_prices.c.ticker.in_(tickers) &
-            (daily_prices.c.date <= score_date)
-        ).group_by(daily_prices.c.ticker)
+        )
+        .where(daily_prices.c.ticker.in_(tickers) & (daily_prices.c.date <= score_date))
+        .group_by(daily_prices.c.ticker)
     ).fetchall()
 
     if not rows:
@@ -420,8 +423,7 @@ def _load_latest_prices(
     for ticker, max_date in ticker_max_date.items():
         price_row = conn.execute(
             sa.select(daily_prices.c.close).where(
-                (daily_prices.c.ticker == ticker) &
-                (daily_prices.c.date == max_date)
+                (daily_prices.c.ticker == ticker) & (daily_prices.c.date == max_date)
             )
         ).fetchone()
         if price_row and price_row[0]:
@@ -445,10 +447,9 @@ def _load_adv(
             daily_prices.c.ticker,
             daily_prices.c.close,
             daily_prices.c.volume,
-        ).where(
-            daily_prices.c.ticker.in_(tickers) &
-            (daily_prices.c.date <= score_date)
-        ).order_by(daily_prices.c.date.desc())
+        )
+        .where(daily_prices.c.ticker.in_(tickers) & (daily_prices.c.date <= score_date))
+        .order_by(daily_prices.c.date.desc())
     ).fetchall()
 
     if not rows:
@@ -491,9 +492,9 @@ def _load_blackout_tickers(
 
     rows = conn.execute(
         sa.select(earnings_calendar.c.ticker).where(
-            earnings_calendar.c.ticker.in_(tickers) &
-            (earnings_calendar.c.earnings_date >= lo) &
-            (earnings_calendar.c.earnings_date <= hi)
+            earnings_calendar.c.ticker.in_(tickers)
+            & (earnings_calendar.c.earnings_date >= lo)
+            & (earnings_calendar.c.earnings_date <= hi)
         )
     ).fetchall()
 
@@ -504,16 +505,17 @@ def _load_blackout_tickers(
 # DB write helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_approval_updates(
     conn: sa.engine.Connection,
     updates: list[tuple],
 ) -> None:
     """Update position_approvals rows: (id, result, reason, updated_row_dict|None)."""
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for approval_id, result, reason, updated_row in updates:
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    for approval_id, result, _reason, updated_row in updates:
         status = "APPROVED" if result == "APPROVED" else "REJECTED"
         stmt_vals: dict = {
-            "status":      status,
+            "status": status,
             "reviewed_at": now,
         }
         if updated_row:
@@ -533,14 +535,14 @@ def _write_risk_log(
     score_date: str,
     results: list[dict],
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     rows = [
         {
-            "run_date":    score_date,
-            "check_type":  "pre_trade",
-            "ticker":      r["ticker"],
-            "result":      r["result"],
-            "reason":      r["reason"],
+            "run_date": score_date,
+            "check_type": "pre_trade",
+            "ticker": r["ticker"],
+            "result": r["result"],
+            "reason": r["reason"],
             "recorded_at": now,
         }
         for r in results

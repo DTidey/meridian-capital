@@ -14,23 +14,24 @@ Logic
 """
 
 import logging
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
 import sqlalchemy as sa
-from datetime import datetime, timezone
 
 from data.db import daily_prices
 from risk.db import risk_log
 
 logger = logging.getLogger(__name__)
 
-_MIN_RETURNS = 20   # minimum number of return observations required per ticker
+_MIN_RETURNS = 20  # minimum number of return observations required per ticker
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_correlation_monitor(
     conn: sa.engine.Connection,
@@ -65,26 +66,25 @@ def run_correlation_monitor(
     """
     cfg_section = config.get("risk", {}).get("correlation_monitor", {})
     alert_avg_corr = float(cfg_section.get("alert_avg_corr", 0.60))
-    lookback_days  = int(cfg_section.get("lookback_days",  60))
+    lookback_days = int(cfg_section.get("lookback_days", 60))
 
     # -----------------------------------------------------------------------
     # Step 1 — split books
     # -----------------------------------------------------------------------
-    long_tickers  = _book_tickers(positions_df, "LONG")
+    long_tickers = _book_tickers(positions_df, "LONG")
     short_tickers = _book_tickers(positions_df, "SHORT")
-    all_tickers   = list(set(long_tickers) | set(short_tickers))
+    all_tickers = list(set(long_tickers) | set(short_tickers))
 
     if not all_tickers:
         logger.info("correlation_monitor: no positions found for %s", score_date)
         result = {
-            "long_avg_corr":    0.0,
-            "short_avg_corr":   0.0,
+            "long_avg_corr": 0.0,
+            "short_avg_corr": 0.0,
             "effective_n_bets": 0.0,
-            "alerts":           [],
+            "alerts": [],
         }
         if not whatif:
-            _log_check(conn, score_date, "correlation_monitor", "OK",
-                       "no positions in portfolio")
+            _log_check(conn, score_date, "correlation_monitor", "OK", "no positions in portfolio")
         return result
 
     # -----------------------------------------------------------------------
@@ -95,9 +95,9 @@ def run_correlation_monitor(
     # -----------------------------------------------------------------------
     # Steps 3-5 — correlation stats
     # -----------------------------------------------------------------------
-    long_avg_corr  = _book_avg_corr(returns_df, long_tickers)
+    long_avg_corr = _book_avg_corr(returns_df, long_tickers)
     short_avg_corr = _book_avg_corr(returns_df, short_tickers)
-    eff_n          = _effective_n_bets(all_tickers, returns_df)
+    eff_n = _effective_n_bets(all_tickers, returns_df)
 
     # -----------------------------------------------------------------------
     # Step 6 — alerts
@@ -105,39 +105,45 @@ def run_correlation_monitor(
     alerts: list[dict] = []
 
     if long_avg_corr > alert_avg_corr:
-        alerts.append({
-            "type":         "HIGH_BOOK_CORRELATION",
-            "book":         "LONG",
-            "avg_corr":     round(long_avg_corr, 4),
-            "threshold":    alert_avg_corr,
-            "priority":     "MEDIUM",
-        })
+        alerts.append(
+            {
+                "type": "HIGH_BOOK_CORRELATION",
+                "book": "LONG",
+                "avg_corr": round(long_avg_corr, 4),
+                "threshold": alert_avg_corr,
+                "priority": "MEDIUM",
+            }
+        )
         logger.warning(
             "correlation_monitor: LONG book avg_corr=%.4f > threshold=%.2f",
-            long_avg_corr, alert_avg_corr,
+            long_avg_corr,
+            alert_avg_corr,
         )
 
     if short_avg_corr > alert_avg_corr:
-        alerts.append({
-            "type":         "HIGH_BOOK_CORRELATION",
-            "book":         "SHORT",
-            "avg_corr":     round(short_avg_corr, 4),
-            "threshold":    alert_avg_corr,
-            "priority":     "MEDIUM",
-        })
+        alerts.append(
+            {
+                "type": "HIGH_BOOK_CORRELATION",
+                "book": "SHORT",
+                "avg_corr": round(short_avg_corr, 4),
+                "threshold": alert_avg_corr,
+                "priority": "MEDIUM",
+            }
+        )
         logger.warning(
             "correlation_monitor: SHORT book avg_corr=%.4f > threshold=%.2f",
-            short_avg_corr, alert_avg_corr,
+            short_avg_corr,
+            alert_avg_corr,
         )
 
     # -----------------------------------------------------------------------
     # Step 7 — log and return
     # -----------------------------------------------------------------------
     result = {
-        "long_avg_corr":    round(long_avg_corr,  4),
-        "short_avg_corr":   round(short_avg_corr, 4),
-        "effective_n_bets": round(eff_n,           2),
-        "alerts":           alerts,
+        "long_avg_corr": round(long_avg_corr, 4),
+        "short_avg_corr": round(short_avg_corr, 4),
+        "effective_n_bets": round(eff_n, 2),
+        "alerts": alerts,
     }
 
     if not whatif:
@@ -150,7 +156,11 @@ def run_correlation_monitor(
 
     logger.info(
         "correlation_monitor: %s | long_corr=%.4f short_corr=%.4f eff_n=%.2f alerts=%d",
-        score_date, long_avg_corr, short_avg_corr, eff_n, len(alerts),
+        score_date,
+        long_avg_corr,
+        short_avg_corr,
+        eff_n,
+        len(alerts),
     )
     return result
 
@@ -159,13 +169,12 @@ def run_correlation_monitor(
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _book_tickers(positions_df: pd.DataFrame, direction: str) -> list[str]:
     """Return list of tickers in the named book."""
     if positions_df.empty or "direction" not in positions_df.columns:
         return []
-    return positions_df[
-        positions_df["direction"].str.upper() == direction
-    ]["ticker"].tolist()
+    return positions_df[positions_df["direction"].str.upper() == direction]["ticker"].tolist()
 
 
 def _load_returns(
@@ -187,10 +196,9 @@ def _load_returns(
             daily_prices.c.ticker,
             daily_prices.c.date,
             daily_prices.c.adj_close,
-        ).where(
-            daily_prices.c.ticker.in_(tickers) &
-            (daily_prices.c.date <= score_date)
-        ).order_by(daily_prices.c.date.asc())
+        )
+        .where(daily_prices.c.ticker.in_(tickers) & (daily_prices.c.date <= score_date))
+        .order_by(daily_prices.c.date.asc())
     ).fetchall()
 
     if not rows:
@@ -288,7 +296,7 @@ def _log_check(
     result: str,
     reason: str,
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
         risk_log.insert().values(
             run_date=run_date,

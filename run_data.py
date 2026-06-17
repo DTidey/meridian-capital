@@ -47,7 +47,7 @@ def _setup_logging(config: dict) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     level = getattr(logging, config["logging"]["level"].upper(), logging.INFO)
-    fmt   = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
+    fmt = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
 
     logging.basicConfig(
@@ -115,7 +115,7 @@ def _print_summary(stats: dict) -> None:
 
 
 def main() -> None:
-    args   = _parse_args()
+    args = _parse_args()
     config = _load_config()
     _setup_logging(config)
     logger = logging.getLogger("run_data")
@@ -128,11 +128,13 @@ def main() -> None:
 
     # Database — DATABASE_URL env var overrides config (useful in containers)
     import os
+
     import sqlalchemy as sa
+
     db_url = os.getenv("DATABASE_URL") or config["database"]["url"]
     engine = get_engine(db_url)
     initialise_schema(engine)
-    conn   = engine.connect()
+    conn = engine.connect()
     logger.info("Database: %s", db_url)
 
     # Providers
@@ -143,68 +145,66 @@ def main() -> None:
     # -----------------------------------------------------------------------
     logger.info("[1/8] Universe")
     all_tickers = get_all_tickers(conn, config, force=args.force_universe)
-    sp500_count = conn.execute(
-        sa.select(sa.func.count()).select_from(sp500_universe)
-    ).scalar()
+    sp500_count = conn.execute(sa.select(sa.func.count()).select_from(sp500_universe)).scalar()
 
     if args.tickers:
         # Scoped run: use the explicit list for everything
-        price_tickers  = args.tickers
+        price_tickers = args.tickers
         equity_tickers = args.tickers
         logger.info("Scoped run: %d tickers specified", len(price_tickers))
     else:
         # Full run: benchmarks get prices only; equity steps use S&P 500 tickers
-        price_tickers  = all_tickers
-        equity_tickers = fetch_sp500(conn, config)   # already cached from above
+        price_tickers = all_tickers
+        equity_tickers = fetch_sp500(conn, config)  # already cached from above
 
     # -----------------------------------------------------------------------
     # 2. Prices  (universe + benchmarks)
     # -----------------------------------------------------------------------
     logger.info("[2/8] Market prices")
     price_stats = update_prices(conn, price_tickers, config, providers)
-    bars_added  = sum(price_stats.values())
+    bars_added = sum(price_stats.values())
 
     # -----------------------------------------------------------------------
     # 3. Fundamentals  (equities only — ETFs/benchmarks have no fundamentals)
     # -----------------------------------------------------------------------
     logger.info("[3/8] Fundamentals")
-    fund_stats    = update_fundamentals(conn, equity_tickers, config, providers)
+    fund_stats = update_fundamentals(conn, equity_tickers, config, providers)
     periods_added = sum(fund_stats.values())
 
     # -----------------------------------------------------------------------
     # 4. Short interest  (equities only)
     # -----------------------------------------------------------------------
     logger.info("[4/8] Short interest")
-    si_stats  = update_short_interest(conn, equity_tickers)
+    si_stats = update_short_interest(conn, equity_tickers)
     si_updated = sum(1 for v in si_stats.values() if v)
 
     # -----------------------------------------------------------------------
     # 5. Analyst estimates  (equities only)
     # -----------------------------------------------------------------------
     logger.info("[5/8] Analyst estimates")
-    est_stats  = update_estimates(conn, equity_tickers)
+    est_stats = update_estimates(conn, equity_tickers)
     est_updated = sum(1 for v in est_stats.values() if v)
 
     # -----------------------------------------------------------------------
     # 6. Earnings calendar  (equities only)
     # -----------------------------------------------------------------------
     logger.info("[6/8] Earnings calendar")
-    ec_stats  = update_earnings_calendar(conn, equity_tickers, config)
+    ec_stats = update_earnings_calendar(conn, equity_tickers, config)
     ec_events = sum(ec_stats.values())
 
     # -----------------------------------------------------------------------
     # 7. SEC Filings (unless --no-filings)
     # -----------------------------------------------------------------------
     filings_stored = 0
-    insider_txns   = 0
+    insider_txns = 0
     transcripts_stored = 0
     if args.no_filings:
         logger.info("[7/9] SEC filings — SKIPPED (--no-filings)")
         logger.info("[8/9] Transcript ingestion — SKIPPED (--no-filings)")
     else:
         logger.info("[7/9] SEC filings")
-        sec_forms  = args.forms or config["sec"]["forms"]
-        sec_stats  = update_sec_data(conn, equity_tickers, config, forms=sec_forms)
+        sec_forms = args.forms or config["sec"]["forms"]
+        sec_stats = update_sec_data(conn, equity_tickers, config, forms=sec_forms)
         filings_stored = sum(sec_stats.values())
         insider_txns = conn.execute(
             sa.select(sa.func.count()).select_from(insider_transactions)
@@ -222,28 +222,30 @@ def main() -> None:
         logger.info("[9/9] 13-F institutional — SKIPPED (--no-13f)")
     else:
         logger.info("[9/9] 13-F institutional holdings")
-        inst_stats    = update_institutional(conn, config)
+        inst_stats = update_institutional(conn, config)
         inst_holdings = sum(inst_stats.values())
 
     # -----------------------------------------------------------------------
     # Summary
     # -----------------------------------------------------------------------
     elapsed = time.monotonic() - t_start
-    _print_summary({
-        "S&P 500 tickers":          sp500_count,
-        "Total ticker universe":    len(all_tickers),
-        "Price bars added":         bars_added,
-        "Tickers with new prices":  sum(1 for v in price_stats.values() if v),
-        "Fundamental periods added": periods_added,
-        "Short interest updated":   f"{si_updated} tickers",
-        "Estimates updated":        f"{est_updated} tickers",
-        "Upcoming earnings events": ec_events,
-        "SEC filings cached":       filings_stored,
-        "Insider transactions":     insider_txns,
-        "Transcripts stored":       transcripts_stored,
-        "Institutional holdings":   inst_holdings,
-        "Elapsed":                  f"{elapsed:.1f}s",
-    })
+    _print_summary(
+        {
+            "S&P 500 tickers": sp500_count,
+            "Total ticker universe": len(all_tickers),
+            "Price bars added": bars_added,
+            "Tickers with new prices": sum(1 for v in price_stats.values() if v),
+            "Fundamental periods added": periods_added,
+            "Short interest updated": f"{si_updated} tickers",
+            "Estimates updated": f"{est_updated} tickers",
+            "Upcoming earnings events": ec_events,
+            "SEC filings cached": filings_stored,
+            "Insider transactions": insider_txns,
+            "Transcripts stored": transcripts_stored,
+            "Institutional holdings": inst_holdings,
+            "Elapsed": f"{elapsed:.1f}s",
+        }
+    )
 
     conn.close()
     engine.dispose()

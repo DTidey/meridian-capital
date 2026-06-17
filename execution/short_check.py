@@ -32,9 +32,13 @@ def is_shortable(ticker: str, client, cache_dir: Path, ttl_days: int = 7) -> boo
 
     try:
         asset = client.get_asset(ticker)
-        result = bool(getattr(asset, "shortable", False) and getattr(asset, "easy_to_borrow", False))
+        result = bool(
+            getattr(asset, "shortable", False) and getattr(asset, "easy_to_borrow", False)
+        )
     except Exception as exc:
-        log.warning("Shortability check failed for %s: %s — defaulting to not shortable.", ticker, exc)
+        log.warning(
+            "Shortability check failed for %s: %s — defaulting to not shortable.", ticker, exc
+        )
         return False
 
     cache_path.write_text(json.dumps({"shortable": result, "ts": time.time()}))

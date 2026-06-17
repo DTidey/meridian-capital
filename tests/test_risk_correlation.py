@@ -4,11 +4,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401
-import factors.db    # noqa: F401
-import risk.db       # noqa: F401
-import analysis.db   # noqa: F401
-
 from datetime import date, timedelta
 
 import numpy as np
@@ -16,9 +11,12 @@ import pandas as pd
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import daily_prices, initialise_schema
 from risk.correlation_monitor import run_correlation_monitor
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,7 +45,7 @@ def _base_config(alert_avg_corr=0.60, lookback_days=60):
         "risk": {
             "correlation_monitor": {
                 "alert_avg_corr": alert_avg_corr,
-                "lookback_days":  lookback_days,
+                "lookback_days": lookback_days,
             }
         }
     }
@@ -59,43 +57,50 @@ def _insert_prices_from_returns(conn, ticker, returns: np.ndarray, start="2026-0
     price = 100.0
     rows = []
     # Insert one extra row as the base price so we get len(returns) log-return obs
-    rows.append({
-        "ticker":    ticker,
-        "date":      str(d - timedelta(days=1)),
-        "adj_close": price,
-        "open":      price,
-        "high":      price,
-        "low":       price,
-        "close":     price,
-        "volume":    100_000,
-    })
+    rows.append(
+        {
+            "ticker": ticker,
+            "date": str(d - timedelta(days=1)),
+            "adj_close": price,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": 100_000,
+        }
+    )
     for i, r in enumerate(returns):
         price = price * np.exp(r)
-        rows.append({
-            "ticker":    ticker,
-            "date":      str(d + timedelta(days=i)),
-            "adj_close": round(price, 6),
-            "open":      round(price, 6),
-            "high":      round(price, 6),
-            "low":       round(price, 6),
-            "close":     round(price, 6),
-            "volume":    100_000,
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "date": str(d + timedelta(days=i)),
+                "adj_close": round(price, 6),
+                "open": round(price, 6),
+                "high": round(price, 6),
+                "low": round(price, 6),
+                "close": round(price, 6),
+                "volume": 100_000,
+            }
+        )
     conn.execute(daily_prices.insert(), rows)
     conn.commit()
 
 
 def _make_positions(tickers, direction="LONG"):
-    return pd.DataFrame({
-        "ticker":    tickers,
-        "direction": [direction] * len(tickers),
-        "weight":    [0.10] * len(tickers),
-    })
+    return pd.DataFrame(
+        {
+            "ticker": tickers,
+            "direction": [direction] * len(tickers),
+            "weight": [0.10] * len(tickers),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEmptyPositions:
     def test_empty_positions_zero_corr(self, mem_db, tmp_path):
@@ -103,8 +108,8 @@ class TestEmptyPositions:
         result = run_correlation_monitor(
             mem_db, pd.DataFrame(), _SCORE_DATE, _base_config(), whatif=True
         )
-        assert result["long_avg_corr"]    == pytest.approx(0.0)
-        assert result["short_avg_corr"]   == pytest.approx(0.0)
+        assert result["long_avg_corr"] == pytest.approx(0.0)
+        assert result["short_avg_corr"] == pytest.approx(0.0)
         assert result["effective_n_bets"] == pytest.approx(0.0)
         assert result["alerts"] == []
 
@@ -114,7 +119,7 @@ class TestHighCorrelationAlert:
         """Two LONG positions with near-identical returns (corr≈0.95) → alert fires."""
         rng = np.random.default_rng(42)
         base_ret = rng.normal(0, 0.01, size=60)
-        noise    = rng.normal(0, 0.001, size=60)  # tiny noise → very high corr
+        noise = rng.normal(0, 0.001, size=60)  # tiny noise → very high corr
 
         _insert_prices_from_returns(mem_db, "AAPL", base_ret)
         _insert_prices_from_returns(mem_db, "MSFT", base_ret + noise)

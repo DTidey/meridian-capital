@@ -20,8 +20,7 @@ def sector_rank(series: pd.Series, sectors: pd.Series, min_sector_size: int = 5)
     if universe_mask.any():
         valid = series[universe_mask].notna()
         result[universe_mask & valid] = (
-            series[universe_mask & valid]
-            .rank(pct=True, na_option="keep") * 100
+            series[universe_mask & valid].rank(pct=True, na_option="keep") * 100
         )
 
     # Within-sector rank for normal sectors

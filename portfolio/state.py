@@ -1,13 +1,13 @@
 """Read and write portfolio positions."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import sqlalchemy as sa
 
 from data.db import insert_or_replace
-from portfolio.db import portfolio_positions, portfolio_history
+from portfolio.db import portfolio_history, portfolio_positions
 
 logger = logging.getLogger(__name__)
 
@@ -40,27 +40,30 @@ def save_positions(
     df["updated_at"] = now
 
     stmt = insert_or_replace(conn, portfolio_positions)
-    records = df[[c.name for c in portfolio_positions.columns
-                  if c.name in df.columns]].to_dict(orient="records")
+    records = df[[c.name for c in portfolio_positions.columns if c.name in df.columns]].to_dict(
+        orient="records"
+    )
     if records:
         conn.execute(stmt, records)
 
     # History snapshot
     history_rows = []
     for _, row in df.iterrows():
-        history_rows.append({
-            "snapshot_date":  score_date,
-            "ticker":         row.get("ticker"),
-            "direction":      row.get("direction"),
-            "shares":         row.get("shares"),
-            "price":          row.get("current_price"),
-            "market_value":   row.get("market_value"),
-            "weight":         row.get("weight"),
-            "unrealized_pnl": row.get("unrealized_pnl"),
-            "sector":         row.get("sector"),
-            "combined_score": row.get("combined_score"),
-            "recorded_at":    now,
-        })
+        history_rows.append(
+            {
+                "snapshot_date": score_date,
+                "ticker": row.get("ticker"),
+                "direction": row.get("direction"),
+                "shares": row.get("shares"),
+                "price": row.get("current_price"),
+                "market_value": row.get("market_value"),
+                "weight": row.get("weight"),
+                "unrealized_pnl": row.get("unrealized_pnl"),
+                "sector": row.get("sector"),
+                "combined_score": row.get("combined_score"),
+                "recorded_at": now,
+            }
+        )
     if history_rows:
         conn.execute(portfolio_history.insert(), history_rows)
 
@@ -74,4 +77,4 @@ def get_nav(config: dict) -> float:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")

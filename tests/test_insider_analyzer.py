@@ -2,15 +2,15 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import analysis.db  # noqa: F401
-from analysis.insider_analyzer import analyse, insider_score, _format_transactions, _validate
-from data.db import get_engine, initialise_schema, insider_transactions, insider_cluster_flags
+from analysis.insider_analyzer import _format_transactions, _validate, analyse, insider_score
+from data.db import get_engine, initialise_schema, insider_cluster_flags, insider_transactions
 
 
 @pytest.fixture
@@ -42,20 +42,22 @@ def _fake_client(response: dict):
 
 
 def _insert_txn(conn, ticker, date, shares, price, txn_type="P", is_ceo_cfo=0):
-    conn.execute(insider_transactions.insert().values(
-        ticker=ticker,
-        insider_name="John Smith",
-        insider_title="CEO" if is_ceo_cfo else "Director",
-        transaction_type=txn_type,
-        transaction_code="P",
-        shares=shares,
-        price=price,
-        date=date,
-        is_open_market=1,
-        is_ceo_cfo=is_ceo_cfo,
-        accession_no=f"0001234-{date}-{shares}",
-        fetched_at="2024-01-01",
-    ))
+    conn.execute(
+        insider_transactions.insert().values(
+            ticker=ticker,
+            insider_name="John Smith",
+            insider_title="CEO" if is_ceo_cfo else "Director",
+            transaction_type=txn_type,
+            transaction_code="P",
+            shares=shares,
+            price=price,
+            date=date,
+            is_open_market=1,
+            is_ceo_cfo=is_ceo_cfo,
+            accession_no=f"0001234-{date}-{shares}",
+            fetched_at="2024-01-01",
+        )
+    )
     conn.commit()
 
 
@@ -69,13 +71,22 @@ class TestNoTransactions:
 
     def test_returns_none_when_all_not_open_market(self, tmp_db):
         conn = tmp_db
-        conn.execute(insider_transactions.insert().values(
-            ticker="AAPL", insider_name="X", insider_title="CFO",
-            transaction_type="S", transaction_code="S",
-            shares=100, price=150.0, date="2024-06-01",
-            is_open_market=0, is_ceo_cfo=1,
-            accession_no="0001-01-01-100", fetched_at="2024-01-01",
-        ))
+        conn.execute(
+            insider_transactions.insert().values(
+                ticker="AAPL",
+                insider_name="X",
+                insider_title="CFO",
+                transaction_type="S",
+                transaction_code="S",
+                shares=100,
+                price=150.0,
+                date="2024-06-01",
+                is_open_market=0,
+                is_ceo_cfo=1,
+                accession_no="0001-01-01-100",
+                fetched_at="2024-01-01",
+            )
+        )
         conn.commit()
         result = analyse(conn, "AAPL", _fake_client({}), _fake_cache(), {}, "2024-06-30")
         assert result is None
@@ -84,8 +95,13 @@ class TestNoTransactions:
 class TestCacheHit:
     def test_returns_cached_without_api_call(self, tmp_db):
         _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0, is_ceo_cfo=1)
-        cached_result = {"signal_strength": "MODERATE_BUY", "confidence": "HIGH",
-                         "key_transactions": [], "reasoning": "cached", "one_line_summary": "ok"}
+        cached_result = {
+            "signal_strength": "MODERATE_BUY",
+            "confidence": "HIGH",
+            "key_transactions": [],
+            "reasoning": "cached",
+            "one_line_summary": "ok",
+        }
         cache = _fake_cache()
         cache.get.return_value = cached_result
         client = _fake_client({})
@@ -113,8 +129,13 @@ class TestApiCall:
 
     def test_uses_cheap_model_by_default(self, tmp_db):
         _insert_txn(tmp_db, "GOOG", "2024-06-15", 200, 175.0)
-        api_result = {"signal_strength": "NEUTRAL", "confidence": "LOW",
-                      "key_transactions": [], "reasoning": "r", "one_line_summary": "s"}
+        api_result = {
+            "signal_strength": "NEUTRAL",
+            "confidence": "LOW",
+            "key_transactions": [],
+            "reasoning": "r",
+            "one_line_summary": "s",
+        }
         client = _fake_client(api_result)
         config = {"analysis": {"openai_model_cheap": "gpt-4o-mini"}}
         analyse(tmp_db, "GOOG", client, _fake_cache(), config, "2024-06-30")
@@ -123,8 +144,13 @@ class TestApiCall:
 
     def test_respects_analyzer_model_override(self, tmp_db):
         _insert_txn(tmp_db, "NVDA", "2024-06-20", 300, 900.0, is_ceo_cfo=1)
-        api_result = {"signal_strength": "MODERATE_BUY", "confidence": "MEDIUM",
-                      "key_transactions": [], "reasoning": "r", "one_line_summary": "s"}
+        api_result = {
+            "signal_strength": "MODERATE_BUY",
+            "confidence": "MEDIUM",
+            "key_transactions": [],
+            "reasoning": "r",
+            "one_line_summary": "s",
+        }
         client = _fake_client(api_result)
         config = {"analysis": {"analyzer_models": {"insider": "gpt-4o"}}}
         analyse(tmp_db, "NVDA", client, _fake_cache(), config, "2024-06-30")
@@ -138,22 +164,31 @@ class TestApiCall:
 
     def test_cluster_flag_included_in_prompt(self, tmp_db):
         _insert_txn(tmp_db, "META", "2024-06-15", 500, 500.0)
-        tmp_db.execute(insider_cluster_flags.insert().values(
-            ticker="META",
-            window_start="2024-06-01",
-            window_end="2024-06-30",
-            insider_count=4,
-            total_shares=2000.0,
-            flagged_at="2024-06-30",
-        ))
+        tmp_db.execute(
+            insider_cluster_flags.insert().values(
+                ticker="META",
+                window_start="2024-06-01",
+                window_end="2024-06-30",
+                insider_count=4,
+                total_shares=2000.0,
+                flagged_at="2024-06-30",
+            )
+        )
         tmp_db.commit()
-        api_result = {"signal_strength": "STRONG_BUY", "confidence": "HIGH",
-                      "key_transactions": [], "reasoning": "r", "one_line_summary": "s"}
+        api_result = {
+            "signal_strength": "STRONG_BUY",
+            "confidence": "HIGH",
+            "key_transactions": [],
+            "reasoning": "r",
+            "one_line_summary": "s",
+        }
         client = _fake_client(api_result)
         analyse(tmp_db, "META", client, _fake_cache(), {}, "2024-06-30")
         _, kwargs = client.chat.call_args
-        assert "CLUSTER FLAG" in kwargs.get("user_prompt", "") or \
-               "CLUSTER FLAG" in client.chat.call_args[0][1]
+        assert (
+            "CLUSTER FLAG" in kwargs.get("user_prompt", "")
+            or "CLUSTER FLAG" in client.chat.call_args[0][1]
+        )
 
 
 class TestInsiderScore:
@@ -175,16 +210,38 @@ class TestInsiderScore:
 
 class TestFormatTransactions:
     def test_ceo_cfo_flagged(self):
-        txns = [{"name": "Jane CEO", "title": "CEO", "type": "P",
-                 "shares": 1000, "price": 150.0, "date": "2024-06-01", "is_ceo_cfo": True}]
+        txns = [
+            {
+                "name": "Jane CEO",
+                "title": "CEO",
+                "type": "P",
+                "shares": 1000,
+                "price": 150.0,
+                "date": "2024-06-01",
+                "is_ceo_cfo": True,
+            }
+        ]
         text = _format_transactions(txns, None)
         assert "[CEO/CFO]" in text
 
     def test_cluster_appended(self):
-        txns = [{"name": "X", "title": "Dir", "type": "P",
-                 "shares": 100, "price": 10.0, "date": "2024-06-01", "is_ceo_cfo": False}]
-        cluster = {"insider_count": 3, "total_shares": 1000.0,
-                   "window_start": "2024-06-01", "window_end": "2024-06-30"}
+        txns = [
+            {
+                "name": "X",
+                "title": "Dir",
+                "type": "P",
+                "shares": 100,
+                "price": 10.0,
+                "date": "2024-06-01",
+                "is_ceo_cfo": False,
+            }
+        ]
+        cluster = {
+            "insider_count": 3,
+            "total_shares": 1000.0,
+            "window_start": "2024-06-01",
+            "window_end": "2024-06-30",
+        }
         text = _format_transactions(txns, cluster)
         assert "CLUSTER FLAG" in text
         assert "3 insiders" in text

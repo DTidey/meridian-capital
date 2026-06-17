@@ -78,6 +78,7 @@ INFOTABLE_XML_COMMA_NUMBERS = """\
 # _parse_infotable
 # ---------------------------------------------------------------------------
 
+
 class TestParseInfotable:
     def test_parses_namespaced_xml(self):
         holdings = _parse_infotable(INFOTABLE_XML_WITH_NS)
@@ -107,8 +108,9 @@ class TestParseInfotable:
         assert _parse_infotable("not xml at all <<<") == []
 
     def test_ticker_uppercased(self):
-        xml = INFOTABLE_XML_NO_NS.replace("<issuerTicker>NVDA</issuerTicker>",
-                                          "<issuerTicker>nvda</issuerTicker>")
+        xml = INFOTABLE_XML_NO_NS.replace(
+            "<issuerTicker>NVDA</issuerTicker>", "<issuerTicker>nvda</issuerTicker>"
+        )
         holdings = _parse_infotable(xml)
         assert holdings[0]["ticker"] == "NVDA"
 
@@ -122,15 +124,19 @@ class TestParseInfotable:
 # _prior_quarter_report_date
 # ---------------------------------------------------------------------------
 
+
 class TestPriorQuarterReportDate:
-    @pytest.mark.parametrize("date,expected", [
-        ("2024-06-30", "2024-03-30"),  # Q2 → Q1
-        ("2024-09-30", "2024-06-30"),  # Q3 → Q2
-        ("2024-12-31", "2024-09-31"),  # Q4 → Q3  (day preserved even if invalid)
-        ("2024-03-31", "2023-12-31"),  # Q1 → Q4 prior year
-        ("2024-01-15", "2023-10-15"),  # Jan → Oct prior year
-        ("2024-02-28", "2023-11-28"),  # Feb → Nov prior year
-    ])
+    @pytest.mark.parametrize(
+        "date,expected",
+        [
+            ("2024-06-30", "2024-03-30"),  # Q2 → Q1
+            ("2024-09-30", "2024-06-30"),  # Q3 → Q2
+            ("2024-12-31", "2024-09-31"),  # Q4 → Q3  (day preserved even if invalid)
+            ("2024-03-31", "2023-12-31"),  # Q1 → Q4 prior year
+            ("2024-01-15", "2023-10-15"),  # Jan → Oct prior year
+            ("2024-02-28", "2023-11-28"),  # Feb → Nov prior year
+        ],
+    )
     def test_quarter_subtraction(self, date, expected):
         assert _prior_quarter_report_date(date) == expected
 
@@ -145,11 +151,14 @@ class TestPriorQuarterReportDate:
 # _summarise_holdings
 # ---------------------------------------------------------------------------
 
+
 def _insert_holding(conn, fund, ticker, shares, report_date):
     conn.execute(
         insert_or_ignore(conn, institutional_holdings).values(
-            fund_name=fund, ticker=ticker,
-            shares_held=shares, market_value=shares * 100,
+            fund_name=fund,
+            ticker=ticker,
+            shares_held=shares,
+            market_value=shares * 100,
             report_date=report_date,
         )
     )
@@ -178,8 +187,10 @@ class TestSummariseHoldings:
         _summarise_holdings(tmp_db)
 
         row = tmp_db.execute(
-            sa.text("SELECT net_share_change FROM institutional_summary "
-                    "WHERE ticker='MSFT' AND report_date='2024-09-30'")
+            sa.text(
+                "SELECT net_share_change FROM institutional_summary "
+                "WHERE ticker='MSFT' AND report_date='2024-09-30'"
+            )
         ).fetchone()
         assert row[0] == pytest.approx(200_000)
 
@@ -192,8 +203,10 @@ class TestSummariseHoldings:
         _summarise_holdings(tmp_db)
 
         row = tmp_db.execute(
-            sa.text("SELECT new_positions FROM institutional_summary "
-                    "WHERE ticker='NVDA' AND report_date='2024-09-30'")
+            sa.text(
+                "SELECT new_positions FROM institutional_summary "
+                "WHERE ticker='NVDA' AND report_date='2024-09-30'"
+            )
         ).fetchone()
         assert row[0] == 1
 

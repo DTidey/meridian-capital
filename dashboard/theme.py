@@ -2,17 +2,17 @@
 
 import streamlit as st
 
-DARK_BG     = "#0b0e17"
+DARK_BG = "#0b0e17"
 CARD_GRAD_A = "#131827"
 CARD_GRAD_B = "#1a2035"
-ACCENT      = "#6366f1"
-LONG_COL    = "#10b981"
-SHORT_COL   = "#f43f5e"
-NEUTRAL     = "#94a3b8"
-TEXT_PRIMARY  = "#e2e8f0"
-TEXT_MUTED    = "#64748b"
-FONT_SANS   = "Plus Jakarta Sans"
-FONT_MONO   = "JetBrains Mono"
+ACCENT = "#6366f1"
+LONG_COL = "#10b981"
+SHORT_COL = "#f43f5e"
+NEUTRAL = "#94a3b8"
+TEXT_PRIMARY = "#e2e8f0"
+TEXT_MUTED = "#64748b"
+FONT_SANS = "Plus Jakarta Sans"
+FONT_MONO = "JetBrains Mono"
 
 _GOOGLE_FONTS = (
     "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700;800"
@@ -186,7 +186,7 @@ def metric_card(label: str, value: str, colour: str = TEXT_PRIMARY) -> None:
         f'<div class="metric-card">'
         f'<div class="label">{label}</div>'
         f'<div class="value" style="color:{colour}">{value}</div>'
-        f'</div>',
+        f"</div>",
         unsafe_allow_html=True,
     )
 

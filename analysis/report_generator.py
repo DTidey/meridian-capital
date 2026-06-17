@@ -2,34 +2,33 @@
 
 import logging
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 import sqlalchemy as sa
 
 from analysis.db import combined_scores as combined_scores_table
-from data.db import sp500_universe, earnings_calendar
+from data.db import earnings_calendar, sp500_universe
 
 logger = logging.getLogger(__name__)
 
 _SUB_FACTOR_LABELS = {
-    "momentum_score":      "Momentum",
-    "quality_score":       "Quality",
-    "value_score":         "Value",
-    "revisions_score":     "Revisions",
-    "insider_score":       "Insider",
-    "growth_score":        "Growth",
+    "momentum_score": "Momentum",
+    "quality_score": "Quality",
+    "value_score": "Value",
+    "revisions_score": "Revisions",
+    "insider_score": "Insider",
+    "growth_score": "Growth",
     "short_interest_score": "Short Interest",
     "institutional_score": "Institutional",
 }
 
 _EARNINGS_CATEGORIES = [
     ("management_confidence", "Management Confidence"),
-    ("revenue_guidance",      "Revenue Guidance"),
-    ("margin_trajectory",     "Margin Trajectory"),
-    ("competitive_position",  "Competitive Position"),
-    ("risk_factors",          "Risk Factors"),
-    ("capital_allocation",    "Capital Allocation"),
+    ("revenue_guidance", "Revenue Guidance"),
+    ("margin_trajectory", "Margin Trajectory"),
+    ("competitive_position", "Competitive Position"),
+    ("risk_factors", "Risk Factors"),
+    ("capital_allocation", "Capital Allocation"),
 ]
 
 
@@ -58,19 +57,19 @@ def generate_reports(
         return []
 
     universe_info = _load_universe_info(conn)
-    catalysts     = _load_upcoming_catalysts(conn, score_date)
+    catalysts = _load_upcoming_catalysts(conn, score_date)
 
     written = []
     for row in candidates:
-        ticker    = row["ticker"]
+        ticker = row["ticker"]
         direction = row["direction"]
         if direction not in ("LONG", "SHORT"):
             continue
 
-        ai       = analyzer_results.get(ticker, {})
-        factors  = factor_scores.get(ticker, {})
-        company  = universe_info.get(ticker, {})
-        sector   = company.get("sector") or row.get("sector", "Unknown")
+        ai = analyzer_results.get(ticker, {})
+        factors = factor_scores.get(ticker, {})
+        company = universe_info.get(ticker, {})
+        sector = company.get("sector") or row.get("sector", "Unknown")
         cat_info = catalysts.get(ticker)
         sec_info = sector_results.get(sector)
 
@@ -105,18 +104,20 @@ def _load_candidates(conn, score_date: str) -> list[dict]:
             combined_scores_table.c.direction,
             combined_scores_table.c.quant_composite,
             combined_scores_table.c.ai_composite,
-        ).where(
-            (combined_scores_table.c.score_date == score_date) &
-            (combined_scores_table.c.direction  != "NEUTRAL")
-        ).order_by(combined_scores_table.c.combined_score.desc())
+        )
+        .where(
+            (combined_scores_table.c.score_date == score_date)
+            & (combined_scores_table.c.direction != "NEUTRAL")
+        )
+        .order_by(combined_scores_table.c.combined_score.desc())
     ).fetchall()
     return [
         {
-            "ticker":          r[0],
-            "combined_score":  r[1],
-            "direction":       r[2],
+            "ticker": r[0],
+            "combined_score": r[1],
+            "direction": r[2],
             "quant_composite": r[3],
-            "ai_composite":    r[4],
+            "ai_composite": r[4],
         }
         for r in rows
     ]
@@ -139,7 +140,8 @@ def _load_upcoming_catalysts(conn, score_date: str) -> dict[str, dict]:
             earnings_calendar.c.ticker,
             earnings_calendar.c.earnings_date,
             earnings_calendar.c.eps_estimate,
-        ).where(earnings_calendar.c.earnings_date > score_date)
+        )
+        .where(earnings_calendar.c.earnings_date > score_date)
         .order_by(earnings_calendar.c.earnings_date.asc())
     ).fetchall()
 
@@ -218,7 +220,7 @@ def _earnings_section(result: dict) -> list[str]:
     for key, label in _EARNINGS_CATEGORIES:
         cat = result.get(key, {})
         if isinstance(cat, dict):
-            score    = cat.get("score", "N/A")
+            score = cat.get("score", "N/A")
             reasoning = (cat.get("reasoning") or "")[:120]
             lines.append(f"| {label} | {score} | {reasoning} |")
     lines.append("")
@@ -272,9 +274,9 @@ def _risk_section(result: dict) -> list[str]:
     if result.get("material_risks"):
         lines.append("**Material risks:**")
         for r in result["material_risks"][:5]:
-            sev  = r.get("severity", "")
+            sev = r.get("severity", "")
             risk = r.get("risk", "")
-            cat  = r.get("category", "")
+            cat = r.get("category", "")
             lines.append(f"- [{sev}] {risk}" + (f" *(category: {cat})*" if cat else ""))
         lines.append("")
 
@@ -289,8 +291,10 @@ def _risk_section(result: dict) -> list[str]:
 
 def _insider_section(result: dict) -> list[str]:
     lines = ["### Insider Activity (90 days)", ""]
-    lines.append(f"**Signal:** {result.get('signal_strength', 'N/A')} "
-                 f"(confidence: {result.get('confidence', 'N/A')})")
+    lines.append(
+        f"**Signal:** {result.get('signal_strength', 'N/A')} "
+        f"(confidence: {result.get('confidence', 'N/A')})"
+    )
     lines.append("")
 
     if result.get("key_transactions"):

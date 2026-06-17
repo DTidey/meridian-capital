@@ -59,7 +59,7 @@ def analyse(
         return None
 
     earnings_date = transcript_row["earnings_date"]
-    artifact_id   = AnalysisCache.artifact_id_earnings(ticker, str(earnings_date))
+    artifact_id = AnalysisCache.artifact_id_earnings(ticker, str(earnings_date))
 
     cached = cache.get("earnings", ticker, artifact_id)
     if cached is not None:
@@ -67,9 +67,12 @@ def analyse(
         return cached
 
     max_chars = config.get("analysis", {}).get("transcript_max_chars", 120_000)
-    content   = (transcript_row["content"] or "")[:max_chars]
-    model     = config.get("analysis", {}).get("analyzer_models", {}).get("earnings",
-                config.get("analysis", {}).get("openai_model", "gpt-4o"))
+    content = (transcript_row["content"] or "")[:max_chars]
+    model = (
+        config.get("analysis", {})
+        .get("analyzer_models", {})
+        .get("earnings", config.get("analysis", {}).get("openai_model", "gpt-4o"))
+    )
 
     user_prompt = (
         f"Company: {ticker}\n"
@@ -83,8 +86,9 @@ def analyse(
     result = _validate_and_normalise(result)
 
     # Store last usage for the cache.set call — tracker already recorded it
-    cache.set("earnings", ticker, artifact_id, model, result,
-              _last_usage(client), _last_cost(client))
+    cache.set(
+        "earnings", ticker, artifact_id, model, result, _last_usage(client), _last_cost(client)
+    )
     return result
 
 
@@ -107,7 +111,8 @@ def _fetch_transcript(conn, ticker: str) -> dict | None:
         sa.select(
             earnings_transcripts.c.earnings_date,
             earnings_transcripts.c.content,
-        ).where(earnings_transcripts.c.ticker == ticker)
+        )
+        .where(earnings_transcripts.c.ticker == ticker)
         .order_by(earnings_transcripts.c.earnings_date.desc())
         .limit(1)
     ).fetchone()
@@ -128,8 +133,9 @@ def _validate_and_normalise(result: dict) -> dict:
 def _last_usage(client: OpenAIClient):
     """Return a minimal usage object reflecting the most recent tracker call."""
     from unittest.mock import MagicMock
+
     u = MagicMock()
-    u.prompt_tokens     = 0
+    u.prompt_tokens = 0
     u.completion_tokens = 0
     return u
 

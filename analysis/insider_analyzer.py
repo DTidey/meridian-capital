@@ -7,16 +7,16 @@ import sqlalchemy as sa
 
 from analysis.api_client import OpenAIClient
 from analysis.cache import AnalysisCache
-from data.db import insider_transactions, insider_cluster_flags
+from data.db import insider_cluster_flags, insider_transactions
 
 logger = logging.getLogger(__name__)
 
 _SIGNAL_SCORE = {
-    "STRONG_BUY":    10.0,
-    "MODERATE_BUY":   7.5,
-    "NEUTRAL":        5.0,
-    "MODERATE_SELL":  2.5,
-    "STRONG_SELL":    1.0,
+    "STRONG_BUY": 10.0,
+    "MODERATE_BUY": 7.5,
+    "NEUTRAL": 5.0,
+    "MODERATE_SELL": 2.5,
+    "STRONG_SELL": 1.0,
 }
 
 _SYSTEM_PROMPT = """\
@@ -58,8 +58,11 @@ def analyse(
         logger.debug("Insider: cache hit for %s", ticker)
         return cached
 
-    model = config.get("analysis", {}).get("analyzer_models", {}).get("insider",
-            config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
+    model = (
+        config.get("analysis", {})
+        .get("analyzer_models", {})
+        .get("insider", config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
+    )
 
     cluster = _fetch_cluster(conn, ticker, window_start, score_date)
     txn_text = _format_transactions(txns, cluster)
@@ -75,8 +78,7 @@ def analyse(
     result = client.chat(_SYSTEM_PROMPT, user_prompt, model=model)
     result = _validate(result)
 
-    cache.set("insider", ticker, artifact_id, model, result,
-              _zero_usage(), _last_cost(client))
+    cache.set("insider", ticker, artifact_id, model, result, _zero_usage(), _last_cost(client))
     return result
 
 
@@ -103,23 +105,25 @@ def _fetch_transactions(conn, ticker: str, window_start: str, score_date: str) -
             insider_transactions.c.price,
             insider_transactions.c.date,
             insider_transactions.c.is_ceo_cfo,
-        ).where(
-            (insider_transactions.c.ticker       == ticker) &
-            (insider_transactions.c.is_open_market == 1) &
-            (insider_transactions.c.date          >= window_start) &
-            (insider_transactions.c.date          <= score_date)
-        ).order_by(insider_transactions.c.date.desc())
+        )
+        .where(
+            (insider_transactions.c.ticker == ticker)
+            & (insider_transactions.c.is_open_market == 1)
+            & (insider_transactions.c.date >= window_start)
+            & (insider_transactions.c.date <= score_date)
+        )
+        .order_by(insider_transactions.c.date.desc())
         .limit(50)
     ).fetchall()
 
     return [
         {
-            "name":       row[0],
-            "title":      row[1],
-            "type":       row[2],
-            "shares":     row[3],
-            "price":      row[4],
-            "date":       row[5],
+            "name": row[0],
+            "title": row[1],
+            "type": row[2],
+            "shares": row[3],
+            "price": row[4],
+            "date": row[5],
             "is_ceo_cfo": bool(row[6]),
         }
         for row in rows
@@ -133,11 +137,13 @@ def _fetch_cluster(conn, ticker: str, window_start: str, score_date: str) -> dic
             insider_cluster_flags.c.total_shares,
             insider_cluster_flags.c.window_start,
             insider_cluster_flags.c.window_end,
-        ).where(
-            (insider_cluster_flags.c.ticker       == ticker) &
-            (insider_cluster_flags.c.window_start >= window_start) &
-            (insider_cluster_flags.c.window_end   <= score_date)
-        ).order_by(insider_cluster_flags.c.window_start.desc())
+        )
+        .where(
+            (insider_cluster_flags.c.ticker == ticker)
+            & (insider_cluster_flags.c.window_start >= window_start)
+            & (insider_cluster_flags.c.window_end <= score_date)
+        )
+        .order_by(insider_cluster_flags.c.window_start.desc())
         .limit(1)
     ).fetchone()
 
@@ -145,9 +151,9 @@ def _fetch_cluster(conn, ticker: str, window_start: str, score_date: str) -> dic
         return None
     return {
         "insider_count": row[0],
-        "total_shares":  row[1],
-        "window_start":  row[2],
-        "window_end":    row[3],
+        "total_shares": row[1],
+        "window_start": row[2],
+        "window_end": row[3],
     }
 
 
@@ -180,6 +186,7 @@ def _validate(result: dict) -> dict:
 
 def _zero_usage():
     from unittest.mock import MagicMock
+
     u = MagicMock()
     u.prompt_tokens = 0
     u.completion_tokens = 0

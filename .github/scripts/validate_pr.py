@@ -44,10 +44,7 @@ def is_non_code_path(path: str) -> bool:
         return True
 
     suffix = Path(path).suffix.lower()
-    if suffix in NON_CODE_TEXT_EXTENSIONS and path.startswith(("docs/", ".ai/", ".github/")):
-        return True
-
-    return False
+    return suffix in NON_CODE_TEXT_EXTENSIONS and path.startswith(("docs/", ".ai/", ".github/"))
 
 
 def is_docs_only(files: list[str]) -> bool:
@@ -79,10 +76,7 @@ def is_dependabot_allowed_path(path: str) -> bool:
     if path in DEPENDABOT_ALLOWED_ROOT_FILES:
         return True
 
-    if path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml")):
-        return True
-
-    return False
+    return path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
 
 
 def is_dependabot_dependency_only(files: list[str]) -> bool:

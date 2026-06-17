@@ -17,17 +17,17 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from dotenv import load_dotenv
+
 load_dotenv(_ROOT / ".env")
 
-import reporting.db    # noqa: F401 — register tables
-import execution.db    # noqa: F401
-import risk.db         # noqa: F401
-import portfolio.db    # noqa: F401
-import analysis.db     # noqa: F401
-import factors.db      # noqa: F401
-
-from data.db import get_engine, initialise_schema   # noqa: E402
-from dashboard.theme import inject_css, ACCENT, NEUTRAL, DARK_BG, CARD_GRAD_A  # noqa: E402
+import analysis.db  # noqa: F401
+import execution.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import reporting.db  # noqa: F401 — register tables
+import risk.db  # noqa: F401
+from dashboard.theme import inject_css  # noqa: E402
+from data.db import get_engine, initialise_schema  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config — must be first Streamlit call
@@ -62,14 +62,17 @@ def _cfg():
 
 
 engine = _engine()
-cfg    = _cfg()
+cfg = _cfg()
+
 
 # ---------------------------------------------------------------------------
 # Auto-refresh during market hours (9:30–16:00 ET, weekdays)
 # ---------------------------------------------------------------------------
 def _refresh_loop():
-    import pytz
     from datetime import datetime as _dt
+
+    import pytz
+
     et = pytz.timezone("America/New_York")
     while True:
         time.sleep(300)
@@ -87,12 +90,12 @@ if "refresh_thread" not in st.session_state:
 # Nav pill bar
 # ---------------------------------------------------------------------------
 PAGES = {
-    "I":   "PORTFOLIO",
-    "II":  "RESEARCH",
+    "I": "PORTFOLIO",
+    "II": "RESEARCH",
     "III": "RISK",
-    "IV":  "PERFORMANCE",
-    "V":   "EXECUTION",
-    "VI":  "LETTER",
+    "IV": "PERFORMANCE",
+    "V": "EXECUTION",
+    "VI": "LETTER",
 }
 
 if "page" not in st.session_state:
@@ -101,9 +104,9 @@ if "page" not in st.session_state:
 
 def _nav():
     cols = st.columns(len(PAGES))
-    for col, (num, label) in zip(cols, PAGES.items()):
+    for col, (num, label) in zip(cols, PAGES.items(), strict=False):
         active = st.session_state["page"] == num
-        style  = "pill pill-active" if active else "pill"
+        _style = "pill pill-active" if active else "pill"
         if col.button(
             f"{num} {label}",
             key=f"nav_{num}",
@@ -121,16 +124,16 @@ _nav()
 page = st.session_state["page"]
 
 if page == "I":
-    from dashboard.page_portfolio  import render
+    from dashboard.page_portfolio import render
 elif page == "II":
-    from dashboard.page_research   import render
+    from dashboard.page_research import render
 elif page == "III":
-    from dashboard.page_risk       import render
+    from dashboard.page_risk import render
 elif page == "IV":
     from dashboard.page_performance import render
 elif page == "V":
-    from dashboard.page_execution  import render
+    from dashboard.page_execution import render
 elif page == "VI":
-    from dashboard.page_letter     import render
+    from dashboard.page_letter import render
 
 render(engine, cfg)  # type: ignore[possibly-undefined]

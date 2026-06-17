@@ -23,10 +23,10 @@ _CEO_CFO_WEIGHT = 3.0
 
 def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     """Return DataFrame indexed by ticker with insider sub-factor scores (0–100)."""
-    universe  = data["universe"]
-    ins_txns  = data["insider_txns"]
+    universe = data["universe"]
+    ins_txns = data["insider_txns"]
     ins_flags = data["insider_clusters"]
-    min_size  = config.get("scoring", {}).get("min_sector_size", 5)
+    min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
         return _empty_result(universe)
@@ -54,8 +54,8 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         net_flow = 0.0
         for _, row in tt.iterrows():
             shares = float(row.get("shares") or 0)
-            price  = float(row.get("price") or 0)
-            code   = str(row.get("transaction_code") or "")
+            price = float(row.get("price") or 0)
+            code = str(row.get("transaction_code") or "")
             is_exec = int(row.get("is_ceo_cfo") or 0)
             weight = _CEO_CFO_WEIGHT if is_exec else 1.0
 

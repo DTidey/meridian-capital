@@ -9,14 +9,14 @@ from factors._utils import sector_rank
 logger = logging.getLogger(__name__)
 
 _FACTOR_COLS = [
-    ("momentum",       "momentum_score"),
-    ("quality",        "quality_score"),
-    ("value",          "value_score"),
-    ("revisions",      "revisions_score"),
-    ("insider",        "insider_score"),
-    ("growth",         "growth_score"),
+    ("momentum", "momentum_score"),
+    ("quality", "quality_score"),
+    ("value", "value_score"),
+    ("revisions", "revisions_score"),
+    ("insider", "insider_score"),
+    ("growth", "growth_score"),
     ("short_interest", "short_interest_score"),
-    ("institutional",  "institutional_score"),
+    ("institutional", "institutional_score"),
 ]
 
 
@@ -38,10 +38,10 @@ def compute(
         DataFrame indexed by ticker with all factor score columns plus
         composite_score and direction.
     """
-    scoring_cfg  = config.get("scoring", {})
-    long_thresh  = scoring_cfg.get("long_quintile_threshold", 80)
+    scoring_cfg = config.get("scoring", {})
+    long_thresh = scoring_cfg.get("long_quintile_threshold", 80)
     short_thresh = scoring_cfg.get("short_quintile_threshold", 20)
-    min_size     = scoring_cfg.get("min_sector_size", 5)
+    min_size = scoring_cfg.get("min_sector_size", 5)
 
     _validate_weights(weights)
 
@@ -70,7 +70,7 @@ def compute(
 
     # SHORT composite: flip short_interest_score (LONG convention → SHORT convention)
     si_long_score = combined["short_interest_score"].copy()
-    si_short_score = 100.0 - si_long_score
+    _si_short_score = 100.0 - si_long_score
 
     # Weighted composite (using LONG convention for all factors)
     raw_composite = pd.Series(0.0, index=tickers)
@@ -78,9 +78,7 @@ def compute(
         weight = weights.get(factor_name, 0.0)
         raw_composite += weight * combined[score_col].fillna(50.0)
 
-    combined["composite_score"] = sector_rank(
-        raw_composite, sectors.reindex(tickers), min_size
-    )
+    combined["composite_score"] = sector_rank(raw_composite, sectors.reindex(tickers), min_size)
 
     # LONG/SHORT labels based on composite
     def _label(score):

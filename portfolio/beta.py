@@ -26,16 +26,13 @@ def compute_betas(
     all_tickers = list(set(tickers) | {_BENCHMARK})
     rows = conn.execute(
         sa.select(daily_prices.c.ticker, daily_prices.c.date, daily_prices.c.adj_close)
-        .where(
-            daily_prices.c.ticker.in_(all_tickers) &
-            (daily_prices.c.date <= score_date)
-        )
+        .where(daily_prices.c.ticker.in_(all_tickers) & (daily_prices.c.date <= score_date))
         .order_by(daily_prices.c.date.asc())
     ).fetchall()
 
     if not rows:
         logger.debug("Beta: no price data found")
-        return pd.Series({t: 1.0 for t in tickers}, name="beta")
+        return pd.Series(dict.fromkeys(tickers, 1.0), name="beta")
 
     prices = (
         pd.DataFrame(rows, columns=["ticker", "date", "adj_close"])
@@ -47,7 +44,7 @@ def compute_betas(
 
     if _BENCHMARK not in returns.columns or len(returns) < 10:
         logger.warning("Beta: insufficient SPY data, defaulting all to 1.0")
-        return pd.Series({t: 1.0 for t in tickers}, name="beta")
+        return pd.Series(dict.fromkeys(tickers, 1.0), name="beta")
 
     spy_ret = returns[_BENCHMARK]
     spy_var = spy_ret.var()

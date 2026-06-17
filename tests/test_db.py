@@ -5,9 +5,7 @@ import os
 import sqlalchemy as sa
 
 from data.db import (
-    analyst_estimates,
     daily_prices,
-    fundamentals,
     get_engine,
     initialise_schema,
     insert_or_ignore,
@@ -47,7 +45,7 @@ def test_all_tables_created(tmp_db):
             sa.text("SELECT name FROM sqlite_master WHERE type='table'")
         ).fetchall()
     }
-    assert EXPECTED_TABLES <= tables
+    assert tables >= EXPECTED_TABLES
 
 
 def test_all_indexes_created(tmp_db):
@@ -57,7 +55,7 @@ def test_all_indexes_created(tmp_db):
             sa.text("SELECT name FROM sqlite_master WHERE type='index'")
         ).fetchall()
     }
-    assert EXPECTED_INDEXES <= indexes
+    assert indexes >= EXPECTED_INDEXES
 
 
 def test_wal_mode_enabled(tmp_db):
@@ -81,22 +79,20 @@ def test_schema_is_idempotent(tmp_engine):
                 sa.text("SELECT name FROM sqlite_master WHERE type='table'")
             ).fetchall()
         }
-    assert EXPECTED_TABLES <= tables
+    assert tables >= EXPECTED_TABLES
 
 
 def test_get_engine_creates_parent_dirs(tmp_path):
     db_path = str(tmp_path / "nested" / "deep" / "test.db")
     engine = get_engine(f"sqlite:///{db_path}")
-    initialise_schema(engine)   # first connection creates the file
+    initialise_schema(engine)  # first connection creates the file
     engine.dispose()
     assert os.path.exists(db_path)
 
 
 def test_daily_prices_primary_key(tmp_db):
     """(ticker, date) is the PK — duplicate insert should replace, not error."""
-    tmp_db.execute(
-        sa.insert(daily_prices).values(ticker="AAPL", date="2024-01-01", close=100.0)
-    )
+    tmp_db.execute(sa.insert(daily_prices).values(ticker="AAPL", date="2024-01-01", close=100.0))
     tmp_db.execute(
         insert_or_replace(tmp_db, daily_prices).values(
             ticker="AAPL", date="2024-01-01", close=200.0
@@ -114,16 +110,21 @@ def test_daily_prices_primary_key(tmp_db):
 def test_insider_transactions_unique_constraint(tmp_db):
     """Duplicate (ticker, accession_no, insider_name, date, shares) is silently ignored."""
     row = {
-        "ticker": "AAPL", "insider_name": "Alice", "insider_title": "CEO",
-        "transaction_type": "Purchase", "transaction_code": "P",
-        "shares": 1000, "price": 150.0, "date": "2024-01-01",
-        "ownership_type": "D", "is_open_market": 1, "is_ceo_cfo": 1,
+        "ticker": "AAPL",
+        "insider_name": "Alice",
+        "insider_title": "CEO",
+        "transaction_type": "Purchase",
+        "transaction_code": "P",
+        "shares": 1000,
+        "price": 150.0,
+        "date": "2024-01-01",
+        "ownership_type": "D",
+        "is_open_market": 1,
+        "is_ceo_cfo": 1,
         "accession_no": "acc-001",
     }
     tmp_db.execute(sa.insert(insider_transactions).values(**row))
     tmp_db.execute(insert_or_ignore(tmp_db, insider_transactions).values(**row))
     tmp_db.commit()
-    count = tmp_db.execute(
-        sa.select(sa.func.count()).select_from(insider_transactions)
-    ).scalar()
+    count = tmp_db.execute(sa.select(sa.func.count()).select_from(insider_transactions)).scalar()
     assert count == 1

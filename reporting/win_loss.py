@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 
@@ -37,16 +36,16 @@ def compute(engine: sqlalchemy.engine.Engine) -> dict:
     df["win"] = df["realized_pnl"] > 0
 
     return {
-        "overall":           _stats(df),
-        "by_side":           {
-            "LONG":  _stats(df[df["direction"] == "LONG"]),
+        "overall": _stats(df),
+        "by_side": {
+            "LONG": _stats(df[df["direction"] == "LONG"]),
             "SHORT": _stats(df[df["direction"] == "SHORT"]),
         },
         "by_holding_period": _by_holding_period(df),
-        "by_sector":         _by_dimension(df, "sector"),
-        "by_vix_regime":     _by_vix_regime(df),
+        "by_sector": _by_dimension(df, "sector"),
+        "by_vix_regime": _by_vix_regime(df),
         "by_factor_quintile": _by_factor_quintile(df),
-        "streaks":           _streaks(df),
+        "streaks": _streaks(df),
     }
 
 
@@ -54,30 +53,36 @@ def compute(engine: sqlalchemy.engine.Engine) -> dict:
 # Slice helpers
 # ---------------------------------------------------------------------------
 
+
 def _stats(df: pd.DataFrame) -> dict:
     if df.empty:
-        return {"win_rate": 0.0, "pl_ratio": 0.0, "avg_win": 0.0,
-                "avg_loss": 0.0, "total_trades": 0}
-    wins  = df[df["win"]]
+        return {
+            "win_rate": 0.0,
+            "pl_ratio": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "total_trades": 0,
+        }
+    wins = df[df["win"]]
     losses = df[~df["win"]]
-    avg_win  = float(wins["realized_pnl"].mean()) if not wins.empty else 0.0
+    avg_win = float(wins["realized_pnl"].mean()) if not wins.empty else 0.0
     avg_loss = float(losses["realized_pnl"].mean()) if not losses.empty else 0.0
     pl_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0.0
     return {
-        "win_rate":     round(len(wins) / len(df), 4),
-        "pl_ratio":     round(pl_ratio, 4),
-        "avg_win":      round(avg_win, 2),
-        "avg_loss":     round(avg_loss, 2),
+        "win_rate": round(len(wins) / len(df), 4),
+        "pl_ratio": round(pl_ratio, 4),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
         "total_trades": len(df),
     }
 
 
 def _by_holding_period(df: pd.DataFrame) -> dict:
     buckets = {
-        "1-5d":   df[df["holding_days"].between(1, 5)],
-        "5-20d":  df[df["holding_days"].between(5, 20)],
+        "1-5d": df[df["holding_days"].between(1, 5)],
+        "5-20d": df[df["holding_days"].between(5, 20)],
         "20-60d": df[df["holding_days"].between(20, 60)],
-        "60d+":   df[df["holding_days"] > 60],
+        "60d+": df[df["holding_days"] > 60],
     }
     return {k: _stats(v) for k, v in buckets.items()}
 
@@ -91,9 +96,9 @@ def _by_dimension(df: pd.DataFrame, col: str) -> dict:
 
 def _by_vix_regime(df: pd.DataFrame) -> dict:
     buckets = {
-        "low (<15)":    df[df["entry_vix"] < 15],
-        "mid (15-25)":  df[df["entry_vix"].between(15, 25)],
-        "high (>25)":   df[df["entry_vix"] > 25],
+        "low (<15)": df[df["entry_vix"] < 15],
+        "mid (15-25)": df[df["entry_vix"].between(15, 25)],
+        "high (>25)": df[df["entry_vix"] > 25],
     }
     return {k: _stats(v) for k, v in buckets.items()}
 
@@ -110,7 +115,8 @@ def _by_factor_quintile(df: pd.DataFrame) -> dict:
     except ValueError:
         # Fewer than 5 unique bins after dedup — use rank-based assignment
         scored["quintile"] = pd.qcut(
-            scored["entry_score"].rank(method="first"), 5,
+            scored["entry_score"].rank(method="first"),
+            5,
             labels=[1, 2, 3, 4, 5],
         )
     return {int(q): _stats(grp) for q, grp in scored.groupby("quintile")}
@@ -123,16 +129,20 @@ def _streaks(df: pd.DataFrame) -> dict:
     longest_win, longest_loss, cur_win, cur_loss = 0, 0, 0, 0
     for w in seq:
         if w:
-            cur_win  += 1; cur_loss = 0
+            cur_win += 1
+            cur_loss = 0
         else:
-            cur_loss += 1; cur_win  = 0
-        longest_win  = max(longest_win,  cur_win)
+            cur_loss += 1
+            cur_win = 0
+        longest_win = max(longest_win, cur_win)
         longest_loss = max(longest_loss, cur_loss)
-    current = f"+{cur_win} wins" if cur_win > 0 else (f"-{cur_loss} losses" if cur_loss > 0 else "none")
+    current = (
+        f"+{cur_win} wins" if cur_win > 0 else (f"-{cur_loss} losses" if cur_loss > 0 else "none")
+    )
     return {
-        "longest_win_streak":  longest_win,
+        "longest_win_streak": longest_win,
         "longest_loss_streak": longest_loss,
-        "current_streak":      current,
+        "current_streak": current,
     }
 
 

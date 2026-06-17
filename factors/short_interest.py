@@ -23,7 +23,7 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     Scores use LONG convention: declining / lower short interest = higher score.
     """
     universe = data["universe"]
-    si       = data["short_interest"]
+    si = data["short_interest"]
     min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
@@ -43,7 +43,7 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             continue
 
         latest = ts.iloc[-1]
-        raw.loc[ticker, "si_pct_float"]    = latest.get("short_pct_float")
+        raw.loc[ticker, "si_pct_float"] = latest.get("short_pct_float")
         raw.loc[ticker, "si_days_to_cover"] = latest.get("short_ratio")
 
         # Change vs ~30 days ago
@@ -53,9 +53,11 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             raw.loc[ticker, "si_change"] = np.nan
         else:
             prior_pct = past.iloc[-1]["short_pct_float"]
-            cur_pct   = latest["short_pct_float"]
+            cur_pct = latest["short_pct_float"]
             if prior_pct and prior_pct != 0 and cur_pct is not None:
-                raw.loc[ticker, "si_change"] = (float(cur_pct) - float(prior_pct)) / abs(float(prior_pct))
+                raw.loc[ticker, "si_change"] = (float(cur_pct) - float(prior_pct)) / abs(
+                    float(prior_pct)
+                )
             else:
                 raw.loc[ticker, "si_change"] = np.nan
 

@@ -15,31 +15,38 @@ Logic
 """
 
 import logging
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
 import sqlalchemy as sa
-from datetime import datetime, timezone
 
-from factors.db import factor_scores as factor_scores_table, crowding_flags
-from portfolio.db import portfolio_positions
+from factors.db import crowding_flags
+from factors.db import factor_scores as factor_scores_table
 from portfolio.factor_exposure import compute_exposures
 from risk.db import risk_log
 
 logger = logging.getLogger(__name__)
 
 _FACTOR_COLS = [
-    "momentum_score", "quality_score", "value_score", "revisions_score",
-    "insider_score", "growth_score", "short_interest_score", "institutional_score",
+    "momentum_score",
+    "quality_score",
+    "value_score",
+    "revisions_score",
+    "insider_score",
+    "growth_score",
+    "short_interest_score",
+    "institutional_score",
 ]
 
-_MIN_HIST_DATES = 10   # minimum dates required to produce a z-score
+_MIN_HIST_DATES = 10  # minimum dates required to produce a z-score
 _MIN_TICKERS_PER_HALF = 3  # minimum tickers per half to compute a spread
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_factor_monitor(
     conn: sa.engine.Connection,
@@ -69,9 +76,7 @@ def run_factor_monitor(
                      "priority": "HIGH"|"MEDIUM"}]
     """
     threshold = float(
-        config.get("risk", {})
-              .get("factor_monitor", {})
-              .get("alert_z_threshold", 1.5)
+        config.get("risk", {}).get("factor_monitor", {}).get("alert_z_threshold", 1.5)
     )
 
     # -----------------------------------------------------------------------
@@ -82,8 +87,9 @@ def run_factor_monitor(
     if factor_scores_df.empty:
         logger.warning("factor_monitor: no factor scores for %s — skipping", score_date)
         if not whatif:
-            _log_check(conn, score_date, "factor_monitor", None, "OK",
-                       f"no factor scores for {score_date}")
+            _log_check(
+                conn, score_date, "factor_monitor", None, "OK", f"no factor scores for {score_date}"
+            )
         return []
 
     exposures = compute_exposures(positions_df, factor_scores_df)
@@ -92,8 +98,9 @@ def run_factor_monitor(
     if not today_spread:
         logger.warning("factor_monitor: empty spread returned by compute_exposures")
         if not whatif:
-            _log_check(conn, score_date, "factor_monitor", None, "OK",
-                       "empty spread — no positions")
+            _log_check(
+                conn, score_date, "factor_monitor", None, "OK", "empty spread — no positions"
+            )
         return []
 
     # -----------------------------------------------------------------------
@@ -104,8 +111,9 @@ def run_factor_monitor(
     if not hist_dates:
         logger.warning("factor_monitor: no historical score dates found — cannot z-score")
         if not whatif:
-            _log_check(conn, score_date, "factor_monitor", None, "OK",
-                       "insufficient history for z-scoring")
+            _log_check(
+                conn, score_date, "factor_monitor", None, "OK", "insufficient history for z-scoring"
+            )
         return []
 
     hist_spreads: dict[str, list[float]] = {f: [] for f in _FACTOR_COLS}
@@ -152,15 +160,20 @@ def run_factor_monitor(
     for factor, z_val in factor_z.items():
         if abs(z_val) > threshold:
             priority = "HIGH" if factor in crowded_factors else "MEDIUM"
-            alerts.append({
-                "type":     "FACTOR_SPREAD",
-                "factor":   factor,
-                "z":        round(z_val, 4),
-                "priority": priority,
-            })
+            alerts.append(
+                {
+                    "type": "FACTOR_SPREAD",
+                    "factor": factor,
+                    "z": round(z_val, 4),
+                    "priority": priority,
+                }
+            )
             logger.warning(
                 "factor_monitor: ALERT %s z=%.3f priority=%s (threshold=%.2f)",
-                factor, z_val, priority, threshold,
+                factor,
+                z_val,
+                priority,
+                threshold,
             )
 
     # -----------------------------------------------------------------------
@@ -170,18 +183,28 @@ def run_factor_monitor(
         if alerts:
             for alert in alerts:
                 _log_check(
-                    conn, score_date, "factor_monitor", None, "WARNING",
+                    conn,
+                    score_date,
+                    "factor_monitor",
+                    None,
+                    "WARNING",
                     f"FACTOR_SPREAD {alert['factor']} z={alert['z']:.4f} priority={alert['priority']}",
                 )
         else:
             _log_check(
-                conn, score_date, "factor_monitor", None, "OK",
+                conn,
+                score_date,
+                "factor_monitor",
+                None,
+                "OK",
                 f"all factor spreads within threshold={threshold}",
             )
 
     logger.info(
         "factor_monitor: %s | %d alerts (threshold=%.2f)",
-        score_date, len(alerts), threshold,
+        score_date,
+        len(alerts),
+        threshold,
     )
     return alerts
 
@@ -189,6 +212,7 @@ def run_factor_monitor(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_scores_for_date(
     conn: sa.engine.Connection,
@@ -232,9 +256,9 @@ def _compute_universe_spread(scores_df: pd.DataFrame) -> dict[str, float | None]
     result: dict[str, float | None] = {}
     n = len(scores_df)
     if n < _MIN_TICKERS_PER_HALF * 2:
-        return {f: None for f in _FACTOR_COLS}
+        return dict.fromkeys(_FACTOR_COLS)
 
-    half = n // 2
+    _half = n // 2
     for factor in _FACTOR_COLS:
         if factor not in scores_df.columns:
             result[factor] = None
@@ -263,10 +287,7 @@ def _load_crowded_factors(
         sa.select(
             crowding_flags.c.factor_a,
             crowding_flags.c.factor_b,
-        ).where(
-            (crowding_flags.c.score_date == score_date) &
-            (crowding_flags.c.flagged == 1)
-        )
+        ).where((crowding_flags.c.score_date == score_date) & (crowding_flags.c.flagged == 1))
     ).fetchall()
 
     crowded: set[str] = set()
@@ -284,7 +305,7 @@ def _log_check(
     result: str,
     reason: str,
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
         risk_log.insert().values(
             run_date=run_date,

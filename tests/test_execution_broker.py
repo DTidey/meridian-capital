@@ -4,24 +4,23 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db   # noqa: F401
-import factors.db     # noqa: F401
-import risk.db        # noqa: F401
-import analysis.db    # noqa: F401
-import execution.db   # noqa: F401
-
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import execution.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import initialise_schema
-from portfolio.db import portfolio_positions
 from execution.broker import (
     get_broker_positions,
     market_is_open,
     reconcile_positions,
 )
+from portfolio.db import portfolio_positions
 
 
 @pytest.fixture
@@ -48,21 +47,23 @@ def _mock_position(symbol, qty, side="long"):
 
 
 def _insert_position(conn, ticker, shares, direction="LONG"):
-    conn.execute(portfolio_positions.insert().values(
-        ticker=ticker,
-        direction=direction,
-        shares=shares,
-        entry_price=100.0,
-        entry_date="2026-01-01",
-        current_price=100.0,
-        market_value=shares * 100.0,
-        weight=0.05,
-        unrealized_pnl=0.0,
-        sector="Technology",
-        combined_score=60.0,
-        beta=1.0,
-        updated_at="2026-05-06T10:00:00",
-    ))
+    conn.execute(
+        portfolio_positions.insert().values(
+            ticker=ticker,
+            direction=direction,
+            shares=shares,
+            entry_price=100.0,
+            entry_date="2026-01-01",
+            current_price=100.0,
+            market_value=shares * 100.0,
+            weight=0.05,
+            unrealized_pnl=0.0,
+            sector="Technology",
+            combined_score=60.0,
+            beta=1.0,
+            updated_at="2026-05-06T10:00:00",
+        )
+    )
     conn.commit()
 
 
@@ -93,6 +94,7 @@ class TestMarketIsOpen:
 
     def test_closed_returns_false_and_warns(self, caplog):
         import logging
+
         client = MagicMock()
         client.get_clock.return_value = MagicMock(is_open=False, next_open="2026-05-07T09:30:00")
         with caplog.at_level(logging.WARNING):

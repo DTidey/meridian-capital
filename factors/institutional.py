@@ -14,9 +14,9 @@ COLS = ["inst_funds_holding", "inst_net_share_change", "inst_simultaneous_open"]
 
 def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     """Return DataFrame indexed by ticker with institutional sub-factor scores (0–100)."""
-    universe    = data["universe"]
+    universe = data["universe"]
     institution = data["institutional"]
-    min_size    = config.get("scoring", {}).get("min_sector_size", 5)
+    min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
         return _empty_result(universe)
@@ -29,11 +29,7 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         return _default_50(universe)
 
     # Latest report date per ticker
-    latest_inst = (
-        institution.sort_values("report_date")
-        .groupby("ticker")
-        .last()
-    )
+    latest_inst = institution.sort_values("report_date").groupby("ticker").last()
 
     for ticker in tickers:
         if ticker not in latest_inst.index:
@@ -41,11 +37,13 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             continue
 
         row = latest_inst.loc[ticker]
-        raw.loc[ticker, "inst_funds_holding"]    = row.get("funds_holding")
+        raw.loc[ticker, "inst_funds_holding"] = row.get("funds_holding")
         raw.loc[ticker, "inst_net_share_change"] = row.get("net_share_change")
         new_pos = row.get("new_positions")
         # NaN = "no simultaneous opening detected" → neutral (50) after ranking
-        raw.loc[ticker, "inst_simultaneous_open"] = 1.0 if (new_pos is not None and new_pos >= 3) else np.nan
+        raw.loc[ticker, "inst_simultaneous_open"] = (
+            1.0 if (new_pos is not None and new_pos >= 3) else np.nan
+        )
 
     raw = raw.astype(float)
 

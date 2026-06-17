@@ -9,14 +9,12 @@ import json
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from execution.short_check import is_shortable
 
 
 def _make_asset(shortable=True, easy_to_borrow=True):
     a = MagicMock()
-    a.shortable      = shortable
+    a.shortable = shortable
     a.easy_to_borrow = easy_to_borrow
     return a
 
@@ -45,9 +43,7 @@ class TestIsShortable:
     def test_cache_hit_skips_api(self, tmp_path):
         cache_dir = tmp_path / "shortable"
         cache_dir.mkdir()
-        (cache_dir / "TSLA.json").write_text(
-            json.dumps({"shortable": True, "ts": time.time()})
-        )
+        (cache_dir / "TSLA.json").write_text(json.dumps({"shortable": True, "ts": time.time()}))
         client = MagicMock()
         result = is_shortable("TSLA", client, tmp_path)
         assert result is True

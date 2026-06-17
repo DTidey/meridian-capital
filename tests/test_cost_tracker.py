@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from analysis.cost_tracker import CostTracker, CostCeilingExceeded, _PRICING
+from analysis.cost_tracker import _PRICING, CostTracker
 
 
 def _mock_usage(prompt=100, completion=50, cached=0):
@@ -37,9 +37,9 @@ class TestRecord:
     def test_cached_tokens_at_half_price(self):
         tracker = CostTracker()
         # 1M cached tokens should cost half of 1M regular tokens
-        full   = _mock_usage(prompt=1_000_000, completion=0, cached=0)
+        full = _mock_usage(prompt=1_000_000, completion=0, cached=0)
         cached = _mock_usage(prompt=1_000_000, completion=0, cached=1_000_000)
-        cost_full   = tracker.record(full,   "gpt-4o")
+        cost_full = tracker.record(full, "gpt-4o")
         cost_cached = tracker.record(cached, "gpt-4o")
         assert cost_cached == pytest.approx(cost_full / 2)
 
@@ -61,8 +61,8 @@ class TestRecord:
         for _ in range(3):
             tracker.record(_mock_usage(prompt=100, completion=50), "gpt-4o-mini")
         assert tracker.total_cost_usd() == pytest.approx(
-            3 * CostTracker.estimate_cost(100, "gpt-4o-mini") +
-            3 * (50 / 1_000_000 * _PRICING["gpt-4o-mini"]["output"])
+            3 * CostTracker.estimate_cost(100, "gpt-4o-mini")
+            + 3 * (50 / 1_000_000 * _PRICING["gpt-4o-mini"]["output"])
         )
 
 
@@ -82,7 +82,7 @@ class TestTotals:
     def test_total_cached_tokens(self):
         tracker = CostTracker()
         tracker.record(_mock_usage(prompt=200, cached=100), "gpt-4o")
-        tracker.record(_mock_usage(prompt=200, cached=50),  "gpt-4o")
+        tracker.record(_mock_usage(prompt=200, cached=50), "gpt-4o")
         assert tracker.total_cached_tokens() == 150
 
     def test_empty_tracker_returns_zeros(self):
@@ -112,8 +112,14 @@ class TestSummary:
         tracker = CostTracker()
         tracker.record(_mock_usage(prompt=100, completion=50), "gpt-4o")
         s = tracker.summary()
-        assert set(s.keys()) >= {"calls", "prompt_tokens", "completion_tokens",
-                                  "cached_tokens", "total_cost_usd", "ceiling_usd"}
+        assert set(s.keys()) >= {
+            "calls",
+            "prompt_tokens",
+            "completion_tokens",
+            "cached_tokens",
+            "total_cost_usd",
+            "ceiling_usd",
+        }
 
     def test_summary_calls_count(self):
         tracker = CostTracker()

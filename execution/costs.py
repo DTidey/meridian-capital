@@ -50,16 +50,16 @@ def slippage_stats(conn, days: int = 30) -> dict:
         return {"mean_bps": 0.0, "p95_bps": 0.0, "worst_ticker": None, "count": 0}
 
     tickers = [r[0] for r in rows]
-    bps     = [r[1] for r in rows]
+    bps = [r[1] for r in rows]
 
     sorted_bps = sorted(bps)
-    n          = len(sorted_bps)
-    p95_idx    = max(0, int(n * 0.95) - 1)
-    worst_idx  = bps.index(max(bps))
+    n = len(sorted_bps)
+    p95_idx = max(0, int(n * 0.95) - 1)
+    worst_idx = bps.index(max(bps))
 
     return {
-        "mean_bps":     sum(bps) / n,
-        "p95_bps":      sorted_bps[p95_idx],
+        "mean_bps": sum(bps) / n,
+        "p95_bps": sorted_bps[p95_idx],
         "worst_ticker": tickers[worst_idx],
-        "count":        n,
+        "count": n,
     }

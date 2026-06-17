@@ -15,9 +15,7 @@ _WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
 
 def _cache_is_fresh(conn: sa.engine.Connection, refresh_days: int) -> bool:
-    row = conn.execute(
-        sa.select(sa.func.max(sp500_universe.c.updated_at))
-    ).scalar()
+    row = conn.execute(sa.select(sa.func.max(sp500_universe.c.updated_at))).scalar()
     if not row:
         return False
     last = datetime.fromisoformat(row)
@@ -36,6 +34,7 @@ def fetch_sp500(conn: sa.engine.Connection, config: dict, force: bool = False) -
     logger.info("Fetching S&P 500 list from Wikipedia")
     try:
         import io
+
         resp = requests.get(
             _WIKI_URL,
             headers={"User-Agent": "Mozilla/5.0 (compatible; MeridianCapital/1.0)"},
@@ -52,12 +51,14 @@ def fetch_sp500(conn: sa.engine.Connection, config: dict, force: bool = False) -
         raise
 
     df = tables[0]
-    df = df.rename(columns={
-        "Symbol": "ticker",
-        "Security": "company_name",
-        "GICS Sector": "gics_sector",
-        "GICS Sub-Industry": "gics_sub_industry",
-    })
+    df = df.rename(
+        columns={
+            "Symbol": "ticker",
+            "Security": "company_name",
+            "GICS Sector": "gics_sector",
+            "GICS Sub-Industry": "gics_sub_industry",
+        }
+    )
     df["ticker"] = df["ticker"].str.replace(".", "-", regex=False)
     df = df[["ticker", "company_name", "gics_sector", "gics_sub_industry"]].copy()
 
@@ -66,8 +67,9 @@ def fetch_sp500(conn: sa.engine.Connection, config: dict, force: bool = False) -
 
     conn.execute(
         insert_or_replace(conn, sp500_universe),
-        df[["ticker", "company_name", "gics_sector", "gics_sub_industry", "updated_at"]]
-        .to_dict(orient="records"),
+        df[["ticker", "company_name", "gics_sector", "gics_sub_industry", "updated_at"]].to_dict(
+            orient="records"
+        ),
     )
 
     tickers = df["ticker"].tolist()
@@ -105,6 +107,10 @@ def get_all_tickers(conn: sa.engine.Connection, config: dict, force: bool = Fals
     universe = fetch_sp500(conn, config, force=force)
     benchmarks = load_benchmarks(conn, config)
     combined = list(dict.fromkeys(universe + benchmarks))
-    logger.info("Total ticker universe: %d (SP500=%d, benchmarks=%d)",
-                len(combined), len(universe), len(benchmarks))
+    logger.info(
+        "Total ticker universe: %d (SP500=%d, benchmarks=%d)",
+        len(combined),
+        len(universe),
+        len(benchmarks),
+    )
     return combined

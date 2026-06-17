@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,7 +11,7 @@ import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 
-from data.db import daily_prices, insert_or_replace, sp500_universe
+from data.db import daily_prices, insert_or_replace
 from factors.db import factor_scores as factor_scores_table
 from portfolio.db import portfolio_history
 from reporting.db import pnl_attribution, portfolio_nav
@@ -23,23 +22,29 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _FACTOR_COLS = [
-    "momentum_score", "quality_score", "value_score",    "revisions_score",
-    "insider_score",  "growth_score",  "short_interest_score", "institutional_score",
+    "momentum_score",
+    "quality_score",
+    "value_score",
+    "revisions_score",
+    "insider_score",
+    "growth_score",
+    "short_interest_score",
+    "institutional_score",
 ]
 _ROLLING_WINDOW = 60  # days for OLS factor regression
 
 _SECTOR_ETF_MAP = {
-    "Information Technology":   "XLK",
-    "Financials":               "XLF",
-    "Health Care":              "XLV",
-    "Energy":                   "XLE",
-    "Industrials":              "XLI",
-    "Communication Services":   "XLC",
-    "Consumer Discretionary":   "XLY",
-    "Consumer Staples":         "XLP",
-    "Materials":                "XLB",
-    "Real Estate":              "XLRE",
-    "Utilities":                "XLU",
+    "Information Technology": "XLK",
+    "Financials": "XLF",
+    "Health Care": "XLV",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Communication Services": "XLC",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
 }
 
 
@@ -56,21 +61,18 @@ def run(
     etf_map = sector_etf_map or _SECTOR_ETF_MAP
 
     with engine.connect() as conn:
-        existing = set(
-            r[0] for r in conn.execute(sa.select(pnl_attribution.c.date)).fetchall()
-        )
+        existing = {r[0] for r in conn.execute(sa.select(pnl_attribution.c.date)).fetchall()}
         nav_rows = conn.execute(
-            sa.select(portfolio_nav.c.date, portfolio_nav.c.nav)
-            .order_by(portfolio_nav.c.date)
+            sa.select(portfolio_nav.c.date, portfolio_nav.c.nav).order_by(portfolio_nav.c.date)
         ).fetchall()
 
         if len(nav_rows) < 2:
             log.warning("Need at least 2 NAV dates for attribution")
             return pd.DataFrame()
 
-        dates     = [r[0] for r in nav_rows]
-        nav_vals  = [r[1] for r in nav_rows]
-        date_list = dates[1:]   # attribution starts on day 2
+        dates = [r[0] for r in nav_rows]
+        nav_vals = [r[1] for r in nav_rows]
+        date_list = dates[1:]  # attribution starts on day 2
 
         spy_rows = conn.execute(
             sa.select(daily_prices.c.date, daily_prices.c.adj_close)
@@ -82,8 +84,8 @@ def run(
             name="spy",
         )
 
-        all_etfs  = list(set(etf_map.values()))
-        etf_rows  = conn.execute(
+        all_etfs = list(set(etf_map.values()))
+        etf_rows = conn.execute(
             sa.select(daily_prices.c.date, daily_prices.c.ticker, daily_prices.c.adj_close)
             .where(daily_prices.c.ticker.in_(all_etfs))
             .order_by(daily_prices.c.date)
@@ -119,14 +121,14 @@ def run(
 
         price_rows = conn.execute(
             sa.select(daily_prices.c.date, daily_prices.c.ticker, daily_prices.c.adj_close)
-            .where(daily_prices.c.ticker.in_(
-                list(score_df["ticker"].unique()) + ["SPY"] + all_etfs
-            ))
+            .where(
+                daily_prices.c.ticker.in_(list(score_df["ticker"].unique()) + ["SPY"] + all_etfs)
+            )
             .order_by(daily_prices.c.date)
         ).fetchall()
         price_df = pd.DataFrame(price_rows, columns=["date", "ticker", "close"])
         price_pivot = price_df.pivot(index="date", columns="ticker", values="close")
-        price_rets  = price_pivot.pct_change()
+        price_rets = price_pivot.pct_change()
 
     # -----------------------------------------------------------------------
     # Pre-compute factor return spreads across all dates
@@ -134,15 +136,15 @@ def run(
     factor_spreads = _compute_factor_spreads(score_df, price_rets)
 
     records = []
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
-    nav_map = dict(zip(dates, nav_vals))
+    nav_map = dict(zip(dates, nav_vals, strict=False))
 
     for i, d in enumerate(date_list):
         if d in existing:
             continue
 
-        prev_d = dates[i]   # date before d in the nav series
+        prev_d = dates[i]  # date before d in the nav series
 
         nav_prev = nav_map[prev_d]
         nav_curr = nav_map[d]
@@ -166,28 +168,26 @@ def run(
         beta_pnl = net_beta * spy_ret
 
         # Brinson sector attribution
-        sector_pnl = _brinson_sector(
-            day_hist, price_rets, etf_pivot, etf_map, prev_d, d
-        )
+        sector_pnl = _brinson_sector(day_hist, price_rets, etf_pivot, etf_map, prev_d, d)
 
         # Factor OLS attribution
-        factor_pnl = _factor_ols(
-            factor_spreads, date_list[: i + 1], port_ret, beta_pnl, d
-        )
+        factor_pnl = _factor_ols(factor_spreads, date_list[: i + 1], port_ret, beta_pnl, d)
 
         alpha_pnl = port_ret - beta_pnl - sector_pnl - factor_pnl
 
-        records.append({
-            "date":             d,
-            "portfolio_return": float(port_ret),
-            "spy_return":       float(spy_ret),
-            "beta_pnl":         float(beta_pnl),
-            "sector_pnl":       float(sector_pnl),
-            "factor_pnl":       float(factor_pnl),
-            "alpha_pnl":        float(alpha_pnl),
-            "net_beta":         float(net_beta),
-            "computed_at":      now,
-        })
+        records.append(
+            {
+                "date": d,
+                "portfolio_return": float(port_ret),
+                "spy_return": float(spy_ret),
+                "beta_pnl": float(beta_pnl),
+                "sector_pnl": float(sector_pnl),
+                "factor_pnl": float(factor_pnl),
+                "alpha_pnl": float(alpha_pnl),
+                "net_beta": float(net_beta),
+                "computed_at": now,
+            }
+        )
 
     if records:
         with engine.begin() as conn:
@@ -209,6 +209,7 @@ def run(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _compute_net_beta(day_hist: pd.DataFrame) -> float:
     if day_hist.empty:
@@ -275,9 +276,9 @@ def _brinson_sector(
 
         bm_s_ret = etf_rets_row.get(sector, 0.0)
 
-        alloc_effect     = (w_s - bm_w) * (bm_s_ret - bm_ret)
+        alloc_effect = (w_s - bm_w) * (bm_s_ret - bm_ret)
         selection_effect = w_s * (port_s_ret - bm_s_ret)
-        total_effect    += alloc_effect + selection_effect
+        total_effect += alloc_effect + selection_effect
 
     return total_effect
 
@@ -308,13 +309,15 @@ def _compute_factor_spreads(
             q5_rets = [
                 price_rets.at[next_d, t]
                 for t in q5
-                if t in price_rets.columns and next_d in price_rets.index
+                if t in price_rets.columns
+                and next_d in price_rets.index
                 and not np.isnan(price_rets.at[next_d, t])
             ]
             q1_rets = [
                 price_rets.at[next_d, t]
                 for t in q1
-                if t in price_rets.columns and next_d in price_rets.index
+                if t in price_rets.columns
+                and next_d in price_rets.index
                 and not np.isnan(price_rets.at[next_d, t])
             ]
             spread = (np.mean(q5_rets) if q5_rets else 0.0) - (np.mean(q1_rets) if q1_rets else 0.0)
@@ -342,7 +345,7 @@ def _factor_ols(
     if len(window_dates) < 10:
         return 0.0
 
-    with_idx = factor_spreads.loc[window_dates]
+    _with_idx = factor_spreads.loc[window_dates]
     # We need portfolio returns for those dates — but we compute this per date
     # so use a simplified approach: the factor_pnl for curr_d is the fitted value
     # using the last coefficient from the rolling regression

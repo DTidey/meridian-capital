@@ -36,6 +36,7 @@ def _insert_fetched(conn, ticker, earnings_date, fetched_at):
 # Skip tickers already fetched today
 # ---------------------------------------------------------------------------
 
+
 class TestTodaySkip:
     def test_ticker_fetched_today_is_skipped(self, tmp_db):
         _insert_fetched(tmp_db, "AAPL", _future(10), _today() + "T09:00:00")
@@ -91,6 +92,7 @@ class TestTodaySkip:
 # ---------------------------------------------------------------------------
 # Date window filtering
 # ---------------------------------------------------------------------------
+
 
 class TestDateWindowFiltering:
     def test_past_date_not_stored(self, tmp_db):

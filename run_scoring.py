@@ -15,7 +15,6 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
-import sqlalchemy as sa
 import yaml
 from dotenv import load_dotenv
 
@@ -29,23 +28,42 @@ sys.path.insert(0, str(_ROOT))
 
 # Register Layer 2 tables on the shared metadata before calling initialise_schema
 import factors.db  # noqa: F401, E402
-
 from data.db import get_engine, initialise_schema, insert_or_replace  # noqa: E402
-from factors.db import factor_scores, regime_state, crowding_flags     # noqa: E402
-from factors import (                                                    # noqa: E402
+from factors import (  # noqa: E402
     composite as composite_mod,
+)
+from factors import (
     crowding as crowding_mod,
+)
+from factors import (
     growth as growth_mod,
+)
+from factors import (
     insider as insider_mod,
+)
+from factors import (
     institutional as institutional_mod,
+)
+from factors import (
     momentum as momentum_mod,
+)
+from factors import (
     quality as quality_mod,
+)
+from factors import (
     regime_weights as regime_mod,
+)
+from factors import (
     revisions as revisions_mod,
+)
+from factors import (
     short_interest as si_mod,
+)
+from factors import (
     value as value_mod,
 )
-from factors.loader import load_scoring_data                             # noqa: E402
+from factors.db import crowding_flags, factor_scores, regime_state  # noqa: E402
+from factors.loader import load_scoring_data  # noqa: E402
 
 
 def _load_config() -> dict:
@@ -57,9 +75,11 @@ def _setup_logging(config: dict) -> None:
     log_path = _ROOT / config["logging"]["log_file"]
     log_path.parent.mkdir(parents=True, exist_ok=True)
     level = getattr(logging, config["logging"]["level"].upper(), logging.INFO)
-    fmt   = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
+    fmt = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
     logging.basicConfig(
-        level=level, format=fmt, datefmt="%Y-%m-%d %H:%M:%S",
+        level=level,
+        format=fmt,
+        datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(sys.stdout),
             logging.FileHandler(log_path, mode="a", encoding="utf-8"),
@@ -71,9 +91,9 @@ def _setup_logging(config: dict) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Meridian — Layer 2 Factor Scoring")
-    p.add_argument("--ticker",       metavar="TICKER", help="Single ticker mode")
-    p.add_argument("--date",         metavar="YYYY-MM-DD", help="Override score date")
-    p.add_argument("--no-crowding",  action="store_true", help="Skip crowding detection")
+    p.add_argument("--ticker", metavar="TICKER", help="Single ticker mode")
+    p.add_argument("--date", metavar="YYYY-MM-DD", help="Override score date")
+    p.add_argument("--no-crowding", action="store_true", help="Skip crowding detection")
     return p.parse_args()
 
 
@@ -95,12 +115,17 @@ def _write_factor_scores(conn, scored: pd.DataFrame, score_date: str) -> None:
 
 def _write_regime_state(conn, score_date: str, vix_close, regime: str) -> None:
     stmt = insert_or_replace(conn, regime_state)
-    conn.execute(stmt, [{
-        "score_date":  score_date,
-        "vix_close":   vix_close,
-        "regime":      regime,
-        "computed_at": pd.Timestamp.now("UTC").isoformat(),
-    }])
+    conn.execute(
+        stmt,
+        [
+            {
+                "score_date": score_date,
+                "vix_close": vix_close,
+                "regime": regime,
+                "computed_at": pd.Timestamp.now("UTC").isoformat(),
+            }
+        ],
+    )
     conn.commit()
 
 
@@ -130,7 +155,7 @@ def _print_summary(
     logger.info("  Regime           : %s (VIX %s)", regime, vix_str)
     logger.info("  Universe scored  : %d tickers", len(scored))
 
-    n_long  = (scored.get("direction", pd.Series()) == "LONG").sum()
+    n_long = (scored.get("direction", pd.Series()) == "LONG").sum()
     n_short = (scored.get("direction", pd.Series()) == "SHORT").sum()
     logger.info("  LONG candidates  : %d", n_long)
     logger.info("  SHORT candidates : %d", n_short)
@@ -138,7 +163,7 @@ def _print_summary(
     logger.info("  Elapsed          : %.1fs", elapsed)
 
     if "composite_score" in scored.columns and "direction" in scored.columns:
-        longs  = scored[scored["direction"] == "LONG"].nlargest(5, "composite_score")
+        longs = scored[scored["direction"] == "LONG"].nlargest(5, "composite_score")
         shorts = scored[scored["direction"] == "SHORT"].nsmallest(5, "composite_score")
 
         if not longs.empty:
@@ -148,9 +173,9 @@ def _print_summary(
                     "  %-6s  Composite: %5.1f  Mom: %5.1f  Qual: %5.1f  Val: %5.1f",
                     ticker,
                     row.get("composite_score", 0),
-                    row.get("momentum_score",  0),
-                    row.get("quality_score",   0),
-                    row.get("value_score",     0),
+                    row.get("momentum_score", 0),
+                    row.get("quality_score", 0),
+                    row.get("value_score", 0),
                 )
 
         if not shorts.empty:
@@ -160,16 +185,16 @@ def _print_summary(
                     "  %-6s  Composite: %5.1f  Mom: %5.1f  Qual: %5.1f  Val: %5.1f",
                     ticker,
                     row.get("composite_score", 0),
-                    row.get("momentum_score",  0),
-                    row.get("quality_score",   0),
-                    row.get("value_score",     0),
+                    row.get("momentum_score", 0),
+                    row.get("quality_score", 0),
+                    row.get("value_score", 0),
                 )
 
     logger.info(sep)
 
 
 def main() -> None:
-    args   = _parse_args()
+    args = _parse_args()
     config = _load_config()
     _setup_logging(config)
     logger = logging.getLogger("run_scoring")
@@ -230,14 +255,14 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     logger.info("[3/7] Computing factor scores")
     factor_results = {
-        "momentum":       momentum_mod.compute(data, config),
-        "value":          value_mod.compute(data, config),
-        "quality":        quality_mod.compute(data, config),
-        "growth":         growth_mod.compute(data, config),
-        "revisions":      revisions_mod.compute(data, config),
+        "momentum": momentum_mod.compute(data, config),
+        "value": value_mod.compute(data, config),
+        "quality": quality_mod.compute(data, config),
+        "growth": growth_mod.compute(data, config),
+        "revisions": revisions_mod.compute(data, config),
         "short_interest": si_mod.compute(data, config),
-        "insider":        insider_mod.compute(data, config),
-        "institutional":  institutional_mod.compute(data, config),
+        "insider": insider_mod.compute(data, config),
+        "institutional": institutional_mod.compute(data, config),
     }
     for name, df in factor_results.items():
         logger.debug("  %s: %d tickers scored", name, len(df))

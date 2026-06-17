@@ -19,7 +19,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"run_data.py" = ["E402"]   # sys.path insert must precede local imports
+"run_data.py"      = ["E402"]   # sys.path insert must precede local imports
+"run_scoring.py"   = ["E402"]
+"dashboard/app.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

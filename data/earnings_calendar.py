@@ -35,7 +35,9 @@ def _fetch_earnings_date(ticker: str) -> list[dict]:
 
         eps_est = None
         if isinstance(cal, pd.DataFrame):
-            key = next((k for k in ("Earnings Average", "Earnings Estimate") if k in cal.index), None)
+            key = next(
+                (k for k in ("Earnings Average", "Earnings Estimate") if k in cal.index), None
+            )
             if key:
                 with contextlib.suppress(TypeError, ValueError, IndexError):
                     eps_est = float(cal.loc[key].iloc[0])
@@ -71,25 +73,29 @@ def update_earnings_calendar(
 ) -> dict[str, int]:
     """Refresh upcoming earnings dates for all universe tickers."""
     lookahead = config["earnings_calendar"]["lookahead_days"]
-    today     = datetime.utcnow().strftime("%Y-%m-%d")
-    cutoff    = (datetime.utcnow() + timedelta(days=lookahead)).strftime("%Y-%m-%d")
-    now       = datetime.utcnow().isoformat(timespec="seconds")
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    cutoff = (datetime.utcnow() + timedelta(days=lookahead)).strftime("%Y-%m-%d")
+    now = datetime.utcnow().isoformat(timespec="seconds")
 
-    already = set(conn.execute(
-        sa.select(earnings_calendar.c.ticker).distinct()
-        .where(earnings_calendar.c.fetched_at >= today)
-    ).scalars())
+    already = set(
+        conn.execute(
+            sa.select(earnings_calendar.c.ticker)
+            .distinct()
+            .where(earnings_calendar.c.fetched_at >= today)
+        ).scalars()
+    )
     to_fetch = [t for t in tickers if t not in already]
     logger.info(
         "Earnings calendar: fetching %d tickers (%d already updated today)",
-        len(to_fetch), len(already),
+        len(to_fetch),
+        len(already),
     )
 
     summary: dict[str, int] = {t: 0 for t in tickers if t in already}
 
     for ticker in to_fetch:
         entries = _fetch_earnings_date(ticker)
-        stored  = 0
+        stored = 0
         for entry in entries:
             ed = entry["earnings_date"]
             if ed < today or ed > cutoff:

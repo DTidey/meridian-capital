@@ -1,14 +1,14 @@
 """Stress testing: historical and synthetic portfolio shock scenarios."""
+
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 
-from data.db import daily_prices
 from factors.db import factor_scores as factor_scores_table
 
 logger = logging.getLogger(__name__)
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 _HISTORICAL = {
     "financial_crisis_2008": ("2008-09-01", "2009-03-31"),
-    "covid_crash_2020":      ("2020-02-01", "2020-04-30"),
-    "rate_hike_2022":        ("2022-01-01", "2022-10-31"),
+    "covid_crash_2020": ("2020-02-01", "2020-04-30"),
+    "rate_hike_2022": ("2022-01-01", "2022-10-31"),
 }
 
 _SYNTHETIC = ["sector_shock", "momentum_reversal", "short_squeeze"]
@@ -34,21 +34,23 @@ _CACHE_MAX_AGE_DAYS = 30
 # Result dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ScenarioResult:
     name: str
-    period: str          # date range string, or "ERROR: <msg>" on failure
+    period: str  # date range string, or "ERROR: <msg>" on failure
     total_pnl_usd: float
     total_pnl_pct: float
     long_pnl_usd: float
     short_pnl_usd: float
-    worst_long: str      # ticker with most negative long P&L contribution ("" if none)
-    worst_short: str     # ticker with most negative short P&L contribution ("" if none)
+    worst_long: str  # ticker with most negative long P&L contribution ("" if none)
+    worst_short: str  # ticker with most negative short P&L contribution ("" if none)
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_stress_tests(
     conn: sa.engine.Connection,
@@ -91,13 +93,15 @@ def run_stress_tests(
     stress_cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Load factor scores once — needed for sector imputation and momentum reversal
-    factor_scores_df = _load_factor_scores(conn, list(positions_df["ticker"]) if not positions_df.empty else [], score_date)
+    factor_scores_df = _load_factor_scores(
+        conn, list(positions_df["ticker"]) if not positions_df.empty else [], score_date
+    )
 
     results: list[ScenarioResult] = []
 
     # Run historical scenarios first, then synthetic, in defined order
     historical_names = [s for s in _HISTORICAL if s in scenarios]
-    synthetic_names  = [s for s in _SYNTHETIC   if s in scenarios]
+    synthetic_names = [s for s in _SYNTHETIC if s in scenarios]
 
     for name in historical_names:
         start, end = _HISTORICAL[name]
@@ -155,6 +159,7 @@ def run_stress_tests(
 # Helper: load factor scores
 # ---------------------------------------------------------------------------
 
+
 def _load_factor_scores(
     conn: sa.engine.Connection,
     tickers: list[str],
@@ -175,8 +180,8 @@ def _load_factor_scores(
                 factor_scores_table.c.sector,
                 factor_scores_table.c.momentum_score,
             ).where(
-                (factor_scores_table.c.score_date == score_date) &
-                (factor_scores_table.c.ticker.in_(tickers))
+                (factor_scores_table.c.score_date == score_date)
+                & (factor_scores_table.c.ticker.in_(tickers))
             )
         ).fetchall()
 
@@ -191,6 +196,7 @@ def _load_factor_scores(
 # ---------------------------------------------------------------------------
 # Helper: sector-average return imputation
 # ---------------------------------------------------------------------------
+
 
 def _sector_avg_return(
     ticker_returns: dict[str, float],
@@ -237,7 +243,9 @@ def _sector_avg_return(
             result[ticker] = sector_mean[sector]
             logger.debug(
                 "stress_test: imputed return for %s from sector '%s' (%.3f)",
-                ticker, sector, sector_mean[sector],
+                ticker,
+                sector,
+                sector_mean[sector],
             )
         else:
             result[ticker] = -0.30
@@ -252,6 +260,7 @@ def _sector_avg_return(
 # ---------------------------------------------------------------------------
 # P&L calculation helper
 # ---------------------------------------------------------------------------
+
 
 def _compute_pnl(
     positions_df: pd.DataFrame,
@@ -269,10 +278,10 @@ def _compute_pnl(
     short_pnl_by_ticker: dict[str, float] = {}
 
     for _, row in positions_df.iterrows():
-        ticker    = str(row["ticker"])
+        ticker = str(row["ticker"])
         direction = str(row.get("direction", "LONG")).upper()
-        weight    = float(row.get("weight", 0.0))
-        ret       = returns.get(ticker, 0.0)
+        weight = float(row.get("weight", 0.0))
+        ret = returns.get(ticker, 0.0)
 
         pnl = weight * ret * nav_usd
 
@@ -281,7 +290,7 @@ def _compute_pnl(
         else:
             short_pnl_by_ticker[ticker] = pnl
 
-    long_pnl_usd  = float(sum(long_pnl_by_ticker.values()))
+    long_pnl_usd = float(sum(long_pnl_by_ticker.values()))
     short_pnl_usd = float(sum(short_pnl_by_ticker.values()))
     total_pnl_usd = long_pnl_usd + short_pnl_usd
     total_pnl_pct = total_pnl_usd / nav_usd if nav_usd else 0.0
@@ -318,6 +327,7 @@ def _compute_pnl(
 # Historical scenario runner
 # ---------------------------------------------------------------------------
 
+
 def _run_historical(
     positions_df: pd.DataFrame,
     scenario_name: str,
@@ -352,7 +362,7 @@ def _run_historical(
     # Load or refresh price data
     # ------------------------------------------------------------------
     cache_path = cache_dir / f"{scenario_name}.parquet"
-    prices_df  = _load_or_fetch_prices(tickers, start, end, cache_path)
+    prices_df = _load_or_fetch_prices(tickers, start, end, cache_path)
 
     # ------------------------------------------------------------------
     # Compute cumulative returns
@@ -370,7 +380,7 @@ def _run_historical(
             series = prices_df[ticker].dropna()
             if len(series) >= 2:
                 first = float(series.iloc[0])
-                last  = float(series.iloc[-1])
+                last = float(series.iloc[-1])
                 if first != 0.0:
                     ticker_returns[ticker] = last / first - 1.0
                     continue
@@ -383,7 +393,7 @@ def _run_historical(
     # Compute P&L
     # ------------------------------------------------------------------
     result = _compute_pnl(positions_df, ticker_returns, nav_usd)
-    result.name   = scenario_name
+    result.name = scenario_name
     result.period = f"{start} to {end}"
     return result
 
@@ -438,13 +448,16 @@ def _load_or_fetch_prices(
         return raw
 
     except Exception:
-        logger.exception("stress_test: yfinance download failed for scenario cache %s", cache_path.name)
+        logger.exception(
+            "stress_test: yfinance download failed for scenario cache %s", cache_path.name
+        )
         return None
 
 
 # ---------------------------------------------------------------------------
 # Synthetic scenario runner
 # ---------------------------------------------------------------------------
+
 
 def _run_synthetic(
     positions_df: pd.DataFrame,
@@ -468,21 +481,21 @@ def _run_synthetic(
 
     if scenario_name == "sector_shock":
         returns = _scenario_sector_shock(positions_df, factor_scores_df)
-        period  = "synthetic: sector_shock (-30% top-gross sector)"
+        period = "synthetic: sector_shock (-30% top-gross sector)"
 
     elif scenario_name == "momentum_reversal":
         returns = _scenario_momentum_reversal(positions_df, factor_scores_df)
-        period  = "synthetic: momentum_reversal (top/bot quintile ±20%)"
+        period = "synthetic: momentum_reversal (top/bot quintile ±20%)"
 
     elif scenario_name == "short_squeeze":
         returns = _scenario_short_squeeze(positions_df)
-        period  = "synthetic: short_squeeze (+30% all shorts)"
+        period = "synthetic: short_squeeze (+30% all shorts)"
 
     else:
         raise ValueError(f"Unknown synthetic scenario: {scenario_name!r}")
 
     result = _compute_pnl(positions_df, returns, nav_usd)
-    result.name   = scenario_name
+    result.name = scenario_name
     result.period = period
     return result
 
@@ -521,7 +534,8 @@ def _scenario_sector_shock(
     shocked_sector = max(sector_gross, key=lambda s: sector_gross[s])
     logger.debug(
         "stress_test: sector_shock targeting '%s' (gross=%.3f)",
-        shocked_sector, sector_gross[shocked_sector],
+        shocked_sector,
+        sector_gross[shocked_sector],
     )
 
     returns: dict[str, float] = {}
@@ -555,7 +569,7 @@ def _scenario_momentum_reversal(
 
     if not held_scores:
         # No momentum data — zero returns
-        return {t: 0.0 for t in tickers}
+        return dict.fromkeys(tickers, 0.0)
 
     scores_arr = np.array(list(held_scores.values()))
     p80 = float(np.percentile(scores_arr, 80))
@@ -581,7 +595,7 @@ def _scenario_short_squeeze(
     """Apply +30% return to all SHORT positions; 0% to LONG positions."""
     returns: dict[str, float] = {}
     for _, row in positions_df.iterrows():
-        ticker    = str(row["ticker"])
+        ticker = str(row["ticker"])
         direction = str(row.get("direction", "LONG")).upper()
         returns[ticker] = +0.30 if direction == "SHORT" else 0.0
     return returns

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -86,12 +85,11 @@ def build_trades(engine: sqlalchemy.engine.Engine) -> pd.DataFrame:
 
     for ticker, grp in df.groupby("ticker", sort=False):
         grp = grp.sort_values("date").reset_index(drop=True)
-        _process_ticker(
-            ticker, grp, records, score_map, vix_map, sector_map, existing_keys
-        )
+        _process_ticker(ticker, grp, records, score_map, vix_map, sector_map, existing_keys)
 
     new_records = [
-        r for r in records
+        r
+        for r in records
         if r["exit_date"] is not None
         and (r["ticker"], r["entry_date"], r["shares"]) not in existing_keys
     ]
@@ -116,69 +114,83 @@ def _process_ticker(
     lots: list[dict] = []  # FIFO queue of open lots: {shares, entry_date, entry_price}
 
     prev_direction = None
-    for i, row in grp.iterrows():
-        date      = row["date"]
+    for _, row in grp.iterrows():
+        date = row["date"]
         direction = row["direction"]
-        shares    = float(row["shares"])
-        price     = float(row["price"]) if row["price"] else 0.0
-        sector    = sector_map.get(ticker, row.get("sector") or "Unknown")
+        shares = float(row["shares"])
+        price = float(row["price"]) if row["price"] else 0.0
+        sector = sector_map.get(ticker, row.get("sector") or "Unknown")
         entry_score = score_map.get((ticker, date))
-        entry_vix   = _nearest_vix(vix_map, date)
+        entry_vix = _nearest_vix(vix_map, date)
 
         # Direction flip — close all existing lots
         if prev_direction and direction != prev_direction:
             for lot in lots:
-                records.append(_trade(
-                    ticker, direction=prev_direction,
-                    entry_date=lot["entry_date"], exit_date=date,
-                    entry_price=lot["entry_price"], exit_price=price,
-                    shares=lot["shares"],
-                    sector=sector,
-                    entry_score=lot.get("entry_score"),
-                    entry_vix=lot.get("entry_vix"),
-                ))
+                records.append(
+                    _trade(
+                        ticker,
+                        direction=prev_direction,
+                        entry_date=lot["entry_date"],
+                        exit_date=date,
+                        entry_price=lot["entry_price"],
+                        exit_price=price,
+                        shares=lot["shares"],
+                        sector=sector,
+                        entry_score=lot.get("entry_score"),
+                        entry_vix=lot.get("entry_vix"),
+                    )
+                )
             lots = []
 
         if not lots:
             # New entry
-            lots.append({
-                "shares":       shares,
-                "entry_date":   date,
-                "entry_price":  price,
-                "entry_score":  entry_score,
-                "entry_vix":    entry_vix,
-            })
+            lots.append(
+                {
+                    "shares": shares,
+                    "entry_date": date,
+                    "entry_price": price,
+                    "entry_score": entry_score,
+                    "entry_vix": entry_vix,
+                }
+            )
             prev_direction = direction
             continue
 
-        total_open = sum(l["shares"] for l in lots)
+        total_open = sum(lot["shares"] for lot in lots)
 
         if shares > total_open * 1.05:
             # Position grew — add a new lot for the additional shares
-            lots.append({
-                "shares":       shares - total_open,
-                "entry_date":   date,
-                "entry_price":  price,
-                "entry_score":  entry_score,
-                "entry_vix":    entry_vix,
-            })
+            lots.append(
+                {
+                    "shares": shares - total_open,
+                    "entry_date": date,
+                    "entry_price": price,
+                    "entry_score": entry_score,
+                    "entry_vix": entry_vix,
+                }
+            )
         elif shares < total_open * 0.95:
             # Position shrank — FIFO close oldest lots
             to_close = total_open - shares
             while to_close > 0 and lots:
                 lot = lots[0]
                 close_shares = min(lot["shares"], to_close)
-                records.append(_trade(
-                    ticker, direction=direction,
-                    entry_date=lot["entry_date"], exit_date=date,
-                    entry_price=lot["entry_price"], exit_price=price,
-                    shares=close_shares,
-                    sector=sector,
-                    entry_score=lot.get("entry_score"),
-                    entry_vix=lot.get("entry_vix"),
-                ))
+                records.append(
+                    _trade(
+                        ticker,
+                        direction=direction,
+                        entry_date=lot["entry_date"],
+                        exit_date=date,
+                        entry_price=lot["entry_price"],
+                        exit_price=price,
+                        shares=close_shares,
+                        sector=sector,
+                        entry_score=lot.get("entry_score"),
+                        entry_vix=lot.get("entry_vix"),
+                    )
+                )
                 lot["shares"] -= close_shares
-                to_close      -= close_shares
+                to_close -= close_shares
                 if lot["shares"] <= 0:
                     lots.pop(0)
 
@@ -186,55 +198,67 @@ def _process_ticker(
 
     # At the end, any remaining open lots are still open (exit_date=None)
     for lot in lots:
-        records.append(_trade(
-            ticker, direction=prev_direction or "LONG",
-            entry_date=lot["entry_date"], exit_date=None,
-            entry_price=lot["entry_price"], exit_price=None,
-            shares=lot["shares"],
-            sector=sector_map.get(ticker, "Unknown"),
-            entry_score=lot.get("entry_score"),
-            entry_vix=lot.get("entry_vix"),
-        ))
+        records.append(
+            _trade(
+                ticker,
+                direction=prev_direction or "LONG",
+                entry_date=lot["entry_date"],
+                exit_date=None,
+                entry_price=lot["entry_price"],
+                exit_price=None,
+                shares=lot["shares"],
+                sector=sector_map.get(ticker, "Unknown"),
+                entry_score=lot.get("entry_score"),
+                entry_vix=lot.get("entry_vix"),
+            )
+        )
 
 
 def _trade(
-    ticker, direction, entry_date, exit_date, entry_price, exit_price, shares,
-    sector, entry_score, entry_vix,
+    ticker,
+    direction,
+    entry_date,
+    exit_date,
+    entry_price,
+    exit_price,
+    shares,
+    sector,
+    entry_score,
+    entry_vix,
 ) -> dict:
     if exit_date and exit_price and entry_price:
-        sign         = 1.0 if direction == "LONG" else -1.0
+        sign = 1.0 if direction == "LONG" else -1.0
         realized_pnl = sign * (exit_price - entry_price) * shares
         from datetime import date as _date
+
         try:
             hd = (_date.fromisoformat(exit_date) - _date.fromisoformat(entry_date)).days
         except Exception:
             hd = None
     else:
         realized_pnl = None
-        hd           = None
+        hd = None
 
     return {
-        "ticker":       ticker,
-        "direction":    direction,
-        "entry_date":   entry_date,
-        "exit_date":    exit_date,
-        "entry_price":  entry_price,
-        "exit_price":   exit_price,
-        "shares":       shares,
+        "ticker": ticker,
+        "direction": direction,
+        "entry_date": entry_date,
+        "exit_date": exit_date,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "shares": shares,
         "realized_pnl": realized_pnl,
         "holding_days": hd,
-        "sector":       sector,
-        "entry_score":  entry_score,
-        "entry_vix":    entry_vix,
+        "sector": sector,
+        "entry_score": entry_score,
+        "entry_vix": entry_vix,
     }
 
 
 def _nearest_vix(vix_map: dict, date: str) -> float | None:
     if date in vix_map:
         return vix_map[date]
-    candidates = sorted(
-        (d for d in vix_map if d <= date), reverse=True
-    )
+    candidates = sorted((d for d in vix_map if d <= date), reverse=True)
     return vix_map[candidates[0]] if candidates else None
 
 
@@ -263,7 +287,9 @@ def spearman_predictive_power(engine: sqlalchemy.engine.Engine) -> dict:
     if not rows:
         return {"LONG": {}, "SHORT": {}}
 
-    df = pd.DataFrame(rows, columns=["direction", "entry_score", "realized_pnl", "entry_price", "shares"])
+    df = pd.DataFrame(
+        rows, columns=["direction", "entry_score", "realized_pnl", "entry_price", "shares"]
+    )
     df["return_pct"] = df["realized_pnl"] / (df["entry_price"] * df["shares"])
 
     result = {}
@@ -273,6 +299,10 @@ def spearman_predictive_power(engine: sqlalchemy.engine.Engine) -> dict:
             result[side] = {"spearman_r": None, "p_value": None, "n": len(sub)}
             continue
         r, p = scipy.stats.spearmanr(sub["entry_score"], sub["return_pct"])
-        result[side] = {"spearman_r": round(float(r), 4), "p_value": round(float(p), 4), "n": len(sub)}
+        result[side] = {
+            "spearman_r": round(float(r), 4),
+            "p_value": round(float(p), 4),
+            "n": len(sub),
+        }
 
     return result

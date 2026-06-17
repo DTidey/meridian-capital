@@ -14,7 +14,6 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
-import importlib
 import logging
 import os
 import sys
@@ -27,12 +26,11 @@ import yaml
 # Ensure project root on path
 sys.path.insert(0, str(Path(__file__).parent))
 
-import portfolio.db  # noqa: F401 — register Layer 4 tables
-import factors.db    # noqa: F401 — register Layer 2 tables
-import risk.db       # noqa: F401 — register Layer 5 tables
-import analysis.db   # noqa: F401 — register Layer 3 tables
+import analysis.db  # noqa: F401 — register Layer 3 tables
 import execution.db  # noqa: F401 — register Layer 6 tables
-
+import factors.db  # noqa: F401 — register Layer 2 tables
+import portfolio.db  # noqa: F401 — register Layer 4 tables
+import risk.db  # noqa: F401 — register Layer 5 tables
 from data.db import get_engine, initialise_schema
 
 
@@ -79,22 +77,22 @@ def _print_summary(results: list[dict]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Meridian Layer 6 — Execution")
-    parser.add_argument("--dry-run",        action="store_true", help="Log orders; no Alpaca calls")
-    parser.add_argument("--execute",        action="store_true", help="Submit approved orders")
-    parser.add_argument("--status",         action="store_true", help="Show open execution_orders")
-    parser.add_argument("--sync",           action="store_true", help="Reconcile positions")
-    parser.add_argument("--slippage",       action="store_true", help="Print 30-day slippage stats")
+    parser.add_argument("--dry-run", action="store_true", help="Log orders; no Alpaca calls")
+    parser.add_argument("--execute", action="store_true", help="Submit approved orders")
+    parser.add_argument("--status", action="store_true", help="Show open execution_orders")
+    parser.add_argument("--sync", action="store_true", help="Reconcile positions")
+    parser.add_argument("--slippage", action="store_true", help="Print 30-day slippage stats")
     parser.add_argument("--cancel-pending", action="store_true", help="Cancel all open orders")
-    parser.add_argument("--date",           default=date.today().isoformat(), metavar="DATE")
-    parser.add_argument("--verbose",        action="store_true")
+    parser.add_argument("--date", default=date.today().isoformat(), metavar="DATE")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     _load_dotenv()
     _setup_logging(args.verbose)
     log = logging.getLogger(__name__)
 
-    config     = _load_config()
-    cache_dir  = Path("cache")
+    config = _load_config()
+    cache_dir = Path("cache")
     cache_dir.mkdir(exist_ok=True)
 
     db_url = os.environ.get("DATABASE_URL", config["database"]["url"])
@@ -108,19 +106,24 @@ def main() -> int:
     # -----------------------------------------------------------------------
     if args.status:
         from execution.db import execution_orders
+
         with engine.connect() as conn:
             rows = conn.execute(
-                sa.select(execution_orders).where(
-                    execution_orders.c.status.in_(["PENDING", "PARTIAL"])
-                ).order_by(execution_orders.c.created_at.desc())
+                sa.select(execution_orders)
+                .where(execution_orders.c.status.in_(["PENDING", "PARTIAL"]))
+                .order_by(execution_orders.c.created_at.desc())
             ).fetchall()
         if not rows:
             print("No open execution orders.")
         else:
-            print(f"{'ID':<6} {'Date':<12} {'Ticker':<8} {'Action':<6} {'Ordered':>10} {'Filled':>10} {'Status':<10}")
+            print(
+                f"{'ID':<6} {'Date':<12} {'Ticker':<8} {'Action':<6} {'Ordered':>10} {'Filled':>10} {'Status':<10}"
+            )
             for r in rows:
-                print(f"{r.id:<6} {r.rebalance_date:<12} {r.ticker:<8} {r.action:<6} "
-                      f"{r.ordered_shares:>10.1f} {r.filled_shares:>10.1f} {r.status:<10}")
+                print(
+                    f"{r.id:<6} {r.rebalance_date:<12} {r.ticker:<8} {r.action:<6} "
+                    f"{r.ordered_shares:>10.1f} {r.filled_shares:>10.1f} {r.status:<10}"
+                )
         return 0
 
     # -----------------------------------------------------------------------
@@ -128,6 +131,7 @@ def main() -> int:
     # -----------------------------------------------------------------------
     if args.slippage:
         from execution.costs import slippage_stats
+
         with engine.connect() as conn:
             stats = slippage_stats(conn)
         print(f"30-day slippage stats ({stats['count']} filled orders):")
@@ -140,11 +144,16 @@ def main() -> int:
     # All other modes need Alpaca client
     # -----------------------------------------------------------------------
     try:
-        from execution.broker import get_client, get_account, market_is_open, reconcile_positions
+        from execution.broker import get_account, get_client, market_is_open, reconcile_positions
+
         client = get_client()
-        acct   = get_account(client)
-        log.info("Connected to Alpaca. Equity=%.2f BuyingPower=%.2f", acct["equity"], acct["buying_power"])
-    except EnvironmentError as exc:
+        acct = get_account(client)
+        log.info(
+            "Connected to Alpaca. Equity=%.2f BuyingPower=%.2f",
+            acct["equity"],
+            acct["buying_power"],
+        )
+    except OSError as exc:
         log.error("%s", exc)
         return 1
 
@@ -153,6 +162,7 @@ def main() -> int:
     # -----------------------------------------------------------------------
     if args.cancel_pending:
         from execution.order_manager import cancel_open_orders
+
         n = cancel_open_orders(client)
         print(f"Cancelled {n} open orders.")
         return 0
@@ -195,7 +205,9 @@ def main() -> int:
         from execution.order_manager import OrderManager
 
         with OrderManager(client):
-            results = execute_approvals(conn, client, score_date, config, cache_dir, dry_run=dry_run)
+            results = execute_approvals(
+                conn, client, score_date, config, cache_dir, dry_run=dry_run
+            )
 
     print(f"\nExecution summary for {score_date}:")
     _print_summary(results)

@@ -2,7 +2,6 @@
 
 import math
 
-import numpy as np
 import pandas as pd
 
 
@@ -24,14 +23,14 @@ def estimate_cost(
         config: Full application config dict.
     """
     tc_cfg = config.get("portfolio", {}).get("transaction_costs", {})
-    hl_frac    = tc_cfg.get("spread_hl_fraction",  0.05)
+    hl_frac = tc_cfg.get("spread_hl_fraction", 0.05)
     impact_coef = tc_cfg.get("market_impact_coef", 0.10)
-    adv_days   = config.get("portfolio", {}).get("adv_lookback_days", 20)
+    adv_days = config.get("portfolio", {}).get("adv_lookback_days", 20)
 
     trade_value = abs(trade_shares) * price
 
-    spread_cost   = _spread_cost(prices_df, hl_frac, trade_value, adv_days)
-    impact_cost   = _market_impact(prices_df, trade_shares, price, impact_coef, adv_days)
+    spread_cost = _spread_cost(prices_df, hl_frac, trade_value, adv_days)
+    impact_cost = _market_impact(prices_df, trade_shares, price, impact_coef, adv_days)
 
     return spread_cost + impact_cost
 
@@ -54,7 +53,7 @@ def compute_adv(prices_df: pd.DataFrame, adv_days: int) -> float:
         return 0.0
     recent = prices_df.tail(adv_days)
     adv_shares = recent["volume"].mean()
-    avg_price  = recent["close"].mean() if "close" in recent.columns else 1.0
+    avg_price = recent["close"].mean() if "close" in recent.columns else 1.0
     return float(adv_shares * avg_price) if not math.isnan(adv_shares * avg_price) else 0.0
 
 
@@ -70,7 +69,7 @@ def _spread_cost(
     close_col = "close" if "close" in recent.columns else "adj_close"
     if close_col not in recent.columns or recent[close_col].mean() == 0:
         return 0.0
-    avg_hl   = (recent["high"] - recent["low"]).mean()
+    avg_hl = (recent["high"] - recent["low"]).mean()
     avg_close = recent[close_col].mean()
     spread_pct = hl_frac * avg_hl / avg_close
     return spread_pct * trade_value

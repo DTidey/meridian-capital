@@ -4,20 +4,19 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db   # noqa: F401
-import factors.db     # noqa: F401
-import risk.db        # noqa: F401
-import analysis.db    # noqa: F401
-import execution.db   # noqa: F401
-
 from datetime import date, timedelta
 
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import execution.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import initialise_schema
-from execution.db import execution_orders
 from execution.costs import compute_slippage, slippage_stats
+from execution.db import execution_orders
 
 
 @pytest.fixture
@@ -56,26 +55,28 @@ class TestComputeSlippage:
 
     def test_cover_treated_as_buy(self):
         bps_cover = compute_slippage(50.0, 50.5, "cover")
-        bps_buy   = compute_slippage(50.0, 50.5, "buy")
+        bps_buy = compute_slippage(50.0, 50.5, "buy")
         assert bps_cover == pytest.approx(bps_buy)
 
 
 class TestSlippageStats:
     def _insert_order(self, conn, ticker, slippage_bps, status="FILLED", days_ago=0):
         d = (date.today() - timedelta(days=days_ago)).isoformat()
-        conn.execute(execution_orders.insert().values(
-            rebalance_date=d,
-            ticker=ticker,
-            action="BUY",
-            ordered_shares=100.0,
-            filled_shares=100.0,
-            avg_fill_price=150.0,
-            order_id="abc",
-            status=status,
-            slippage_bps=slippage_bps,
-            created_at=f"{d}T10:00:00",
-            updated_at=f"{d}T10:05:00",
-        ))
+        conn.execute(
+            execution_orders.insert().values(
+                rebalance_date=d,
+                ticker=ticker,
+                action="BUY",
+                ordered_shares=100.0,
+                filled_shares=100.0,
+                avg_fill_price=150.0,
+                order_id="abc",
+                status=status,
+                slippage_bps=slippage_bps,
+                created_at=f"{d}T10:00:00",
+                updated_at=f"{d}T10:05:00",
+            )
+        )
         conn.commit()
 
     def test_empty_returns_zeros(self, conn):

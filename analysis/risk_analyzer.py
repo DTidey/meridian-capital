@@ -11,8 +11,10 @@ from data.db import sec_filings
 
 logger = logging.getLogger(__name__)
 
-_SEVERITY_MAP  = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
-_SEVERITY_SCORE = {k: 10 - v * 2 for k, v in _SEVERITY_MAP.items()}   # LOW→10, MEDIUM→8, HIGH→6, CRITICAL→4
+_SEVERITY_MAP = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+_SEVERITY_SCORE = {
+    k: 10 - v * 2 for k, v in _SEVERITY_MAP.items()
+}  # LOW→10, MEDIUM→8, HIGH→6, CRITICAL→4
 
 _SYSTEM_PROMPT = """\
 You are a risk analyst specialising in SEC 10-K filings.
@@ -55,7 +57,7 @@ def analyse(
         return None
 
     accession_no = filing["accession_no"]
-    artifact_id  = AnalysisCache.artifact_id_risk(ticker, accession_no)
+    artifact_id = AnalysisCache.artifact_id_risk(ticker, accession_no)
 
     cached = cache.get("risk", ticker, artifact_id)
     if cached is not None:
@@ -63,14 +65,19 @@ def analyse(
         return cached
 
     max_chars = config.get("analysis", {}).get("filing_risk_max_chars", 80_000)
-    text      = _strip_html(filing["content_text"] or "")[:max_chars]
-    model     = config.get("analysis", {}).get("analyzer_models", {}).get("risk",
-                config.get("analysis", {}).get("openai_model", "gpt-4o"))
+    text = _strip_html(filing["content_text"] or "")[:max_chars]
+    model = (
+        config.get("analysis", {})
+        .get("analyzer_models", {})
+        .get("risk", config.get("analysis", {}).get("openai_model", "gpt-4o"))
+    )
 
     prior_note = ""
     prior = _fetch_prior_10k(conn, ticker, accession_no, score_date)
     if prior:
-        prior_note = f"\nPrior filing accession: {prior['accession_no']} (filed {prior['filed_date']})"
+        prior_note = (
+            f"\nPrior filing accession: {prior['accession_no']} (filed {prior['filed_date']})"
+        )
 
     user_prompt = (
         f"Company: {ticker}\n"
@@ -84,8 +91,7 @@ def analyse(
     result = client.chat(_SYSTEM_PROMPT, user_prompt, model=model)
     result = _validate(result)
 
-    cache.set("risk", ticker, artifact_id, model, result,
-              _zero_usage(), _last_cost(client))
+    cache.set("risk", ticker, artifact_id, model, result, _zero_usage(), _last_cost(client))
     return result
 
 
@@ -103,11 +109,13 @@ def _fetch_10k(conn, ticker: str, score_date: str) -> dict | None:
             sec_filings.c.accession_no,
             sec_filings.c.filed_date,
             sec_filings.c.content_text,
-        ).where(
-            (sec_filings.c.ticker    == ticker) &
-            (sec_filings.c.form_type == "10-K") &
-            (sec_filings.c.filed_date <= score_date)
-        ).order_by(sec_filings.c.filed_date.desc())
+        )
+        .where(
+            (sec_filings.c.ticker == ticker)
+            & (sec_filings.c.form_type == "10-K")
+            & (sec_filings.c.filed_date <= score_date)
+        )
+        .order_by(sec_filings.c.filed_date.desc())
         .limit(1)
     ).fetchone()
     if row is None:
@@ -120,12 +128,14 @@ def _fetch_prior_10k(conn, ticker: str, current_accession: str, score_date: str)
         sa.select(
             sec_filings.c.accession_no,
             sec_filings.c.filed_date,
-        ).where(
-            (sec_filings.c.ticker      == ticker) &
-            (sec_filings.c.form_type   == "10-K") &
-            (sec_filings.c.accession_no != current_accession) &
-            (sec_filings.c.filed_date   <= score_date)
-        ).order_by(sec_filings.c.filed_date.desc())
+        )
+        .where(
+            (sec_filings.c.ticker == ticker)
+            & (sec_filings.c.form_type == "10-K")
+            & (sec_filings.c.accession_no != current_accession)
+            & (sec_filings.c.filed_date <= score_date)
+        )
+        .order_by(sec_filings.c.filed_date.desc())
         .limit(1)
     ).fetchone()
     if row is None:
@@ -147,6 +157,7 @@ def _validate(result: dict) -> dict:
 
 def _zero_usage():
     from unittest.mock import MagicMock
+
     u = MagicMock()
     u.prompt_tokens = 0
     u.completion_tokens = 0

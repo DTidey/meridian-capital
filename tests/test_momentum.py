@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -10,18 +9,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from factors.momentum import compute, COLS, _ret
-
+from factors.momentum import COLS, _ret, compute
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_prices(ticker, n_days=300, start_price=100.0, growth=0.001):
     """Generate n_days of synthetic adj_close prices."""
     dates = pd.date_range("2023-01-01", periods=n_days, freq="B")
     prices = [start_price * (1 + growth) ** i for i in range(n_days)]
-    return pd.DataFrame({"ticker": ticker, "date": dates, "adj_close": prices, "close": prices, "volume": 1000})
+    return pd.DataFrame(
+        {"ticker": ticker, "date": dates, "adj_close": prices, "close": prices, "volume": 1000}
+    )
 
 
 def _make_universe(tickers_sectors):
@@ -52,6 +53,7 @@ _CONFIG = {
 # _ret helper
 # ---------------------------------------------------------------------------
 
+
 class TestRet:
     def test_positive_return(self):
         assert _ret(100.0, 110.0) == pytest.approx(0.10)
@@ -66,6 +68,7 @@ class TestRet:
 # ---------------------------------------------------------------------------
 # compute() — basic structure
 # ---------------------------------------------------------------------------
+
 
 class TestComputeStructure:
     def test_returns_dataframe_with_expected_columns(self):
@@ -98,6 +101,7 @@ class TestComputeStructure:
 # Insufficient history
 # ---------------------------------------------------------------------------
 
+
 class TestInsufficientHistory:
     def test_ticker_with_few_days_gets_50(self):
         # AAPL has only 100 days — below _MIN_HISTORY=252
@@ -115,6 +119,7 @@ class TestInsufficientHistory:
 # Relative strength vs ETF
 # ---------------------------------------------------------------------------
 
+
 class TestRelativeStrength:
     def test_outperformer_scores_higher_than_underperformer(self):
         # Stock A grows fast, Stock B flat — both in IT sector
@@ -124,16 +129,22 @@ class TestRelativeStrength:
 
         def prices_df(ticker, growth):
             p = [100 * (1 + growth) ** i for i in range(n)]
-            return pd.DataFrame({"ticker": ticker, "date": dates, "adj_close": p, "close": p, "volume": 1000})
+            return pd.DataFrame(
+                {"ticker": ticker, "date": dates, "adj_close": p, "close": p, "volume": 1000}
+            )
 
-        prices = pd.concat([
-            prices_df("FAST", 0.003),   # strong outperformer
-            prices_df("SLOW", 0.0001),  # underperformer
-            prices_df("XLK",  0.001),   # sector ETF
-        ])
+        prices = pd.concat(
+            [
+                prices_df("FAST", 0.003),  # strong outperformer
+                prices_df("SLOW", 0.0001),  # underperformer
+                prices_df("XLK", 0.001),  # sector ETF
+            ]
+        )
         data = {
             "prices": prices,
-            "universe": _make_universe([("FAST", "Information Technology"), ("SLOW", "Information Technology")]),
+            "universe": _make_universe(
+                [("FAST", "Information Technology"), ("SLOW", "Information Technology")]
+            ),
         }
         result = compute(data, _CONFIG)
         assert result.loc["FAST", "mom_rel_strength"] > result.loc["SLOW", "mom_rel_strength"]
@@ -151,6 +162,7 @@ class TestRelativeStrength:
 # 52-week high proximity
 # ---------------------------------------------------------------------------
 
+
 class TestHighProximity:
     def test_at_high_scores_highest(self):
         # Build two tickers: one near 52w high, one far from it
@@ -164,10 +176,18 @@ class TestHighProximity:
         # Far-from-high: price peaked early then drifted down
         far_prices = [100 - 0.001 * i for i in range(n)]
 
-        prices = pd.DataFrame([
-            *[{"ticker": "NEAR", "date": d, "adj_close": p, "close": p, "volume": 1} for d, p in zip(dates, near_prices)],
-            *[{"ticker": "FAR",  "date": d, "adj_close": p, "close": p, "volume": 1} for d, p in zip(dates, far_prices)],
-        ])
+        prices = pd.DataFrame(
+            [
+                *[
+                    {"ticker": "NEAR", "date": d, "adj_close": p, "close": p, "volume": 1}
+                    for d, p in zip(dates, near_prices, strict=False)
+                ],
+                *[
+                    {"ticker": "FAR", "date": d, "adj_close": p, "close": p, "volume": 1}
+                    for d, p in zip(dates, far_prices, strict=False)
+                ],
+            ]
+        )
         data = {
             "prices": prices,
             "universe": _make_universe([("NEAR", "IT"), ("FAR", "IT")]),
@@ -180,6 +200,7 @@ class TestHighProximity:
 # Momentum composite score
 # ---------------------------------------------------------------------------
 
+
 class TestMomentumScore:
     def test_higher_momentum_ticker_scores_higher(self):
         n = 300
@@ -187,7 +208,9 @@ class TestMomentumScore:
 
         def prices_df(ticker, growth):
             p = [100 * (1 + growth) ** i for i in range(n)]
-            return pd.DataFrame({"ticker": ticker, "date": dates, "adj_close": p, "close": p, "volume": 1000})
+            return pd.DataFrame(
+                {"ticker": ticker, "date": dates, "adj_close": p, "close": p, "volume": 1000}
+            )
 
         prices = pd.concat([prices_df("HIGH", 0.003), prices_df("LOW", 0.0001)])
         data = {

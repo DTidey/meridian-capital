@@ -4,11 +4,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401
-import factors.db    # noqa: F401
-import risk.db       # noqa: F401
-import analysis.db   # noqa: F401
-
 from datetime import date, timedelta
 
 import numpy as np
@@ -16,15 +11,18 @@ import pandas as pd
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import daily_prices, initialise_schema
 from factors.db import factor_scores as factor_scores_table
 from risk.factor_risk_model import (
-    FactorRiskResult,
     _FACTOR_COLS,
+    FactorRiskResult,
     compute_factor_risk,
     save_predicted_cov,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,44 +55,51 @@ def _insert_prices(conn, ticker, n=60, start="2026-01-01", base=100.0, noise_see
     for i in range(n):
         price = price * (1.0 + rng.normal(0, 0.01))
         price = max(price, 1.0)
-        rows.append({
-            "ticker":    ticker,
-            "date":      str(d + timedelta(days=i)),
-            "adj_close": round(price, 4),
-            "open":      round(price, 4),
-            "high":      round(price * 1.005, 4),
-            "low":       round(price * 0.995, 4),
-            "close":     round(price, 4),
-            "volume":    100_000,
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "date": str(d + timedelta(days=i)),
+                "adj_close": round(price, 4),
+                "open": round(price, 4),
+                "high": round(price * 1.005, 4),
+                "low": round(price * 0.995, 4),
+                "close": round(price, 4),
+                "volume": 100_000,
+            }
+        )
     conn.execute(daily_prices.insert(), rows)
     conn.commit()
 
 
 def _insert_factor_score(conn, ticker, sector="Technology", mom=50.0):
-    scores = {col: 50.0 for col in _FACTOR_COLS}
+    scores = dict.fromkeys(_FACTOR_COLS, 50.0)
     scores["momentum_score"] = mom
-    conn.execute(factor_scores_table.insert().values(
-        ticker=ticker,
-        score_date=_SCORE_DATE,
-        sector=sector,
-        **scores,
-        composite_score=50.0,
-    ))
+    conn.execute(
+        factor_scores_table.insert().values(
+            ticker=ticker,
+            score_date=_SCORE_DATE,
+            sector=sector,
+            **scores,
+            composite_score=50.0,
+        )
+    )
     conn.commit()
 
 
 def _make_positions(tickers, weight=0.10):
-    return pd.DataFrame({
-        "ticker": tickers,
-        "weight": [weight] * len(tickers),
-        "direction": ["LONG"] * len(tickers),
-    })
+    return pd.DataFrame(
+        {
+            "ticker": tickers,
+            "weight": [weight] * len(tickers),
+            "direction": ["LONG"] * len(tickers),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEmptyPositions:
     def test_empty_positions_returns_empty_result(self, mem_db):
@@ -127,11 +132,13 @@ class TestMCTRConcentration:
             _insert_factor_score(mem_db, ticker)
 
         # AAPL holds 80% of NAV; others hold 5% each
-        positions = pd.DataFrame({
-            "ticker":    _TICKERS,
-            "weight":    [0.80, 0.05, 0.05, 0.05, 0.05],
-            "direction": ["LONG"] * 5,
-        })
+        positions = pd.DataFrame(
+            {
+                "ticker": _TICKERS,
+                "weight": [0.80, 0.05, 0.05, 0.05, 0.05],
+                "direction": ["LONG"] * 5,
+            }
+        )
         result = compute_factor_risk(mem_db, positions, _SCORE_DATE, lookback_days=60)
 
         # When one ticker is overwhelmingly dominant, it should be flagged
@@ -178,7 +185,7 @@ class TestSavePredictedCov:
         save_predicted_cov(result, tmp_path, _SCORE_DATE)
 
         stamped = tmp_path / f"predicted_cov_{_SCORE_DATE}.parquet"
-        latest  = tmp_path / "predicted_cov_latest.parquet"
+        latest = tmp_path / "predicted_cov_latest.parquet"
         assert stamped.exists() or latest.exists(), (
             "Expected at least one parquet file to be written by save_predicted_cov"
         )

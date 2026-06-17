@@ -10,29 +10,43 @@ from datetime import datetime, timedelta
 import requests
 import sqlalchemy as sa
 
-from .db import _dialect_insert, earnings_transcripts, insert_or_ignore, sec_filings
+from .db import _dialect_insert, earnings_transcripts, sec_filings
 
 logger = logging.getLogger(__name__)
 
-_EDGAR_ARCH   = "https://www.sec.gov"
-_SEC_INTERVAL = 1.0 / 8   # 8 req/s fair-use limit
+_EDGAR_ARCH = "https://www.sec.gov"
+_SEC_INTERVAL = 1.0 / 8  # 8 req/s fair-use limit
 
 # Phrases that appear in earnings content (transcripts AND press releases).
 # Requiring ≥ 3 hits guards against unrelated 8-K exhibits.
 _EARNINGS_MARKERS = [
     # Call transcript markers
-    "operator", "question-and-answer", "q&a", "conference call", "earnings call",
-    "good morning", "good afternoon", "good evening", "thank you for standing by",
+    "operator",
+    "question-and-answer",
+    "q&a",
+    "conference call",
+    "earnings call",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "thank you for standing by",
     # Press release / results markers
-    "financial results", "quarterly results", "fiscal quarter",
-    "revenue", "earnings per share", "diluted eps",
-    "operating income", "year-over-year", "guidance",
+    "financial results",
+    "quarterly results",
+    "fiscal quarter",
+    "revenue",
+    "earnings per share",
+    "diluted eps",
+    "operating income",
+    "year-over-year",
+    "guidance",
 ]
 
 
 # ---------------------------------------------------------------------------
 # FMP
 # ---------------------------------------------------------------------------
+
 
 def _fetch_transcript_fmp(ticker: str, fmp_key: str, base_url: str) -> list[dict] | None:
     """Fetch latest earnings transcripts from FMP.
@@ -49,12 +63,16 @@ def _fetch_transcript_fmp(ticker: str, fmp_key: str, base_url: str) -> list[dict
         return []
 
     if resp.status_code == 402:
-        logger.warning("FMP transcripts require a paid plan (402) — falling back to 8-K exhibit mining")
+        logger.warning(
+            "FMP transcripts require a paid plan (402) — falling back to 8-K exhibit mining"
+        )
         return None
     if resp.status_code == 403:
         body = resp.json() if resp.content else {}
-        logger.warning("FMP transcript endpoint blocked (403): %s — falling back to 8-K exhibit mining",
-                       body.get("Error Message", resp.text[:80]))
+        logger.warning(
+            "FMP transcript endpoint blocked (403): %s — falling back to 8-K exhibit mining",
+            body.get("Error Message", resp.text[:80]),
+        )
         return None
     try:
         resp.raise_for_status()
@@ -68,18 +86,21 @@ def _fetch_transcript_fmp(ticker: str, fmp_key: str, base_url: str) -> list[dict
 
     results = []
     for item in data[:3]:
-        results.append({
-            "earnings_date": item.get("date", "")[:10],
-            "quarter":       f"Q{item.get('quarter', '')}",
-            "year":          item.get("year"),
-            "content":       item.get("content", ""),
-        })
+        results.append(
+            {
+                "earnings_date": item.get("date", "")[:10],
+                "quarter": f"Q{item.get('quarter', '')}",
+                "year": item.get("year"),
+                "content": item.get("content", ""),
+            }
+        )
     return results
 
 
 # ---------------------------------------------------------------------------
 # 8-K Exhibit 99 fallback
 # ---------------------------------------------------------------------------
+
 
 def _sec_get(session: requests.Session, url: str) -> requests.Response | None:
     """Rate-limited GET against SEC EDGAR."""
@@ -122,8 +143,8 @@ def _fetch_and_clean(session: requests.Session, url: str) -> str:
     if not resp:
         return ""
     text = resp.text
-    text = re.sub(r"<script[^>]*>.*?</script>",   " ", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<style[^>]*>.*?</style>",      " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<ix:hidden[^>]*>.*?</ix:hidden>", " ", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)
     text = html_lib.unescape(text)
@@ -177,7 +198,7 @@ def _fetch_transcript_8k(
             sec_filings.c.filing_url,
         )
         .where(
-            (sec_filings.c.ticker    == ticker)
+            (sec_filings.c.ticker == ticker)
             & (sec_filings.c.form_type == "8-K")
             & sec_filings.c.filing_url.isnot(None)
             & sa.or_(
@@ -209,13 +230,15 @@ def _fetch_transcript_8k(
             continue
 
         quarter, year = _quarter_from_date(filed_date or "")
-        results.append({
-            "earnings_date":       (filed_date or "")[:10],
-            "quarter":             quarter,
-            "year":                year,
-            "content":             text,
-            "source_accession_no": acc,
-        })
+        results.append(
+            {
+                "earnings_date": (filed_date or "")[:10],
+                "quarter": quarter,
+                "year": year,
+                "content": text,
+                "source_accession_no": acc,
+            }
+        )
         logger.debug("8-K exhibit found for %s (%s %s)", ticker, quarter, year)
 
     return results
@@ -235,8 +258,8 @@ def _mark_checked(conn: sa.engine.Connection, accession_no: str | None) -> None:
 # Shared storage helper
 # ---------------------------------------------------------------------------
 
-def _store_entries(conn: sa.engine.Connection, ticker: str,
-                   entries: list[dict], now: str) -> int:
+
+def _store_entries(conn: sa.engine.Connection, ticker: str, entries: list[dict], now: str) -> int:
     """Store transcript entries. Sentinels (content=None) are stored to mark
     accession numbers as checked so they are never re-fetched."""
     stored = 0
@@ -270,6 +293,7 @@ def _store_entries(conn: sa.engine.Connection, ticker: str,
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def update_transcripts(
     conn: sa.engine.Connection,
     tickers: list[str],
@@ -280,9 +304,9 @@ def update_transcripts(
     Primary source: FMP API (if FMP_API_KEY is set and the plan supports it).
     Fallback:       Exhibit 99 files from 8-K filings already in sec_filings.
     """
-    fmp_key  = os.getenv("FMP_API_KEY", "").strip()
+    fmp_key = os.getenv("FMP_API_KEY", "").strip()
     base_url = config["transcripts"]["fmp_base_url"]
-    now      = datetime.utcnow().isoformat(timespec="seconds")
+    now = datetime.utcnow().isoformat(timespec="seconds")
     summary: dict[str, int] = {}
 
     fmp_active = bool(fmp_key)
@@ -294,22 +318,27 @@ def update_transcripts(
     # Tickers that file 8-Ks far more often than quarterly (> 20/year) are not
     # earnings-reporting via 8-K (e.g. daily ASX buy-back filings). Bulk-mark all
     # their unchecked 8-Ks as checked so they are never retried.
-    heavy_filers = set(conn.execute(
-        sa.select(sec_filings.c.ticker)
-        .where(
-            sa.and_(
-                sec_filings.c.form_type == "8-K",
-                sec_filings.c.ticker.in_(tickers),
-                sec_filings.c.filed_date >= one_year_ago,
+    heavy_filers = set(
+        conn.execute(
+            sa.select(sec_filings.c.ticker)
+            .where(
+                sa.and_(
+                    sec_filings.c.form_type == "8-K",
+                    sec_filings.c.ticker.in_(tickers),
+                    sec_filings.c.filed_date >= one_year_ago,
+                )
             )
+            .group_by(sec_filings.c.ticker)
+            .having(sa.func.count() > 20)
         )
-        .group_by(sec_filings.c.ticker)
-        .having(sa.func.count() > 20)
-    ).scalars().all())
+        .scalars()
+        .all()
+    )
     if heavy_filers:
         logger.info(
             "Transcripts: bulk-skipping %d heavy 8-K filers (>20/yr): %s",
-            len(heavy_filers), ", ".join(sorted(heavy_filers)),
+            len(heavy_filers),
+            ", ".join(sorted(heavy_filers)),
         )
         conn.execute(
             sa.update(sec_filings)
@@ -328,39 +357,50 @@ def update_transcripts(
         conn.commit()
 
     # Tickers with no unchecked 8-K filings need no EDGAR requests at all.
-    tickers_with_unchecked: set[str] = set(conn.execute(
-        sa.select(sec_filings.c.ticker).distinct()
-        .where(
-            sa.and_(
-                sec_filings.c.form_type == "8-K",
-                sec_filings.c.ticker.in_(tickers),
-                sec_filings.c.filed_date >= one_year_ago,
-                sec_filings.c.filing_url.isnot(None),
-                sa.or_(
-                    sec_filings.c.transcript_checked == False,  # noqa: E712
-                    sec_filings.c.transcript_checked.is_(None),
-                ),
+    tickers_with_unchecked: set[str] = set(
+        conn.execute(
+            sa.select(sec_filings.c.ticker)
+            .distinct()
+            .where(
+                sa.and_(
+                    sec_filings.c.form_type == "8-K",
+                    sec_filings.c.ticker.in_(tickers),
+                    sec_filings.c.filed_date >= one_year_ago,
+                    sec_filings.c.filing_url.isnot(None),
+                    sa.or_(
+                        sec_filings.c.transcript_checked == False,  # noqa: E712
+                        sec_filings.c.transcript_checked.is_(None),
+                    ),
+                )
             )
         )
-    ).scalars().all())
+        .scalars()
+        .all()
+    )
 
     # Tickers whose transcripts were already fetched today need no external call.
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    fetched_today: set[str] = set(conn.execute(
-        sa.select(earnings_transcripts.c.ticker).distinct()
-        .where(
-            sa.and_(
-                earnings_transcripts.c.ticker.in_(tickers),
-                earnings_transcripts.c.fetched_at >= today,
+    fetched_today: set[str] = set(
+        conn.execute(
+            sa.select(earnings_transcripts.c.ticker)
+            .distinct()
+            .where(
+                sa.and_(
+                    earnings_transcripts.c.ticker.in_(tickers),
+                    earnings_transcripts.c.fetched_at >= today,
+                )
             )
         )
-    ).scalars().all())
+        .scalars()
+        .all()
+    )
 
     to_fetch = [t for t in tickers if t in tickers_with_unchecked and t not in fetched_today]
-    skipped  = len(tickers) - len(to_fetch)
+    skipped = len(tickers) - len(to_fetch)
     logger.info(
         "Transcripts: %d tickers to fetch, %d skipped (all filings already checked)",
-        len(to_fetch), skipped,
+        len(to_fetch),
+        skipped,
     )
 
     http_session = requests.Session()
@@ -389,6 +429,9 @@ def update_transcripts(
 
     conn.commit()
     total = sum(summary.values())
-    logger.info("Transcripts complete — %d stored across %d tickers",
-                total, len([v for v in summary.values() if v > 0]))
+    logger.info(
+        "Transcripts complete — %d stored across %d tickers",
+        total,
+        len([v for v in summary.values() if v > 0]),
+    )
     return summary

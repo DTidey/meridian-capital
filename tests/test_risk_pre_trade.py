@@ -4,23 +4,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401 — registers portfolio tables on shared metadata
-import factors.db    # noqa: F401 — registers factor_scores table
-import risk.db       # noqa: F401 — registers risk_log table
-import analysis.db   # noqa: F401 — registers analysis tables
-
 from datetime import date, timedelta
 
-import pandas as pd
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401 — registers analysis tables
+import factors.db  # noqa: F401 — registers factor_scores table
+import portfolio.db  # noqa: F401 — registers portfolio tables on shared metadata
+import risk.db  # noqa: F401 — registers risk_log table
 from data.db import daily_prices, earnings_calendar, initialise_schema
 from factors.db import factor_scores as factor_scores_table
 from portfolio.db import portfolio_positions, position_approvals
 from risk.pre_trade import run_pre_trade
 from risk.risk_state import set_halt
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,64 +48,76 @@ def _insert_prices(conn, ticker, n=25, start="2026-01-01", base=100.0):
     rows = []
     for i in range(n):
         p = base + i * 0.5
-        rows.append({
-            "ticker":    ticker,
-            "date":      str(d + timedelta(days=i)),
-            "adj_close": p,
-            "open":      p,
-            "high":      p * 1.01,
-            "low":       p * 0.99,
-            "close":     p,
-            "volume":    500_000,
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "date": str(d + timedelta(days=i)),
+                "adj_close": p,
+                "open": p,
+                "high": p * 1.01,
+                "low": p * 0.99,
+                "close": p,
+                "volume": 500_000,
+            }
+        )
     conn.execute(daily_prices.insert(), rows)
     conn.commit()
 
 
 def _insert_factor_score(conn, ticker, sector="Technology", mom=50.0):
-    conn.execute(factor_scores_table.insert().values(
-        ticker=ticker,
-        score_date=_SCORE_DATE,
-        sector=sector,
-        momentum_score=mom,
-        quality_score=50.0,
-        value_score=50.0,
-        revisions_score=50.0,
-        insider_score=50.0,
-        growth_score=50.0,
-        short_interest_score=50.0,
-        institutional_score=50.0,
-        composite_score=50.0,
-    ))
+    conn.execute(
+        factor_scores_table.insert().values(
+            ticker=ticker,
+            score_date=_SCORE_DATE,
+            sector=sector,
+            momentum_score=mom,
+            quality_score=50.0,
+            value_score=50.0,
+            revisions_score=50.0,
+            insider_score=50.0,
+            growth_score=50.0,
+            short_interest_score=50.0,
+            institutional_score=50.0,
+            composite_score=50.0,
+        )
+    )
     conn.commit()
 
 
-def _insert_position(conn, ticker, direction="LONG", shares=400.0, weight=0.04, sector="Technology"):
-    conn.execute(portfolio_positions.insert().values(
-        ticker=ticker,
-        direction=direction,
-        shares=shares,
-        entry_price=100.0,
-        entry_date="2026-01-01",
-        current_price=100.0,
-        market_value=shares * 100.0,
-        weight=weight,
-        sector=sector,
-    ))
+def _insert_position(
+    conn, ticker, direction="LONG", shares=400.0, weight=0.04, sector="Technology"
+):
+    conn.execute(
+        portfolio_positions.insert().values(
+            ticker=ticker,
+            direction=direction,
+            shares=shares,
+            entry_price=100.0,
+            entry_date="2026-01-01",
+            current_price=100.0,
+            market_value=shares * 100.0,
+            weight=weight,
+            sector=sector,
+        )
+    )
     conn.commit()
 
 
-def _insert_approval(conn, ticker, action="BUY", target=200.0, current=0.0, rebalance_date=_SCORE_DATE):
-    result = conn.execute(position_approvals.insert().values(
-        rebalance_date=rebalance_date,
-        ticker=ticker,
-        action=action,
-        target_shares=target,
-        current_shares=current,
-        delta_shares=target - current,
-        status="PENDING",
-        created_at="2026-03-01T00:00:00",
-    ))
+def _insert_approval(
+    conn, ticker, action="BUY", target=200.0, current=0.0, rebalance_date=_SCORE_DATE
+):
+    result = conn.execute(
+        position_approvals.insert().values(
+            rebalance_date=rebalance_date,
+            ticker=ticker,
+            action=action,
+            target_shares=target,
+            current_shares=current,
+            delta_shares=target - current,
+            status="PENDING",
+            created_at="2026-03-01T00:00:00",
+        )
+    )
     conn.commit()
     return result.lastrowid
 
@@ -118,16 +127,16 @@ def _base_config():
         "portfolio": {"nav_usd": _NAV},
         "risk": {
             "pre_trade": {
-                "adv_lookback":           20,
-                "adv_pct":                0.10,
-                "max_position_pct":       0.10,
-                "max_sector_pct":         0.50,
-                "max_gross":              1.65,
-                "net_min":                -0.15,
-                "net_max":                0.30,
-                "max_net_beta":           0.50,
-                "max_pairwise_corr":      0.90,
-                "corr_lookback":          60,
+                "adv_lookback": 20,
+                "adv_pct": 0.10,
+                "max_position_pct": 0.10,
+                "max_sector_pct": 0.50,
+                "max_gross": 1.65,
+                "net_min": -0.15,
+                "net_max": 0.30,
+                "max_net_beta": 0.50,
+                "max_pairwise_corr": 0.90,
+                "corr_lookback": 60,
                 "earnings_blackout_days": 5,
             }
         },
@@ -137,6 +146,7 @@ def _base_config():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestPreTradeHalt:
     def test_halt_rejects_all(self, mem_db, tmp_path):
@@ -175,11 +185,13 @@ class TestPreTradeEarningsBlackout:
 
         # Earnings 3 days from score_date — inside default blackout of 5d
         earnings_date = (date.fromisoformat(_SCORE_DATE) + timedelta(days=3)).isoformat()
-        mem_db.execute(earnings_calendar.insert().values(
-            ticker="AAPL",
-            earnings_date=earnings_date,
-            eps_estimate=None,
-        ))
+        mem_db.execute(
+            earnings_calendar.insert().values(
+                ticker="AAPL",
+                earnings_date=earnings_date,
+                eps_estimate=None,
+            )
+        )
         mem_db.commit()
 
         result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
@@ -220,9 +232,7 @@ class TestPreTradeWhatIf:
 
         # Status in DB should still be PENDING
         row = mem_db.execute(
-            sa.select(position_approvals.c.status).where(
-                position_approvals.c.id == approval_id
-            )
+            sa.select(position_approvals.c.status).where(position_approvals.c.id == approval_id)
         ).fetchone()
         assert row is not None
         assert row[0] == "PENDING"

@@ -8,9 +8,7 @@ from analysis.api_client import OpenAIClient
 
 logger = logging.getLogger(__name__)
 
-_SECTOR_OUTLOOKS = frozenset(
-    ["VERY_POSITIVE", "POSITIVE", "NEUTRAL", "NEGATIVE", "VERY_NEGATIVE"]
-)
+_SECTOR_OUTLOOKS = frozenset(["VERY_POSITIVE", "POSITIVE", "NEUTRAL", "NEGATIVE", "VERY_NEGATIVE"])
 
 _SYSTEM_PROMPT = """\
 You are a sector analyst. Given quantitative scores and qualitative AI assessments
@@ -105,13 +103,13 @@ def _build_sector_summary(
     rows = []
     for c in sorted(candidates, key=lambda x: x.get("composite_score", 0), reverse=True):
         ticker = c["ticker"]
-        quant  = c.get("composite_score", "N/A")
+        quant = c.get("composite_score", "N/A")
         direction = c.get("direction", "NEUTRAL")
         ai = analyzer_results.get(ticker, {})
 
         entry = {
-            "ticker":          ticker,
-            "direction":       direction,
+            "ticker": ticker,
+            "direction": direction,
             "quant_composite": quant,
         }
         if ai.get("earnings"):
@@ -119,8 +117,8 @@ def _build_sector_summary(
         if ai.get("filing"):
             entry["filing_summary"] = ai["filing"].get("one_line_summary")
         if ai.get("risk"):
-            entry["risk_summary"]   = ai["risk"].get("one_line_summary")
-            entry["risk_severity"]  = ai["risk"].get("risk_severity")
+            entry["risk_summary"] = ai["risk"].get("one_line_summary")
+            entry["risk_severity"] = ai["risk"].get("risk_severity")
         if ai.get("insider"):
             entry["insider_signal"] = ai["insider"].get("signal_strength")
         rows.append(entry)

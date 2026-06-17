@@ -21,14 +21,14 @@ import sys
 import time
 from pathlib import Path
 
-_ROOT   = Path(__file__).parent
+_ROOT = Path(__file__).parent
 _PYTHON = sys.executable
 
-GREEN  = "\033[32m"
-RED    = "\033[31m"
+GREEN = "\033[32m"
+RED = "\033[31m"
 YELLOW = "\033[33m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
 
 
 def _run(label: str, cmd: list[str], skip: bool = False) -> bool:
@@ -41,7 +41,7 @@ def _run(label: str, cmd: list[str], skip: bool = False) -> bool:
     print(f"  {' '.join(cmd)}")
     print(f"{BOLD}{'─' * 60}{RESET}")
 
-    t0     = time.time()
+    t0 = time.time()
     result = subprocess.run(cmd, cwd=_ROOT)
     elapsed = time.time() - t0
 
@@ -55,14 +55,14 @@ def _run(label: str, cmd: list[str], skip: bool = False) -> bool:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Meridian Capital Partners — full pipeline")
-    p.add_argument("--no-filings",    action="store_true", help="Skip SEC filings (Layer 1)")
-    p.add_argument("--no-13f",        action="store_true", help="Skip 13-F holdings (Layer 1)")
-    p.add_argument("--tickers",       nargs="+",           help="Scope to specific tickers")
-    p.add_argument("--no-execution",  action="store_true", help="Skip Layer 6 (Alpaca)")
-    p.add_argument("--no-reporting",  action="store_true", help="Skip Layer 7 (reporting)")
-    p.add_argument("--dry-run",       action="store_true", help="Dry-run execution layer")
-    p.add_argument("--whatif",        action="store_true", help="Preview mode: no commits")
-    p.add_argument("--stress",        action="store_true", help="Include stress tests in risk check")
+    p.add_argument("--no-filings", action="store_true", help="Skip SEC filings (Layer 1)")
+    p.add_argument("--no-13f", action="store_true", help="Skip 13-F holdings (Layer 1)")
+    p.add_argument("--tickers", nargs="+", help="Scope to specific tickers")
+    p.add_argument("--no-execution", action="store_true", help="Skip Layer 6 (Alpaca)")
+    p.add_argument("--no-reporting", action="store_true", help="Skip Layer 7 (reporting)")
+    p.add_argument("--dry-run", action="store_true", help="Dry-run execution layer")
+    p.add_argument("--whatif", action="store_true", help="Preview mode: no commits")
+    p.add_argument("--stress", action="store_true", help="Include stress tests in risk check")
     args = p.parse_args()
 
     t_start = time.time()

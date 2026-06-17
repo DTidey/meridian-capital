@@ -12,13 +12,12 @@ from .providers import PriceProvider, Providers
 
 logger = logging.getLogger(__name__)
 
-_BATCH = 100   # tickers per yfinance download call
+_BATCH = 100  # tickers per yfinance download call
 
 
 def _last_stored_date(conn: sa.engine.Connection, ticker: str) -> str | None:
     return conn.execute(
-        sa.select(sa.func.max(daily_prices.c.date))
-        .where(daily_prices.c.ticker == ticker)
+        sa.select(sa.func.max(daily_prices.c.date)).where(daily_prices.c.ticker == ticker)
     ).scalar()
 
 
@@ -28,16 +27,20 @@ def _upsert_prices(conn: sa.engine.Connection, df: pd.DataFrame, ticker: str) ->
     rows = []
     for idx, row in df.iterrows():
         date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
-        rows.append({
-            "ticker":    ticker,
-            "date":      date_str,
-            "open":      _float(row.get("Open")),
-            "high":      _float(row.get("High")),
-            "low":       _float(row.get("Low")),
-            "close":     _float(row.get("Close")),
-            "adj_close": _float(row.get("Adj Close") if pd.notna(row.get("Adj Close")) else row.get("Close")),
-            "volume":    int(_float(row.get("Volume")) or 0),
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "date": date_str,
+                "open": _float(row.get("Open")),
+                "high": _float(row.get("High")),
+                "low": _float(row.get("Low")),
+                "close": _float(row.get("Close")),
+                "adj_close": _float(
+                    row.get("Adj Close") if pd.notna(row.get("Adj Close")) else row.get("Close")
+                ),
+                "volume": int(_float(row.get("Volume")) or 0),
+            }
+        )
     conn.execute(insert_or_replace(conn, daily_prices), rows)
     conn.commit()
     return len(rows)
@@ -46,7 +49,7 @@ def _upsert_prices(conn: sa.engine.Connection, df: pd.DataFrame, ticker: str) ->
 def _float(val) -> float | None:
     try:
         f = float(val)
-        return None if (f != f) else f   # NaN check
+        return None if (f != f) else f  # NaN check
     except (TypeError, ValueError):
         return None
 
@@ -54,6 +57,7 @@ def _float(val) -> float | None:
 # ---------------------------------------------------------------------------
 # yfinance backend
 # ---------------------------------------------------------------------------
+
 
 def _fetch_yfinance_batch(tickers: list[str], start: str, end: str) -> dict[str, pd.DataFrame]:
     joined = " ".join(tickers)
@@ -102,9 +106,11 @@ def _fetch_yfinance_single(ticker: str, start: str, end: str) -> pd.DataFrame:
 # Polygon backend
 # ---------------------------------------------------------------------------
 
+
 def _fetch_polygon(ticker: str, start: str, end: str, api_key: str) -> pd.DataFrame:
     """Fetch daily OHLCV from Polygon REST API."""
     import requests
+
     url = (
         f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
         f"?adjusted=true&sort=asc&limit=5000&apiKey={api_key}"
@@ -122,14 +128,16 @@ def _fetch_polygon(ticker: str, start: str, end: str, api_key: str) -> pd.DataFr
 
     rows = []
     for bar in data["results"]:
-        rows.append({
-            "Open": bar.get("o"),
-            "High": bar.get("h"),
-            "Low": bar.get("l"),
-            "Close": bar.get("c"),
-            "Adj Close": bar.get("c"),
-            "Volume": bar.get("v"),
-        })
+        rows.append(
+            {
+                "Open": bar.get("o"),
+                "High": bar.get("h"),
+                "Low": bar.get("l"),
+                "Close": bar.get("c"),
+                "Adj Close": bar.get("c"),
+                "Volume": bar.get("v"),
+            }
+        )
         dates = pd.to_datetime([b["t"] for b in data["results"]], unit="ms", utc=True)
     df = pd.DataFrame(rows, index=dates.tz_convert(None))
     return df
@@ -138,6 +146,7 @@ def _fetch_polygon(ticker: str, start: str, end: str, api_key: str) -> pd.DataFr
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def update_prices(
     conn: sa.engine.Connection,
@@ -180,7 +189,7 @@ def update_prices(
 
     for start, batch_tickers in by_start.items():
         for i in range(0, len(batch_tickers), _BATCH):
-            chunk = batch_tickers[i: i + _BATCH]
+            chunk = batch_tickers[i : i + _BATCH]
             batch_data = _fetch_yfinance_batch(chunk, start, today)
 
             for ticker in chunk:
@@ -193,6 +202,9 @@ def update_prices(
                     logger.debug("yfinance %s: +%d bars", ticker, added)
 
     total_added = sum(summary.values())
-    logger.info("Prices update complete — %d new bars across %d tickers",
-                total_added, len([v for v in summary.values() if v > 0]))
+    logger.info(
+        "Prices update complete — %d new bars across %d tickers",
+        total_added,
+        len([v for v in summary.values() if v > 0]),
+    )
     return summary

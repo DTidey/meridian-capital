@@ -33,9 +33,9 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     Returns:
         DataFrame with columns COLS + ['momentum_score'], index = ticker.
     """
-    prices   = data["prices"]
+    prices = data["prices"]
     universe = data["universe"]
-    etf_map  = config.get("scoring", {}).get("sector_etf_map", {})
+    etf_map = config.get("scoring", {}).get("sector_etf_map", {})
     min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if prices.empty or universe.empty:
@@ -64,16 +64,18 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     return scored
 
 
-def _compute_raw(wide: pd.DataFrame, tickers: list, etf_map: dict, sectors: pd.Series) -> pd.DataFrame:
+def _compute_raw(
+    wide: pd.DataFrame, tickers: list, etf_map: dict, sectors: pd.Series
+) -> pd.DataFrame:
     """Compute raw (un-ranked) momentum values."""
     # Restrict to universe tickers present in price data
     available = [t for t in tickers if t in wide.columns]
-    missing   = len(tickers) - len(available)
+    missing = len(tickers) - len(available)
     if missing:
         logger.debug("Momentum: %d tickers missing price history", missing)
 
     prices = wide[available].copy()
-    n = len(prices)
+    _n = len(prices)
 
     raw = pd.DataFrame(index=available)
 
@@ -88,7 +90,7 @@ def _compute_raw(wide: pd.DataFrame, tickers: list, etf_map: dict, sectors: pd.S
         latest = s.iloc[-1]
         # 12-1 month: skip most recent 21 trading days
         idx_12m = max(0, len(s) - 252)
-        idx_1m  = max(0, len(s) - 21)
+        idx_1m = max(0, len(s) - 21)
         raw.loc[ticker, "mom_12_1"] = _ret(s.iloc[idx_12m], s.iloc[idx_1m])
 
         # 6-month
@@ -115,7 +117,7 @@ def _compute_raw(wide: pd.DataFrame, tickers: list, etf_map: dict, sectors: pd.S
 
         # Relative strength vs sector ETF
         sector = sectors.get(ticker)
-        etf    = etf_map.get(sector) if sector else None
+        etf = etf_map.get(sector) if sector else None
         if etf and etf in wide.columns:
             etf_s = wide[etf].dropna()
             if len(etf_s) >= 126:

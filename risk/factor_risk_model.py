@@ -1,4 +1,5 @@
 """Barra-style factor risk decomposition for the current portfolio."""
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,13 +14,19 @@ from factors.db import factor_scores as factor_scores_table
 logger = logging.getLogger(__name__)
 
 _FACTOR_COLS = [
-    "momentum_score", "quality_score", "value_score", "revisions_score",
-    "insider_score", "growth_score", "short_interest_score", "institutional_score",
+    "momentum_score",
+    "quality_score",
+    "value_score",
+    "revisions_score",
+    "insider_score",
+    "growth_score",
+    "short_interest_score",
+    "institutional_score",
 ]
 _ANNUALISE = 252.0
 _MIN_RETURNS = 30
 _MIN_REGRESSION_DAYS = 10
-_SPECIFIC_VAR_FLOOR = 0.04        # (20% annualised vol)^2
+_SPECIFIC_VAR_FLOOR = 0.04  # (20% annualised vol)^2
 _MCTR_FLAG_MULTIPLIER = 1.5
 
 
@@ -88,10 +95,9 @@ def compute_factor_risk(
             daily_prices.c.ticker,
             daily_prices.c.date,
             daily_prices.c.adj_close,
-        ).where(
-            daily_prices.c.ticker.in_(universe_tickers) &
-            (daily_prices.c.date <= score_date)
-        ).order_by(daily_prices.c.date.asc())
+        )
+        .where(daily_prices.c.ticker.in_(universe_tickers) & (daily_prices.c.date <= score_date))
+        .order_by(daily_prices.c.date.asc())
     ).fetchall()
 
     if not price_rows:
@@ -175,12 +181,10 @@ def compute_factor_risk(
         )
         return _sample_cov_fallback(port_tickers, positions_df, log_returns)
 
-    factor_returns_arr = np.array(factor_returns_list)   # (successful_days, n_factors)
+    factor_returns_arr = np.array(factor_returns_list)  # (successful_days, n_factors)
     specific_returns_arr = np.array(specific_returns_cols).T  # (N, successful_days)
 
-    factor_returns_df = pd.DataFrame(
-        factor_returns_arr, columns=_FACTOR_COLS
-    )
+    factor_returns_df = pd.DataFrame(factor_returns_arr, columns=_FACTOR_COLS)
 
     # --- Factor covariance (annualised) --------------------------------------
     if factor_returns_arr.shape[0] < 2:
@@ -217,15 +221,15 @@ def compute_factor_risk(
     X_port = X_df.loc[port_in_universe].values.astype(float)  # (N_port, n_factors)
 
     # --- Variance decomposition ----------------------------------------------
-    portfolio_exposure = X_port.T @ w        # (n_factors,)
+    portfolio_exposure = X_port.T @ w  # (n_factors,)
     F_times_exp = factor_cov @ portfolio_exposure  # (n_factors,)
     factor_var = float(portfolio_exposure @ F_times_exp)
     factor_var = max(factor_var, 0.0)
 
-    spec_var_values = np.array([
-        specific_var_dict.get(t, _SPECIFIC_VAR_FLOOR) for t in port_in_universe
-    ])
-    specific_var_port = float(np.dot(w ** 2, spec_var_values))
+    spec_var_values = np.array(
+        [specific_var_dict.get(t, _SPECIFIC_VAR_FLOOR) for t in port_in_universe]
+    )
+    specific_var_port = float(np.dot(w**2, spec_var_values))
     specific_var_port = max(specific_var_port, 0.0)
 
     total_var = factor_var + specific_var_port
@@ -248,7 +252,7 @@ def compute_factor_risk(
     mctr_series = pd.Series(mctr_values, index=port_in_universe, name="mctr")
 
     mctr_flags: list[str] = []
-    for ticker, mctr_i, w_i in zip(port_in_universe, mctr_values, w):
+    for ticker, mctr_i, w_i in zip(port_in_universe, mctr_values, w, strict=False):
         abs_mctr_pct = abs(mctr_i / total_vol) if total_vol > 0 else 0.0
         abs_w = abs(w_i)
         if abs_mctr_pct > _MCTR_FLAG_MULTIPLIER * abs_w:
@@ -312,9 +316,10 @@ def save_predicted_cov(result: FactorRiskResult, cache_dir: Path, score_date: st
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _fallback_result(port_tickers: list[str], positions_df: pd.DataFrame) -> FactorRiskResult:
     """Return a zero-variance result when factor data is unavailable."""
-    specific_var = {t: _SPECIFIC_VAR_FLOOR for t in port_tickers}
+    specific_var = dict.fromkeys(port_tickers, _SPECIFIC_VAR_FLOOR)
     return FactorRiskResult(
         tickers=port_tickers,
         specific_var=specific_var,
@@ -348,7 +353,9 @@ def _sample_cov_fallback(
     specific_var_dict: dict[str, float] = {}
     for ticker in port_in_data:
         col = log_returns[ticker].dropna()
-        sv = float(np.var(col.values, ddof=1)) * _ANNUALISE if len(col) >= 2 else _SPECIFIC_VAR_FLOOR
+        sv = (
+            float(np.var(col.values, ddof=1)) * _ANNUALISE if len(col) >= 2 else _SPECIFIC_VAR_FLOOR
+        )
         specific_var_dict[ticker] = max(sv, _SPECIFIC_VAR_FLOOR)
     for ticker in port_tickers:
         if ticker not in specific_var_dict:
@@ -361,7 +368,7 @@ def _sample_cov_fallback(
     mctr_series = pd.Series(mctr_values, index=port_in_data, name="mctr")
 
     mctr_flags: list[str] = []
-    for ticker, mctr_i, w_i in zip(port_in_data, mctr_values, w):
+    for ticker, mctr_i, w_i in zip(port_in_data, mctr_values, w, strict=False):
         abs_mctr_pct = abs(mctr_i / total_vol) if total_vol > 0 else 0.0
         if abs_mctr_pct > _MCTR_FLAG_MULTIPLIER * abs(w_i):
             mctr_flags.append(ticker)
@@ -371,7 +378,7 @@ def _sample_cov_fallback(
         factor_cov=np.zeros((8, 8)),
         specific_var=specific_var_dict,
         factor_returns=pd.DataFrame(),
-        factor_contributions={f: 0.0 for f in _FACTOR_COLS},
+        factor_contributions=dict.fromkeys(_FACTOR_COLS, 0.0),
         total_vol=total_vol,
         factor_var_pct=0.0,
         specific_var_pct=1.0,

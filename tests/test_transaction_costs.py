@@ -4,14 +4,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401
-
-import numpy as np
 import pandas as pd
 import pytest
 
+import portfolio.db  # noqa: F401
 from portfolio.transaction_costs import compute_adv, estimate_cost, net_expected_return
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,17 +27,20 @@ _CONFIG = {
 
 def _make_prices_df(n=20, close=100.0, high=101.0, low=99.0, volume=10_000):
     """Build a plain DataFrame with OHLCV columns."""
-    return pd.DataFrame({
-        "close":  [float(close)]  * n,
-        "high":   [float(high)]   * n,
-        "low":    [float(low)]    * n,
-        "volume": [float(volume)] * n,
-    })
+    return pd.DataFrame(
+        {
+            "close": [float(close)] * n,
+            "high": [float(high)] * n,
+            "low": [float(low)] * n,
+            "volume": [float(volume)] * n,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # estimate_cost
 # ---------------------------------------------------------------------------
+
 
 class TestEstimateCost:
     def test_zero_trade_shares_gives_zero_cost(self):
@@ -57,9 +57,9 @@ class TestEstimateCost:
     def test_spread_component_proportional_to_hl_range(self):
         """Wider H-L spread → higher cost."""
         prices_tight = _make_prices_df(n=20, high=100.5, low=99.5)
-        prices_wide  = _make_prices_df(n=20, high=105.0, low=95.0)
+        prices_wide = _make_prices_df(n=20, high=105.0, low=95.0)
         cost_tight = estimate_cost("AAPL", 50, 100.0, prices_tight, _CONFIG)
-        cost_wide  = estimate_cost("AAPL", 50, 100.0, prices_wide,  _CONFIG)
+        cost_wide = estimate_cost("AAPL", 50, 100.0, prices_wide, _CONFIG)
         assert cost_wide > cost_tight
 
     def test_empty_prices_gives_zero_cost(self):
@@ -71,6 +71,7 @@ class TestEstimateCost:
 # ---------------------------------------------------------------------------
 # net_expected_return
 # ---------------------------------------------------------------------------
+
 
 class TestNetExpectedReturn:
     def test_net_return_deducts_cost(self):
@@ -90,6 +91,7 @@ class TestNetExpectedReturn:
 # ---------------------------------------------------------------------------
 # compute_adv
 # ---------------------------------------------------------------------------
+
 
 class TestComputeAdv:
     def test_compute_adv_correct(self):

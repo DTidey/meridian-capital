@@ -6,8 +6,8 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-_REGIME_LOW_VOL  = "LOW_VOL"
-_REGIME_NORMAL   = "NORMAL"
+_REGIME_LOW_VOL = "LOW_VOL"
+_REGIME_NORMAL = "NORMAL"
 _REGIME_HIGH_VOL = "HIGH_VOL"
 
 

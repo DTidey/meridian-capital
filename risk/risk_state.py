@@ -2,48 +2,48 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_HALT_LOCK  = "halt.lock"
+_HALT_LOCK = "halt.lock"
 _STATE_FILE = "risk_state.json"
 
 
 def default_state() -> dict:
     return {
-        "as_of":                 None,
-        "nav_usd":               0.0,
-        "daily_pnl_usd":         0.0,
-        "daily_pnl_pct":         0.0,
-        "weekly_pnl_pct":        0.0,
-        "peak_nav_usd":          0.0,
-        "drawdown_pct":          0.0,
-        "halted":                False,
+        "as_of": None,
+        "nav_usd": 0.0,
+        "daily_pnl_usd": 0.0,
+        "daily_pnl_pct": 0.0,
+        "weekly_pnl_pct": 0.0,
+        "peak_nav_usd": 0.0,
+        "drawdown_pct": 0.0,
+        "halted": False,
         "circuit_breaker_state": "NORMAL",
-        "tail_risk_state":       "NORMAL",
-        "gross_exposure":        0.0,
-        "net_exposure":          0.0,
-        "net_beta":              0.0,
+        "tail_risk_state": "NORMAL",
+        "gross_exposure": 0.0,
+        "net_exposure": 0.0,
+        "net_beta": 0.0,
         "factor_exposures": {
-            "long":   {},
-            "short":  {},
+            "long": {},
+            "short": {},
             "spread": {},
-            "flags":  [],
+            "flags": [],
         },
         "risk_decomposition": {
-            "factor_var_pct":       0.0,
-            "specific_var_pct":     0.0,
-            "annualised_vol":       0.0,
+            "factor_var_pct": 0.0,
+            "specific_var_pct": 0.0,
+            "annualised_vol": 0.0,
             "factor_contributions": {},
         },
         "mctr_top5": [],
         "correlation_monitor": {
-            "long_avg_corr":    0.0,
-            "short_avg_corr":   0.0,
+            "long_avg_corr": 0.0,
+            "short_avg_corr": 0.0,
             "effective_n_bets": 0.0,
-            "alerts":           [],
+            "alerts": [],
         },
         "alerts": [],
     }
@@ -75,7 +75,7 @@ def is_halted(cache_dir: Path) -> bool:
 def set_halt(cache_dir: Path) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     lock_path = cache_dir / _HALT_LOCK
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     lock_path.write_text(ts)
     logger.warning("Trading HALTED — lock written to %s at %s", lock_path, ts)
 

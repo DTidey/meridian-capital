@@ -12,14 +12,14 @@ FORCE_CLOSE checks are independent and always evaluated.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 import sqlalchemy as sa
 
 from portfolio.db import portfolio_history, portfolio_positions, position_approvals
-from risk.db import risk_log, risk_events
+from risk.db import risk_events, risk_log
 from risk.risk_state import set_halt
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ _SHARE_ZERO_THRESHOLD = 1.0
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def run_circuit_breakers(
     conn: sa.engine.Connection,
@@ -56,12 +57,12 @@ def run_circuit_breakers(
     daily_pnl_usd = today_nav - nav_usd
 
     risk_state = dict(risk_state)
-    risk_state["nav_usd"]        = nav_usd
-    risk_state["daily_pnl_usd"]  = daily_pnl_usd
-    risk_state["daily_pnl_pct"]  = daily_pnl_pct
+    risk_state["nav_usd"] = nav_usd
+    risk_state["daily_pnl_usd"] = daily_pnl_usd
+    risk_state["daily_pnl_pct"] = daily_pnl_pct
     risk_state["weekly_pnl_pct"] = weekly_pnl_pct
-    risk_state["drawdown_pct"]   = drawdown_pct
-    risk_state["peak_nav_usd"]   = peak_nav_usd
+    risk_state["drawdown_pct"] = drawdown_pct
+    risk_state["peak_nav_usd"] = peak_nav_usd
 
     cb_state = "NORMAL"
     size_down_fired = False
@@ -72,19 +73,32 @@ def run_circuit_breakers(
     if drawdown_pct > cfg["drawdown_kill"]:
         logger.warning(
             "KILL_SWITCH triggered: drawdown %.2f%% > threshold %.2f%%",
-            drawdown_pct * 100, cfg["drawdown_kill"] * 100,
+            drawdown_pct * 100,
+            cfg["drawdown_kill"] * 100,
         )
         if not whatif:
             set_halt(cache_dir)
             count = _apply_close_all(conn, score_date, whatif=False)
-            _log_event(conn, score_date, "KILL_SWITCH", "drawdown", {
-                "drawdown_pct":   round(drawdown_pct, 6),
-                "peak_nav_usd":   round(peak_nav_usd, 2),
-                "nav_usd":        round(nav_usd, 2),
-                "rejected_count": count,
-            })
-            _log_check(conn, score_date, "circuit_breaker", None, "TRIGGERED",
-                       f"KILL_SWITCH: drawdown {drawdown_pct:.4%} > {cfg['drawdown_kill']:.4%}")
+            _log_event(
+                conn,
+                score_date,
+                "KILL_SWITCH",
+                "drawdown",
+                {
+                    "drawdown_pct": round(drawdown_pct, 6),
+                    "peak_nav_usd": round(peak_nav_usd, 2),
+                    "nav_usd": round(nav_usd, 2),
+                    "rejected_count": count,
+                },
+            )
+            _log_check(
+                conn,
+                score_date,
+                "circuit_breaker",
+                None,
+                "TRIGGERED",
+                f"KILL_SWITCH: drawdown {drawdown_pct:.4%} > {cfg['drawdown_kill']:.4%}",
+            )
         cb_state = "KILL_SWITCH"
 
     # -----------------------------------------------------------------------
@@ -93,17 +107,30 @@ def run_circuit_breakers(
     elif daily_pnl_pct < -cfg["daily_close_all"]:
         logger.warning(
             "CLOSE_ALL triggered: daily P&L %.2f%% < -%.2f%%",
-            daily_pnl_pct * 100, cfg["daily_close_all"] * 100,
+            daily_pnl_pct * 100,
+            cfg["daily_close_all"] * 100,
         )
         if not whatif:
             count = _apply_close_all(conn, score_date, whatif=False)
-            _log_event(conn, score_date, "CLOSE_ALL", "daily_pnl", {
-                "daily_pnl_pct":  round(daily_pnl_pct, 6),
-                "nav_usd":        round(nav_usd, 2),
-                "rejected_count": count,
-            })
-            _log_check(conn, score_date, "circuit_breaker", None, "TRIGGERED",
-                       f"CLOSE_ALL: daily_pnl {daily_pnl_pct:.4%} < -{cfg['daily_close_all']:.4%}")
+            _log_event(
+                conn,
+                score_date,
+                "CLOSE_ALL",
+                "daily_pnl",
+                {
+                    "daily_pnl_pct": round(daily_pnl_pct, 6),
+                    "nav_usd": round(nav_usd, 2),
+                    "rejected_count": count,
+                },
+            )
+            _log_check(
+                conn,
+                score_date,
+                "circuit_breaker",
+                None,
+                "TRIGGERED",
+                f"CLOSE_ALL: daily_pnl {daily_pnl_pct:.4%} < -{cfg['daily_close_all']:.4%}",
+            )
         cb_state = "CLOSE_ALL"
 
     # -----------------------------------------------------------------------
@@ -112,17 +139,30 @@ def run_circuit_breakers(
     elif daily_pnl_pct < -cfg["daily_size_down"]:
         logger.warning(
             "SIZE_DOWN_30 triggered (daily): daily P&L %.2f%% < -%.2f%%",
-            daily_pnl_pct * 100, cfg["daily_size_down"] * 100,
+            daily_pnl_pct * 100,
+            cfg["daily_size_down"] * 100,
         )
         if not whatif:
             count = _apply_size_down(conn, score_date, factor=0.70, whatif=False)
-            _log_event(conn, score_date, "SIZE_DOWN_30", "daily_pnl", {
-                "daily_pnl_pct":  round(daily_pnl_pct, 6),
-                "nav_usd":        round(nav_usd, 2),
-                "modified_count": count,
-            })
-            _log_check(conn, score_date, "circuit_breaker", None, "TRIGGERED",
-                       f"SIZE_DOWN_30: daily_pnl {daily_pnl_pct:.4%} < -{cfg['daily_size_down']:.4%}")
+            _log_event(
+                conn,
+                score_date,
+                "SIZE_DOWN_30",
+                "daily_pnl",
+                {
+                    "daily_pnl_pct": round(daily_pnl_pct, 6),
+                    "nav_usd": round(nav_usd, 2),
+                    "modified_count": count,
+                },
+            )
+            _log_check(
+                conn,
+                score_date,
+                "circuit_breaker",
+                None,
+                "TRIGGERED",
+                f"SIZE_DOWN_30: daily_pnl {daily_pnl_pct:.4%} < -{cfg['daily_size_down']:.4%}",
+            )
         cb_state = "SIZE_DOWN"
         size_down_fired = True
 
@@ -132,17 +172,30 @@ def run_circuit_breakers(
     if not size_down_fired and cb_state == "NORMAL" and weekly_pnl_pct < -cfg["weekly_size_down"]:
         logger.warning(
             "SIZE_DOWN_30 triggered (weekly): weekly P&L %.2f%% < -%.2f%%",
-            weekly_pnl_pct * 100, cfg["weekly_size_down"] * 100,
+            weekly_pnl_pct * 100,
+            cfg["weekly_size_down"] * 100,
         )
         if not whatif:
             count = _apply_size_down(conn, score_date, factor=0.70, whatif=False)
-            _log_event(conn, score_date, "SIZE_DOWN_30", "weekly_pnl", {
-                "weekly_pnl_pct": round(weekly_pnl_pct, 6),
-                "nav_usd":        round(nav_usd, 2),
-                "modified_count": count,
-            })
-            _log_check(conn, score_date, "circuit_breaker", None, "TRIGGERED",
-                       f"SIZE_DOWN_30: weekly_pnl {weekly_pnl_pct:.4%} < -{cfg['weekly_size_down']:.4%}")
+            _log_event(
+                conn,
+                score_date,
+                "SIZE_DOWN_30",
+                "weekly_pnl",
+                {
+                    "weekly_pnl_pct": round(weekly_pnl_pct, 6),
+                    "nav_usd": round(nav_usd, 2),
+                    "modified_count": count,
+                },
+            )
+            _log_check(
+                conn,
+                score_date,
+                "circuit_breaker",
+                None,
+                "TRIGGERED",
+                f"SIZE_DOWN_30: weekly_pnl {weekly_pnl_pct:.4%} < -{cfg['weekly_size_down']:.4%}",
+            )
         cb_state = "SIZE_DOWN"
 
     # -----------------------------------------------------------------------
@@ -151,32 +204,49 @@ def run_circuit_breakers(
     if nav_usd > 0:
         positions = _load_positions(conn)
         for _, row in positions.iterrows():
-            ticker    = row["ticker"]
+            ticker = row["ticker"]
             direction = str(row.get("direction", "LONG")).upper()
-            mv        = float(row.get("market_value", 0.0) or 0.0)
-            pos_pct   = abs(mv) / nav_usd
+            mv = float(row.get("market_value", 0.0) or 0.0)
+            pos_pct = abs(mv) / nav_usd
 
             if pos_pct > cfg["max_single_position_pct"]:
                 logger.warning(
                     "FORCE_CLOSE triggered for %s: position %.2f%% > max %.2f%%",
-                    ticker, pos_pct * 100, cfg["max_single_position_pct"] * 100,
+                    ticker,
+                    pos_pct * 100,
+                    cfg["max_single_position_pct"] * 100,
                 )
                 if not whatif:
                     _apply_force_close(conn, score_date, ticker, direction)
-                    _log_event(conn, score_date, "FORCE_CLOSE", "position_size", {
-                        "ticker":                  ticker,
-                        "position_pct":            round(pos_pct, 6),
-                        "market_value":            round(mv, 2),
-                        "max_single_position_pct": cfg["max_single_position_pct"],
-                    })
-                    _log_check(conn, score_date, "circuit_breaker", ticker, "TRIGGERED",
-                               f"FORCE_CLOSE: {ticker} position {pos_pct:.4%} > "
-                               f"{cfg['max_single_position_pct']:.4%}")
+                    _log_event(
+                        conn,
+                        score_date,
+                        "FORCE_CLOSE",
+                        "position_size",
+                        {
+                            "ticker": ticker,
+                            "position_pct": round(pos_pct, 6),
+                            "market_value": round(mv, 2),
+                            "max_single_position_pct": cfg["max_single_position_pct"],
+                        },
+                    )
+                    _log_check(
+                        conn,
+                        score_date,
+                        "circuit_breaker",
+                        ticker,
+                        "TRIGGERED",
+                        f"FORCE_CLOSE: {ticker} position {pos_pct:.4%} > "
+                        f"{cfg['max_single_position_pct']:.4%}",
+                    )
 
     risk_state["circuit_breaker_state"] = cb_state
     logger.info(
         "circuit_breakers: %s | daily=%.2f%% weekly=%.2f%% drawdown=%.2f%%",
-        cb_state, daily_pnl_pct * 100, weekly_pnl_pct * 100, drawdown_pct * 100,
+        cb_state,
+        daily_pnl_pct * 100,
+        weekly_pnl_pct * 100,
+        drawdown_pct * 100,
     )
     return risk_state
 
@@ -184,6 +254,7 @@ def run_circuit_breakers(
 # ---------------------------------------------------------------------------
 # P&L computation
 # ---------------------------------------------------------------------------
+
 
 def _compute_pnl(
     conn: sa.engine.Connection,
@@ -235,8 +306,9 @@ def _total_unrealised_pnl_from_history(
 ) -> float | None:
     """Return sum(unrealized_pnl) for a given portfolio_history snapshot, or None."""
     rows = conn.execute(
-        sa.select(portfolio_history.c.unrealized_pnl)
-        .where(portfolio_history.c.snapshot_date == snapshot_date)
+        sa.select(portfolio_history.c.unrealized_pnl).where(
+            portfolio_history.c.snapshot_date == snapshot_date
+        )
     ).fetchall()
     if not rows:
         return None
@@ -257,9 +329,7 @@ def _nav_from_positions(conn: sa.engine.Connection, nav_usd: float) -> float | N
     This avoids the net-long-minus-short distortion that occurs when gross exposure
     is much larger than net exposure. Returns None if no positions exist.
     """
-    rows = conn.execute(
-        sa.select(portfolio_positions.c.unrealized_pnl)
-    ).fetchall()
+    rows = conn.execute(sa.select(portfolio_positions.c.unrealized_pnl)).fetchall()
 
     if not rows:
         return None
@@ -267,9 +337,7 @@ def _nav_from_positions(conn: sa.engine.Connection, nav_usd: float) -> float | N
     return nav_usd + total_pnl
 
 
-def _latest_nav_before(
-    conn: sa.engine.Connection, score_date: str, nav_usd: float
-) -> float | None:
+def _latest_nav_before(conn: sa.engine.Connection, score_date: str, nav_usd: float) -> float | None:
     """Return NAV for the most recent snapshot_date strictly before score_date."""
     row = conn.execute(
         sa.select(sa.func.max(portfolio_history.c.snapshot_date)).where(
@@ -304,41 +372,38 @@ def _nav_before_days_ago(
 # Action helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_closing(action: str, target_shares: float) -> bool:
     return action in _CLOSING_ACTIONS or abs(target_shares) < _SHARE_ZERO_THRESHOLD
 
 
-def _load_approved_non_closing(
-    conn: sa.engine.Connection, score_date: str
-) -> list[dict]:
+def _load_approved_non_closing(conn: sa.engine.Connection, score_date: str) -> list[dict]:
     """Return APPROVED non-closing rows from position_approvals for score_date."""
     rows = conn.execute(
         sa.select(position_approvals).where(
-            (position_approvals.c.rebalance_date == score_date) &
-            (position_approvals.c.status == "APPROVED")
+            (position_approvals.c.rebalance_date == score_date)
+            & (position_approvals.c.status == "APPROVED")
         )
     ).fetchall()
 
     cols = [c.name for c in position_approvals.columns]
     result = []
     for row in rows:
-        d = dict(zip(cols, row))
-        action        = str(d.get("action", "") or "")
+        d = dict(zip(cols, row, strict=False))
+        action = str(d.get("action", "") or "")
         target_shares = float(d.get("target_shares", 0.0) or 0.0)
         if not _is_closing(action, target_shares):
             result.append(d)
     return result
 
 
-def _apply_close_all(
-    conn: sa.engine.Connection, score_date: str, whatif: bool
-) -> int:
+def _apply_close_all(conn: sa.engine.Connection, score_date: str, whatif: bool) -> int:
     """Reject all APPROVED non-closing pending trades. Returns count modified."""
     rows = _load_approved_non_closing(conn, score_date)
     if not rows or whatif:
         return len(rows)
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     ids = [r["id"] for r in rows]
     conn.execute(
         position_approvals.update()
@@ -362,13 +427,13 @@ def _apply_size_down(
     if not rows or whatif:
         return len(rows)
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     count = 0
     for row in rows:
-        old_target    = float(row.get("target_shares", 0.0) or 0.0)
-        current       = float(row.get("current_shares", 0.0) or 0.0)
-        new_target    = round(old_target * factor)
-        new_delta     = new_target - current
+        old_target = float(row.get("target_shares", 0.0) or 0.0)
+        current = float(row.get("current_shares", 0.0) or 0.0)
+        new_target = round(old_target * factor)
+        new_delta = new_target - current
         conn.execute(
             position_approvals.update()
             .where(position_approvals.c.id == row["id"])
@@ -381,9 +446,7 @@ def _apply_size_down(
         count += 1
 
     conn.commit()
-    logger.info(
-        "circuit_breakers: size_down (factor=%.2f) modified %d trades", factor, count
-    )
+    logger.info("circuit_breakers: size_down (factor=%.2f) modified %d trades", factor, count)
     return count
 
 
@@ -394,21 +457,21 @@ def _apply_force_close(
     direction: str,
 ) -> None:
     """Reject any APPROVED BUY/SHORT trade for ticker; insert a target_shares=0 row."""
-    now          = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     open_actions = {"BUY", "SHORT"}
 
     # Reject existing APPROVED opening trades for this ticker
     rows = conn.execute(
         sa.select(position_approvals).where(
-            (position_approvals.c.rebalance_date == score_date) &
-            (position_approvals.c.ticker == ticker) &
-            (position_approvals.c.status == "APPROVED")
+            (position_approvals.c.rebalance_date == score_date)
+            & (position_approvals.c.ticker == ticker)
+            & (position_approvals.c.status == "APPROVED")
         )
     ).fetchall()
 
     cols = [c.name for c in position_approvals.columns]
     for row in rows:
-        d      = dict(zip(cols, row))
+        d = dict(zip(cols, row, strict=False))
         action = str(d.get("action", "") or "")
         if action in open_actions:
             conn.execute(
@@ -422,9 +485,7 @@ def _apply_force_close(
 
     # Determine current_shares from portfolio_positions
     pos_row = conn.execute(
-        sa.select(portfolio_positions.c.shares).where(
-            portfolio_positions.c.ticker == ticker
-        )
+        sa.select(portfolio_positions.c.shares).where(portfolio_positions.c.ticker == ticker)
     ).fetchone()
     current_shares = float(pos_row[0]) if pos_row and pos_row[0] is not None else 0.0
 
@@ -445,13 +506,16 @@ def _apply_force_close(
     conn.commit()
     logger.info(
         "circuit_breakers: force_close inserted %s trade for %s (current_shares=%.0f)",
-        close_action, ticker, current_shares,
+        close_action,
+        ticker,
+        current_shares,
     )
 
 
 # ---------------------------------------------------------------------------
 # Logging helpers
 # ---------------------------------------------------------------------------
+
 
 def _log_event(
     conn: sa.engine.Connection,
@@ -461,7 +525,7 @@ def _log_event(
     detail_dict: dict,
 ) -> None:
     """Insert one row into risk_events."""
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
         risk_events.insert().values(
             event_date=event_date,
@@ -483,7 +547,7 @@ def _log_check(
     reason: str,
 ) -> None:
     """Insert one row into risk_log."""
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
         risk_log.insert().values(
             run_date=run_date,
@@ -501,13 +565,14 @@ def _log_check(
 # Config loader
 # ---------------------------------------------------------------------------
 
+
 def _load_config(config: dict) -> dict:
     cb = config.get("risk", {}).get("circuit_breakers", {})
     return {
-        "drawdown_kill":           float(cb.get("drawdown_kill",           0.08)),
-        "daily_close_all":         float(cb.get("daily_close_all",         0.025)),
-        "daily_size_down":         float(cb.get("daily_size_down",         0.015)),
-        "weekly_size_down":        float(cb.get("weekly_size_down",        0.040)),
+        "drawdown_kill": float(cb.get("drawdown_kill", 0.08)),
+        "daily_close_all": float(cb.get("daily_close_all", 0.025)),
+        "daily_size_down": float(cb.get("daily_size_down", 0.015)),
+        "weekly_size_down": float(cb.get("weekly_size_down", 0.040)),
         "max_single_position_pct": float(cb.get("max_single_position_pct", 0.03)),
     }
 
@@ -515,6 +580,7 @@ def _load_config(config: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Position loader
 # ---------------------------------------------------------------------------
+
 
 def _load_positions(conn: sa.engine.Connection) -> pd.DataFrame:
     rows = conn.execute(sa.select(portfolio_positions)).fetchall()

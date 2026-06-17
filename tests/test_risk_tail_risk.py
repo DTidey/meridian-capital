@@ -4,20 +4,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401
-import factors.db    # noqa: F401
-import risk.db       # noqa: F401
-import analysis.db   # noqa: F401
-
-from datetime import date, timedelta
 
 import pytest
 import sqlalchemy as sa
 
+import analysis.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import risk.db  # noqa: F401
 from data.db import daily_prices, initialise_schema
 from portfolio.db import position_approvals
 from risk.tail_risk import run_tail_risk
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,9 +43,9 @@ def _base_config(vix_caution=25.0, vix_stress=35.0):
     return {
         "risk": {
             "tail_risk": {
-                "vix_caution":          vix_caution,
-                "vix_stress":           vix_stress,
-                "credit_spread_sigma":  99.0,   # disabled for these tests
+                "vix_caution": vix_caution,
+                "vix_stress": vix_stress,
+                "credit_spread_sigma": 99.0,  # disabled for these tests
                 "credit_lookback_days": 10,
             }
         }
@@ -57,36 +54,41 @@ def _base_config(vix_caution=25.0, vix_stress=35.0):
 
 def _insert_vix(conn, vix_close, score_date=_SCORE_DATE):
     """Insert a single VIX price row."""
-    conn.execute(daily_prices.insert().values(
-        ticker=_VIX_TICKER,
-        date=score_date,
-        open=vix_close,
-        high=vix_close,
-        low=vix_close,
-        close=vix_close,
-        adj_close=vix_close,
-        volume=0,
-    ))
+    conn.execute(
+        daily_prices.insert().values(
+            ticker=_VIX_TICKER,
+            date=score_date,
+            open=vix_close,
+            high=vix_close,
+            low=vix_close,
+            close=vix_close,
+            adj_close=vix_close,
+            volume=0,
+        )
+    )
     conn.commit()
 
 
 def _insert_approval(conn, ticker, action="BUY", target=300.0, current=0.0):
-    conn.execute(position_approvals.insert().values(
-        rebalance_date=_SCORE_DATE,
-        ticker=ticker,
-        action=action,
-        target_shares=target,
-        current_shares=current,
-        delta_shares=target - current,
-        status="APPROVED",
-        created_at="2026-03-15T00:00:00",
-    ))
+    conn.execute(
+        position_approvals.insert().values(
+            rebalance_date=_SCORE_DATE,
+            ticker=ticker,
+            action=action,
+            target_shares=target,
+            current_shares=current,
+            delta_shares=target - current,
+            status="APPROVED",
+            created_at="2026-03-15T00:00:00",
+        )
+    )
     conn.commit()
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestTailRiskNormal:
     def test_vix_below_threshold_normal(self, mem_db, tmp_path):

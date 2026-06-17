@@ -10,8 +10,8 @@ from analysis.cost_tracker import CostCeilingExceeded, CostTracker
 
 logger = logging.getLogger(__name__)
 
-_RETRY_DELAYS = [2, 4, 8, 16, 32]   # seconds between retries
-_RETRYABLE    = (openai.RateLimitError, openai.APIStatusError)
+_RETRY_DELAYS = [2, 4, 8, 16, 32]  # seconds between retries
+_RETRYABLE = (openai.RateLimitError, openai.APIStatusError)
 
 
 class OpenAIClient:
@@ -23,16 +23,16 @@ class OpenAIClient:
         model: str,
         cost_tracker: CostTracker,
     ) -> None:
-        self._client  = openai.OpenAI(api_key=api_key)
-        self._model   = model
+        self._client = openai.OpenAI(api_key=api_key)
+        self._model = model
         self._tracker = cost_tracker
 
     def chat(
         self,
         system_prompt: str,
-        user_prompt:   str,
-        model:         str | None = None,
-        json_mode:     bool       = True,
+        user_prompt: str,
+        model: str | None = None,
+        json_mode: bool = True,
     ) -> dict:
         """Call the chat completions endpoint and return a parsed dict.
 
@@ -59,7 +59,7 @@ class OpenAIClient:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user_prompt},
         ]
         kwargs: dict = {"model": effective_model, "messages": messages}
         if json_mode:
@@ -70,7 +70,10 @@ class OpenAIClient:
             if delay:
                 logger.warning(
                     "Retry %d/%d after %.0fs (model=%s)",
-                    attempt - 1, len(_RETRY_DELAYS), delay, effective_model,
+                    attempt - 1,
+                    len(_RETRY_DELAYS),
+                    delay,
+                    effective_model,
                 )
                 time.sleep(delay)
             try:
@@ -89,9 +92,12 @@ class OpenAIClient:
 
         raise last_error  # type: ignore[misc]
 
-    def estimate_tokens(self, system_prompt: str, user_prompt: str, model: str | None = None) -> int:
+    def estimate_tokens(
+        self, system_prompt: str, user_prompt: str, model: str | None = None
+    ) -> int:
         """Count tokens in both prompts using tiktoken (no API call)."""
         import tiktoken
+
         effective_model = model or self._model
         try:
             enc = tiktoken.encoding_for_model(effective_model)

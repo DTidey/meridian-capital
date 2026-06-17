@@ -6,7 +6,8 @@ from unittest.mock import patch
 import pytest
 import sqlalchemy as sa
 
-from data.db import fundamentals as fundamentals_table, insert_or_replace
+from data.db import fundamentals as fundamentals_table
+from data.db import insert_or_replace
 from data.fundamentals import (
     _compute_ratios,
     _fmp_raw,
@@ -21,6 +22,7 @@ from data.providers import FundamentalsProvider, Providers
 # ---------------------------------------------------------------------------
 # _safe
 # ---------------------------------------------------------------------------
+
 
 class TestSafe:
     def test_float_passthrough(self):
@@ -52,6 +54,7 @@ class TestSafe:
 # _pct_change
 # ---------------------------------------------------------------------------
 
+
 class TestPctChange:
     def test_basic(self):
         assert _pct_change(110.0, 100.0) == pytest.approx(0.10)
@@ -79,6 +82,7 @@ class TestPctChange:
 # ---------------------------------------------------------------------------
 # _compute_ratios
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def base_period():
@@ -171,11 +175,22 @@ class TestComputeRatios:
         assert r["operating_margin"] is None
 
     def test_none_values_propagate_safely(self):
-        empty = {k: None for k in [
-            "revenue", "gross_profit", "operating_income", "net_income",
-            "total_equity", "total_assets", "total_debt", "current_assets",
-            "current_liabilities", "accounts_receivable", "cfo", "fcf",
-        ]}
+        empty = dict.fromkeys(
+            [
+                "revenue",
+                "gross_profit",
+                "operating_income",
+                "net_income",
+                "total_equity",
+                "total_assets",
+                "total_debt",
+                "current_assets",
+                "current_liabilities",
+                "accounts_receivable",
+                "cfo",
+                "fcf",
+            ]
+        )
         r = _compute_ratios(empty, None, None)
         for key, val in r.items():
             assert val is None, f"{key} should be None when inputs are None"
@@ -185,16 +200,31 @@ class TestComputeRatios:
 # _upsert_period — DB round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestUpsertPeriod:
     def test_stores_and_retrieves_row(self, tmp_db):
         raw = {
-            "revenue": 1e9, "gross_profit": 4e8, "operating_income": 2e8, "ebit": 2e8,
-            "net_income": 1.5e8, "rd_expense": 1e7, "total_assets": 5e9,
-            "total_liabilities": 3e9, "total_equity": 2e9, "cash": 5e8,
-            "total_debt": 1e9, "current_assets": 1.2e9, "current_liabilities": 6e8,
-            "accounts_receivable": 2e8, "retained_earnings": 8e8,
-            "shares_outstanding": 1e8, "dividends_paid": -5e7,
-            "cfo": 2.5e8, "capex": -5e7, "fcf": 2e8, "buybacks": -1e8,
+            "revenue": 1e9,
+            "gross_profit": 4e8,
+            "operating_income": 2e8,
+            "ebit": 2e8,
+            "net_income": 1.5e8,
+            "rd_expense": 1e7,
+            "total_assets": 5e9,
+            "total_liabilities": 3e9,
+            "total_equity": 2e9,
+            "cash": 5e8,
+            "total_debt": 1e9,
+            "current_assets": 1.2e9,
+            "current_liabilities": 6e8,
+            "accounts_receivable": 2e8,
+            "retained_earnings": 8e8,
+            "shares_outstanding": 1e8,
+            "dividends_paid": -5e7,
+            "cfo": 2.5e8,
+            "capex": -5e7,
+            "fcf": 2e8,
+            "buybacks": -1e8,
         }
         ratios = _compute_ratios(raw, None, None)
         _upsert_period(tmp_db, "AAPL", "quarterly", "2024-09-30", raw, ratios)
@@ -217,12 +247,31 @@ class TestUpsertPeriod:
         assert row[2] == pytest.approx(0.15)
 
     def test_upsert_replaces_existing(self, tmp_db):
-        raw = {k: None for k in [
-            "revenue", "gross_profit", "operating_income", "ebit", "net_income", "rd_expense",
-            "total_assets", "total_liabilities", "total_equity", "cash", "total_debt",
-            "current_assets", "current_liabilities", "accounts_receivable", "retained_earnings",
-            "shares_outstanding", "dividends_paid", "cfo", "capex", "fcf", "buybacks",
-        ]}
+        raw = dict.fromkeys(
+            [
+                "revenue",
+                "gross_profit",
+                "operating_income",
+                "ebit",
+                "net_income",
+                "rd_expense",
+                "total_assets",
+                "total_liabilities",
+                "total_equity",
+                "cash",
+                "total_debt",
+                "current_assets",
+                "current_liabilities",
+                "accounts_receivable",
+                "retained_earnings",
+                "shares_outstanding",
+                "dividends_paid",
+                "cfo",
+                "capex",
+                "fcf",
+                "buybacks",
+            ]
+        )
         raw["revenue"] = 100.0
         ratios = _compute_ratios(raw, None, None)
         _upsert_period(tmp_db, "MSFT", "annual", "2024-06-30", raw, ratios)
@@ -232,14 +281,14 @@ class TestUpsertPeriod:
         tmp_db.commit()
 
         count = tmp_db.execute(
-            sa.select(sa.func.count()).select_from(fundamentals_table)
+            sa.select(sa.func.count())
+            .select_from(fundamentals_table)
             .where(fundamentals_table.c.ticker == "MSFT")
         ).scalar()
         assert count == 1
 
         revenue = tmp_db.execute(
-            sa.select(fundamentals_table.c.revenue)
-            .where(fundamentals_table.c.ticker == "MSFT")
+            sa.select(fundamentals_table.c.revenue).where(fundamentals_table.c.ticker == "MSFT")
         ).scalar()
         assert revenue == pytest.approx(999.0)
 
@@ -248,23 +297,33 @@ class TestUpsertPeriod:
 # _fmp_raw — field mapping
 # ---------------------------------------------------------------------------
 
+
 class TestFmpRaw:
     def _sample(self):
         inc = {
-            "revenue": 100_000, "grossProfit": 40_000, "operatingIncome": 20_000,
-            "netIncome": 15_000, "researchAndDevelopmentExpenses": 5_000,
+            "revenue": 100_000,
+            "grossProfit": 40_000,
+            "operatingIncome": 20_000,
+            "netIncome": 15_000,
+            "researchAndDevelopmentExpenses": 5_000,
             "weightedAverageShsOut": 1_000_000,
         }
         bal = {
-            "totalAssets": 500_000, "totalLiabilities": 300_000,
-            "totalStockholdersEquity": 200_000, "cashAndCashEquivalents": 50_000,
-            "totalDebt": 100_000, "totalCurrentAssets": 120_000,
-            "totalCurrentLiabilities": 60_000, "netReceivables": 20_000,
+            "totalAssets": 500_000,
+            "totalLiabilities": 300_000,
+            "totalStockholdersEquity": 200_000,
+            "cashAndCashEquivalents": 50_000,
+            "totalDebt": 100_000,
+            "totalCurrentAssets": 120_000,
+            "totalCurrentLiabilities": 60_000,
+            "netReceivables": 20_000,
             "retainedEarnings": 80_000,
         }
         cf = {
-            "operatingCashFlow": 25_000, "capitalExpenditure": -5_000,
-            "freeCashFlow": 20_000, "commonStockRepurchased": -10_000,
+            "operatingCashFlow": 25_000,
+            "capitalExpenditure": -5_000,
+            "freeCashFlow": 20_000,
+            "commonStockRepurchased": -10_000,
             "commonDividendsPaid": -3_000,
         }
         return inc, bal, cf
@@ -305,13 +364,33 @@ class TestFmpRaw:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _empty_raw():
-    return {k: None for k in [
-        "revenue", "gross_profit", "operating_income", "ebit", "net_income", "rd_expense",
-        "total_assets", "total_liabilities", "total_equity", "cash", "total_debt",
-        "current_assets", "current_liabilities", "accounts_receivable", "retained_earnings",
-        "shares_outstanding", "dividends_paid", "cfo", "capex", "fcf", "buybacks",
-    ]}
+    return dict.fromkeys(
+        [
+            "revenue",
+            "gross_profit",
+            "operating_income",
+            "ebit",
+            "net_income",
+            "rd_expense",
+            "total_assets",
+            "total_liabilities",
+            "total_equity",
+            "cash",
+            "total_debt",
+            "current_assets",
+            "current_liabilities",
+            "accounts_receivable",
+            "retained_earnings",
+            "shares_outstanding",
+            "dividends_paid",
+            "cfo",
+            "capex",
+            "fcf",
+            "buybacks",
+        ]
+    )
 
 
 def _insert_with_timestamp(conn, ticker, ts_str):
@@ -319,8 +398,12 @@ def _insert_with_timestamp(conn, ticker, ts_str):
     ratios = _compute_ratios(raw, None, None)
     conn.execute(
         insert_or_replace(conn, fundamentals_table).values(
-            ticker=ticker, period_type="quarterly", period_end="2024-09-30",
-            updated_at=ts_str, **raw, **ratios,
+            ticker=ticker,
+            period_type="quarterly",
+            period_end="2024-09-30",
+            updated_at=ts_str,
+            **raw,
+            **ratios,
         )
     )
     conn.commit()
@@ -337,13 +420,16 @@ def _make_providers(provider: FundamentalsProvider, fmp_key: str = "") -> Provid
 # _is_fresh
 # ---------------------------------------------------------------------------
 
+
 class TestIsFresh:
     def test_no_data_returns_false(self, tmp_db):
         assert not _is_fresh(tmp_db, "AAPL", 7)
 
     def test_recent_data_returns_true(self, tmp_db):
         raw = _empty_raw()
-        _upsert_period(tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None))
+        _upsert_period(
+            tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+        )
         tmp_db.commit()
         assert _is_fresh(tmp_db, "AAPL", 7)
 
@@ -354,7 +440,9 @@ class TestIsFresh:
 
     def test_boundary_within_one_day_is_fresh(self, tmp_db):
         raw = _empty_raw()
-        _upsert_period(tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None))
+        _upsert_period(
+            tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+        )
         tmp_db.commit()
         assert _is_fresh(tmp_db, "AAPL", 1)
 
@@ -365,7 +453,9 @@ class TestIsFresh:
 
     def test_different_tickers_are_independent(self, tmp_db):
         raw = _empty_raw()
-        _upsert_period(tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None))
+        _upsert_period(
+            tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+        )
         tmp_db.commit()
         assert _is_fresh(tmp_db, "AAPL", 7)
         assert not _is_fresh(tmp_db, "MSFT", 7)
@@ -375,10 +465,13 @@ class TestIsFresh:
 # update_fundamentals — staleness skip logic
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateFundamentalsSkip:
     def test_fresh_ticker_skipped(self, tmp_db, config):
         raw = _empty_raw()
-        _upsert_period(tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None))
+        _upsert_period(
+            tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+        )
         tmp_db.commit()
         config["fundamentals"]["refresh_days"] = 7
         providers = _make_providers(FundamentalsProvider.YFINANCE)
@@ -413,7 +506,9 @@ class TestUpdateFundamentalsSkip:
 
     def test_mixed_fresh_and_stale(self, tmp_db, config):
         raw = _empty_raw()
-        _upsert_period(tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None))
+        _upsert_period(
+            tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+        )
         old_ts = (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")
         _insert_with_timestamp(tmp_db, "MSFT", old_ts)
         tmp_db.commit()
@@ -440,7 +535,9 @@ class TestUpdateFundamentalsSkip:
     def test_all_fresh_returns_early(self, tmp_db, config):
         raw = _empty_raw()
         for ticker in ["AAPL", "MSFT", "GOOG"]:
-            _upsert_period(tmp_db, ticker, "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None))
+            _upsert_period(
+                tmp_db, ticker, "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+            )
         tmp_db.commit()
         config["fundamentals"]["refresh_days"] = 7
         providers = _make_providers(FundamentalsProvider.YFINANCE)

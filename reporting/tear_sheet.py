@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,10 +12,9 @@ import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 
-from data.db import daily_prices
 from execution.costs import slippage_stats
 from factors.db import factor_scores as factor_scores_table
-from portfolio.db import portfolio_history, portfolio_positions
+from portfolio.db import portfolio_positions
 from reporting.db import pnl_attribution, portfolio_nav
 from reporting.turnover import compute as compute_turnover
 
@@ -24,8 +23,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_BAR_CHARS  = "▁▂▃▄▅▆▇█"
-_SPARKLEN   = 60
+_BAR_CHARS = "▁▂▃▄▅▆▇█"
+_SPARKLEN = 60
 
 
 def write(
@@ -36,10 +35,8 @@ def write(
 ) -> None:
     """Generate and write institutional markdown tear sheet."""
     with engine.connect() as conn:
-        nav_rows = conn.execute(
-            sa.select(portfolio_nav).order_by(portfolio_nav.c.date)
-        ).fetchall()
-        attr_rows = conn.execute(
+        nav_rows = conn.execute(sa.select(portfolio_nav).order_by(portfolio_nav.c.date)).fetchall()
+        _attr_rows = conn.execute(
             sa.select(pnl_attribution).order_by(pnl_attribution.c.date)
         ).fetchall()
         pos_rows = conn.execute(
@@ -60,16 +57,16 @@ def write(
         log.warning("No NAV data — tear sheet will be sparse")
         return
 
-    nav_df  = pd.DataFrame(nav_rows, columns=portfolio_nav.columns.keys())
+    nav_df = pd.DataFrame(nav_rows, columns=portfolio_nav.columns.keys())
     nav_df["date"] = pd.to_datetime(nav_df["date"])
     nav_df = nav_df.set_index("date").sort_index()
 
     daily_rets = nav_df["nav"].pct_change().dropna()
 
     cfg_port = (cfg or {}).get("portfolio", {})
-    aum      = float(nav_df["nav"].iloc[-1]) if not nav_df.empty else 0.0
-    today    = date.today().strftime("%d %B %Y")
-    report_date = date.today().isoformat()
+    aum = float(nav_df["nav"].iloc[-1]) if not nav_df.empty else 0.0
+    today = date.today().strftime("%d %B %Y")
+    _report_date = date.today().isoformat()
 
     lines: list[str] = []
 
@@ -92,7 +89,7 @@ def write(
     rf = 0.05
 
     port_stats = _perf_stats(daily_rets, rf, nav_df)
-    spy_stats  = _perf_stats(spy_rets,   rf, spy_df.rename(columns={"spy": "nav"}) * 1.0)
+    spy_stats = _perf_stats(spy_rets, rf, spy_df.rename(columns={"spy": "nav"}) * 1.0)
 
     lines += [
         "## Performance vs SPY",
@@ -102,16 +99,16 @@ def write(
     ]
     for label, key in [
         ("Annualised Return", "ann_return"),
-        ("Sharpe Ratio",      "sharpe"),
-        ("Sortino Ratio",     "sortino"),
-        ("Max Drawdown",      "max_dd"),
-        ("Beta",              "beta"),
-        ("Jensen's Alpha",    "alpha"),
-        ("Calmar Ratio",      "calmar"),
+        ("Sharpe Ratio", "sharpe"),
+        ("Sortino Ratio", "sortino"),
+        ("Max Drawdown", "max_dd"),
+        ("Beta", "beta"),
+        ("Jensen's Alpha", "alpha"),
+        ("Calmar Ratio", "calmar"),
     ]:
         p_val = port_stats.get(key, 0.0)
         s_val = spy_stats.get(key, 0.0)
-        fmt   = _fmt_stat(key)
+        fmt = _fmt_stat(key)
         lines.append(f"| {label} | {p_val:{fmt}} | {s_val:{fmt}} |")
 
     lines += ["", "---", ""]
@@ -187,8 +184,14 @@ def write(
     # Factor Exposures
     # -----------------------------------------------------------------------
     _FACTOR_SCORE_COLS = [
-        "momentum_score", "value_score", "quality_score", "growth_score",
-        "revisions_score", "insider_score", "short_interest_score", "institutional_score",
+        "momentum_score",
+        "value_score",
+        "quality_score",
+        "growth_score",
+        "revisions_score",
+        "insider_score",
+        "short_interest_score",
+        "institutional_score",
     ]
     if factor_row:
         factor_dict = dict(factor_row._mapping)
@@ -217,10 +220,10 @@ def write(
             "|---|---|---|---|",
         ]
         for s in sorted(sectors):
-            sub  = pos_df[pos_df["sector"] == s]
-            lw   = sub[sub["direction"] == "LONG"]["weight"].sum()
-            sw   = sub[sub["direction"] == "SHORT"]["weight"].sum()
-            net  = lw - sw
+            sub = pos_df[pos_df["sector"] == s]
+            lw = sub[sub["direction"] == "LONG"]["weight"].sum()
+            sw = sub[sub["direction"] == "SHORT"]["weight"].sum()
+            net = lw - sw
             lines.append(f"| {s} | {lw:.2%} | {sw:.2%} | {net:+.2%} |")
         lines += ["", "---", ""]
 
@@ -231,12 +234,12 @@ def write(
     lines += [
         "## Turnover",
         "",
-        f"| Period | Turnover | Budget |",
-        f"|---|---|---|",
+        "| Period | Turnover | Budget |",
+        "|---|---|---|",
         f"| 30-day | {tv['turnover_30d_pct']:.1%} | {tv['budget_pct']:.1%} |",
         f"| 90-day | {tv['turnover_90d_pct']:.1%} | — |",
         f"| Annualised | {tv['turnover_annualized']:.1%} | — |",
-        f"",
+        "",
         f"- **Estimated tax liability:** ${tv['tax_estimate_usd']:,.0f}  "
         f"(ST gains ${tv['short_term_gains']:,.0f} @ 37%, LT gains ${tv['long_term_gains']:,.0f} @ 20%)",
         "",
@@ -267,6 +270,7 @@ def write(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _sharpe(rets: pd.Series, rf: float = 0.05) -> float:
     if rets.empty or rets.std() == 0:
         return 0.0
@@ -279,7 +283,7 @@ def _sortino(rets: pd.Series, rf: float = 0.05) -> float:
     downside = rets[rets < 0]
     if downside.empty or downside.std() == 0:
         return 0.0
-    ann_ret      = float(rets.mean() * 252)
+    ann_ret = float(rets.mean() * 252)
     downside_vol = float(downside.std() * math.sqrt(252))
     return (ann_ret - rf) / downside_vol
 
@@ -293,23 +297,23 @@ def _calmar(rets: pd.Series, max_dd: float) -> float:
 def _perf_stats(rets: pd.Series, rf: float, nav_df: pd.DataFrame) -> dict:
     if rets.empty:
         return {}
-    n        = len(rets)
-    ann_ret  = float((1 + rets).prod() ** (252 / max(n, 1)) - 1)
-    ann_vol  = float(rets.std() * math.sqrt(252))
-    sharpe   = _sharpe(rets, rf)
-    sortino  = _sortino(rets, rf)
-    nav      = nav_df["nav"] if "nav" in nav_df.columns else pd.Series(dtype=float)
-    peak     = nav.cummax() if not nav.empty else pd.Series([0.0])
-    dd       = ((peak - nav) / peak).max() if not nav.empty else 0.0
-    calmar   = _calmar(rets, float(dd))
+    n = len(rets)
+    ann_ret = float((1 + rets).prod() ** (252 / max(n, 1)) - 1)
+    _ann_vol = float(rets.std() * math.sqrt(252))
+    sharpe = _sharpe(rets, rf)
+    sortino = _sortino(rets, rf)
+    nav = nav_df["nav"] if "nav" in nav_df.columns else pd.Series(dtype=float)
+    peak = nav.cummax() if not nav.empty else pd.Series([0.0])
+    dd = ((peak - nav) / peak).max() if not nav.empty else 0.0
+    calmar = _calmar(rets, float(dd))
     return {
         "ann_return": ann_ret,
-        "sharpe":     sharpe,
-        "sortino":    sortino,
-        "max_dd":     float(dd),
-        "beta":       0.0,   # computed relative to benchmark only for portfolio
-        "alpha":      ann_ret - rf,
-        "calmar":     calmar,
+        "sharpe": sharpe,
+        "sortino": sortino,
+        "max_dd": float(dd),
+        "beta": 0.0,  # computed relative to benchmark only for portfolio
+        "alpha": ann_ret - rf,
+        "calmar": calmar,
     }
 
 
@@ -323,29 +327,29 @@ def _monthly_grid(daily_rets: pd.Series) -> str | None:
         return None
     dr = daily_rets.copy()
     dr.index = pd.to_datetime(dr.index)
-    monthly  = (1 + dr).resample("ME").prod() - 1
+    monthly = (1 + dr).resample("ME").prod() - 1
 
     years = sorted(monthly.index.year.unique())
     months = list(range(1, 13))
     header = "| Year | " + " | ".join(f"{m:02d}" for m in months) + " | Annual |"
-    sep    = "|---|" + "---|" * 13
+    sep = "|---|" + "---|" * 13
 
     rows_out = [header, sep]
     for yr in years:
         yr_data = monthly[monthly.index.year == yr]
-        cols    = []
-        annual  = 1.0
+        cols = []
+        annual = 1.0
         for m in months:
             val = yr_data[yr_data.index.month == m]
             if val.empty:
                 cols.append(" — ")
                 continue
             v = float(val.iloc[0])
-            annual *= (1 + v)
-            sign  = "**" if v >= 0 else ""
+            annual *= 1 + v
+            sign = "**" if v >= 0 else ""
             cols.append(f"{sign}{v:+.1%}{sign}")
         ann_val = annual - 1.0
-        sign    = "**" if ann_val >= 0 else ""
+        sign = "**" if ann_val >= 0 else ""
         rows_out.append(f"| {yr} | " + " | ".join(cols) + f" | {sign}{ann_val:+.1%}{sign} |")
 
     return "\n".join(rows_out)
@@ -372,5 +376,5 @@ def _rolling_sharpe(rets: pd.Series, window: int = 252, rf: float = 0.05) -> pd.
     if len(rets) < window:
         return pd.Series(dtype=float)
     rolling_mean = rets.rolling(window).mean() * 252
-    rolling_std  = rets.rolling(window).std() * math.sqrt(252)
+    rolling_std = rets.rolling(window).std() * math.sqrt(252)
     return ((rolling_mean - rf) / rolling_std).dropna()

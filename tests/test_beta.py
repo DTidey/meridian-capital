@@ -4,36 +4,37 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import portfolio.db  # noqa: F401
-
 from datetime import date, timedelta
 
 import pandas as pd
 import pytest
 
+import portfolio.db  # noqa: F401
 from data.db import daily_prices
 from portfolio.beta import compute_betas, portfolio_beta
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _insert_prices(conn, ticker, prices, start_date="2026-01-01"):
     """Insert a list of adj_close prices into daily_prices starting from start_date."""
     d = date.fromisoformat(start_date)
     rows = []
     for i, p in enumerate(prices):
-        rows.append({
-            "ticker":    ticker,
-            "date":      str(d + timedelta(days=i)),
-            "adj_close": float(p),
-            "open":      float(p),
-            "high":      float(p) * 1.01,
-            "low":       float(p) * 0.99,
-            "close":     float(p),
-            "volume":    10000,
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "date": str(d + timedelta(days=i)),
+                "adj_close": float(p),
+                "open": float(p),
+                "high": float(p) * 1.01,
+                "low": float(p) * 0.99,
+                "close": float(p),
+                "volume": 10000,
+            }
+        )
     conn.execute(daily_prices.insert(), rows)
     conn.commit()
 
@@ -46,6 +47,7 @@ def _monotone_prices(n=30, start=100.0, step=1.0):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestComputeBetas:
     def test_spy_beta_is_one(self, tmp_db):
@@ -83,13 +85,13 @@ class TestComputeBetas:
 
     def test_portfolio_beta_weighted_sum(self):
         weights = pd.Series({"A": 0.5, "B": -0.3})
-        betas   = pd.Series({"A": 1.2, "B": 0.8})
-        result  = portfolio_beta(weights, betas)
+        betas = pd.Series({"A": 1.2, "B": 0.8})
+        result = portfolio_beta(weights, betas)
         expected = 0.5 * 1.2 + (-0.3) * 0.8
         assert result == pytest.approx(expected, abs=0.02)
 
     def test_portfolio_beta_empty_returns_zero(self):
         weights = pd.Series(dtype=float)
-        betas   = pd.Series(dtype=float)
-        result  = portfolio_beta(weights, betas)
+        betas = pd.Series(dtype=float)
+        result = portfolio_beta(weights, betas)
         assert result == pytest.approx(0.0)

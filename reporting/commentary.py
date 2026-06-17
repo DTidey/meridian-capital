@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -38,7 +38,7 @@ def generate_if_due(
     """
     cfg = cfg or {}
     weekday = int((cfg.get("reporting") or {}).get("commentary_weekday", 4))
-    today   = date.today()
+    today = date.today()
 
     if today.weekday() != weekday and not force:
         log.debug("Commentary not due today (weekday=%d, target=%d)", today.weekday(), weekday)
@@ -49,8 +49,9 @@ def generate_if_due(
 
     with engine.connect() as conn:
         cached = conn.execute(
-            sa.select(weekly_commentary.c.content)
-            .where(weekly_commentary.c.week_start == week_start)
+            sa.select(weekly_commentary.c.content).where(
+                weekly_commentary.c.week_start == week_start
+            )
         ).fetchone()
 
     if cached and not force:
@@ -62,11 +63,16 @@ def generate_if_due(
 
     with engine.begin() as conn:
         ins = insert_or_replace(conn, weekly_commentary)
-        conn.execute(ins, [{
-            "week_start":   week_start,
-            "content":      content,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }])
+        conn.execute(
+            ins,
+            [
+                {
+                    "week_start": week_start,
+                    "content": content,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                }
+            ],
+        )
 
     log.info("Weekly commentary generated for week_start=%s", week_start)
     return content
@@ -110,18 +116,18 @@ def _build_context(engine: sqlalchemy.engine.Engine) -> str:
         ).fetchall()
 
     attr_data = [dict(r._mapping) for r in attr_rows]
-    nav_data  = dict(nav_row._mapping) if nav_row else {}
+    nav_data = dict(nav_row._mapping) if nav_row else {}
     risk_data = [dict(r._mapping) for r in risk_rows]
-    vix       = round(float(vix_row[1]), 2) if vix_row else None
-    top5      = [dict(r._mapping) for r in pos_rows[:5]]
-    bot5      = [dict(r._mapping) for r in pos_rows[-5:]]
+    vix = round(float(vix_row[1]), 2) if vix_row else None
+    top5 = [dict(r._mapping) for r in pos_rows[:5]]
+    bot5 = [dict(r._mapping) for r in pos_rows[-5:]]
 
     ctx = {
-        "period":         f"Week of {date.today().isoformat()}",
-        "pnl_5d":         attr_data,
-        "current_nav":    nav_data,
-        "vix":            vix,
-        "risk_events":    risk_data,
+        "period": f"Week of {date.today().isoformat()}",
+        "pnl_5d": attr_data,
+        "current_nav": nav_data,
+        "vix": vix,
+        "risk_events": risk_data,
         "top5_positions": top5,
         "worst5_positions": bot5,
     }
@@ -130,18 +136,22 @@ def _build_context(engine: sqlalchemy.engine.Engine) -> str:
 
 def _call_openai(context: str, cfg: dict) -> str:
     import openai
-    model  = (cfg.get("analysis") or {}).get("openai_model", "gpt-4o")
+
+    model = (cfg.get("analysis") or {}).get("openai_model", "gpt-4o")
     client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    resp   = client.chat.completions.create(
+    resp = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": _JARVIS_SYSTEM},
-            {"role": "user",   "content": (
-                "Write the weekly portfolio commentary for Meridian Capital Partners. "
-                "Reference specific P&L drivers, risk events, and position performance. "
-                "Tone: authoritative, precise, wry. 300-400 words.\n\n"
-                f"Context:\n{context}"
-            )},
+            {
+                "role": "user",
+                "content": (
+                    "Write the weekly portfolio commentary for Meridian Capital Partners. "
+                    "Reference specific P&L drivers, risk events, and position performance. "
+                    "Tone: authoritative, precise, wry. 300-400 words.\n\n"
+                    f"Context:\n{context}"
+                ),
+            },
         ],
         max_tokens=800,
         temperature=0.7,

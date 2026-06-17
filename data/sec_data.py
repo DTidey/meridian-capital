@@ -1,5 +1,6 @@
 """SEC EDGAR EFTS data ingestion — 10-K, 10-Q, 8-K, Form 4 insider transactions."""
 
+import contextlib
 import logging
 import os
 import re
@@ -9,14 +10,20 @@ from datetime import datetime, timedelta
 import requests
 import sqlalchemy as sa
 
-from .db import insert_or_ignore, insert_or_replace, insider_cluster_flags, insider_transactions, sec_filings
+from .db import (
+    insert_or_ignore,
+    insert_or_replace,
+    insider_cluster_flags,
+    insider_transactions,
+    sec_filings,
+)
 
 logger = logging.getLogger(__name__)
 
-_EFTS_SEARCH  = "https://efts.sec.gov/LATEST/search-index"
-_EDGAR_DATA   = "https://data.sec.gov"       # JSON APIs (submissions, company facts)
-_EDGAR_ARCH   = "https://www.sec.gov"        # actual filing documents / archives
-_SUBMISSIONS  = "https://data.sec.gov/submissions"
+_EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
+_EDGAR_DATA = "https://data.sec.gov"  # JSON APIs (submissions, company facts)
+_EDGAR_ARCH = "https://www.sec.gov"  # actual filing documents / archives
+_SUBMISSIONS = "https://data.sec.gov/submissions"
 
 # SEC fair-use: 10 req/s max; we stay at 8
 _MIN_INTERVAL = 1.0 / 8
@@ -42,8 +49,9 @@ def _make_session(config: dict) -> requests.Session:
     return s
 
 
-def _ticker_to_cik(session: requests.Session, ticker: str,
-                   limiter: _RateLimiter, cache: dict) -> str | None:
+def _ticker_to_cik(
+    session: requests.Session, ticker: str, limiter: _RateLimiter, cache: dict
+) -> str | None:
     if ticker in cache:
         return cache[ticker]
     limiter.wait()
@@ -61,8 +69,9 @@ def _ticker_to_cik(session: requests.Session, ticker: str,
     return None
 
 
-def _get_filings_efts(session: requests.Session, ticker: str, form_type: str,
-                      limiter: _RateLimiter, count: int = 5) -> list[dict]:
+def _get_filings_efts(
+    session: requests.Session, ticker: str, form_type: str, limiter: _RateLimiter, count: int = 5
+) -> list[dict]:
     """Search EDGAR full-text search for filings by ticker + form type."""
     limiter.wait()
     params = {
@@ -86,16 +95,17 @@ def _get_filings_efts(session: requests.Session, ticker: str, form_type: str,
     results = []
     for hit in hits[:count]:
         src = hit.get("_source", {})
-        results.append({
-            "accession_no": src.get("accession_no", ""),
-            "filed_date": src.get("file_date", ""),
-            "form_type": form_type,
-        })
+        results.append(
+            {
+                "accession_no": src.get("accession_no", ""),
+                "filed_date": src.get("file_date", ""),
+                "form_type": form_type,
+            }
+        )
     return results
 
 
-def _get_submissions(session: requests.Session, cik: str,
-                     limiter: _RateLimiter) -> dict:
+def _get_submissions(session: requests.Session, cik: str, limiter: _RateLimiter) -> dict:
     """Fetch full submissions JSON for a CIK."""
     limiter.wait()
     padded = cik.zfill(10)
@@ -117,23 +127,25 @@ def _extract_form4_xml(text: str) -> str:
     end = text.find("</ownershipDocument>", start)
     if end == -1:
         return text
-    return text[start: end + len("</ownershipDocument>")]
+    return text[start : end + len("</ownershipDocument>")]
 
 
-def _fetch_filing_text(session: requests.Session, cik: str, accession_no: str,
-                       primary_doc: str, limiter: _RateLimiter) -> str:
+def _fetch_filing_text(
+    session: requests.Session, cik: str, accession_no: str, primary_doc: str, limiter: _RateLimiter
+) -> str:
     """Fetch and strip the HTML text of a filing's primary document.
 
     primary_doc comes directly from the submissions JSON 'primaryDocument' field,
     so no separate index fetch is needed.
     """
     import html as html_lib
+
     if not primary_doc:
         logger.debug("No primaryDocument for %s", accession_no)
         return ""
     acc_clean = accession_no.replace("-", "")
     cik_clean = cik.lstrip("0")
-    doc_url   = f"{_EDGAR_ARCH}/Archives/edgar/data/{cik_clean}/{acc_clean}/{primary_doc}"
+    doc_url = f"{_EDGAR_ARCH}/Archives/edgar/data/{cik_clean}/{acc_clean}/{primary_doc}"
 
     limiter.wait()
     try:
@@ -147,7 +159,7 @@ def _fetch_filing_text(session: requests.Session, cik: str, accession_no: str,
     # Remove blocks whose content is never useful prose: scripts, styles,
     # and the hidden iXBRL section that carries machine-readable XBRL metadata.
     text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<style[^>]*>.*?</style>",   " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<ix:hidden[^>]*>.*?</ix:hidden>", " ", text, flags=re.IGNORECASE | re.DOTALL)
     # Strip remaining tags, decode entities, collapse whitespace.
     text = re.sub(r"<[^>]+>", " ", text)
@@ -171,22 +183,23 @@ def _is_ceo_cfo(title: str) -> bool:
 def _parse_form4_xml(xml_text: str) -> list[dict]:
     """Parse Form 4 XML into list of transaction dicts."""
     import xml.etree.ElementTree as ET
+
     transactions = []
     try:
         root = ET.fromstring(xml_text)
     except Exception:
         return transactions
 
-    insider_name  = (root.findtext(".//rptOwnerName") or "").strip()
+    insider_name = (root.findtext(".//rptOwnerName") or "").strip()
     insider_title = (root.findtext(".//officerTitle") or "").strip()
 
     for txn in root.findall(".//nonDerivativeTransaction"):
         code_el = txn.find(".//transactionCode")
-        code    = (code_el.text or "").strip() if code_el is not None else ""
+        code = (code_el.text or "").strip() if code_el is not None else ""
         shares_el = txn.find(".//transactionShares/value")
-        price_el  = txn.find(".//transactionPricePerShare/value")
-        date_el   = txn.find(".//transactionDate/value")
-        own_el    = txn.find(".//directOrIndirectOwnership/value")
+        price_el = txn.find(".//transactionPricePerShare/value")
+        date_el = txn.find(".//transactionDate/value")
+        own_el = txn.find(".//directOrIndirectOwnership/value")
 
         try:
             shares = float(shares_el.text) if shares_el is not None else None
@@ -201,34 +214,40 @@ def _parse_form4_xml(xml_text: str) -> list[dict]:
         own_type = (own_el.text or "D").strip() if own_el is not None else "D"
 
         txn_type_map = {
-            "P": "Purchase", "S": "Sale", "A": "Grant",
-            "M": "Exercise", "F": "Tax withholding", "G": "Gift",
+            "P": "Purchase",
+            "S": "Sale",
+            "A": "Grant",
+            "M": "Exercise",
+            "F": "Tax withholding",
+            "G": "Gift",
         }
         txn_type = txn_type_map.get(code, "Other")
-        is_open  = 1 if code in ("P", "S") else 0
+        is_open = 1 if code in ("P", "S") else 0
 
-        transactions.append({
-            "insider_name": insider_name,
-            "insider_title": insider_title,
-            "transaction_type": txn_type,
-            "transaction_code": code,
-            "shares": shares,
-            "price": price,
-            "date": date_str,
-            "ownership_type": own_type,
-            "is_open_market": is_open,
-            "is_ceo_cfo": int(_is_ceo_cfo(insider_title)),
-        })
+        transactions.append(
+            {
+                "insider_name": insider_name,
+                "insider_title": insider_title,
+                "transaction_type": txn_type,
+                "transaction_code": code,
+                "shares": shares,
+                "price": price,
+                "date": date_str,
+                "ownership_type": own_type,
+                "is_open_market": is_open,
+                "is_ceo_cfo": int(_is_ceo_cfo(insider_title)),
+            }
+        )
 
     return transactions
 
 
 def _flag_cluster_buys(conn: sa.engine.Connection, ticker: str, config: dict) -> None:
-    window_days  = config["sec"]["cluster_buy_window_days"]
+    window_days = config["sec"]["cluster_buy_window_days"]
     min_insiders = config["sec"]["cluster_buy_min_insiders"]
-    cutoff = (
-        datetime.utcnow() - timedelta(days=config["sec"]["insider_lookback_days"])
-    ).strftime("%Y-%m-%d")
+    cutoff = (datetime.utcnow() - timedelta(days=config["sec"]["insider_lookback_days"])).strftime(
+        "%Y-%m-%d"
+    )
 
     rows = conn.execute(
         sa.select(
@@ -252,7 +271,7 @@ def _flag_cluster_buys(conn: sa.engine.Connection, ticker: str, config: dict) ->
         if not date_str:
             continue
         win_start = datetime.strptime(date_str[:10], "%Y-%m-%d")
-        win_end   = win_start + timedelta(days=window_days)
+        win_end = win_start + timedelta(days=window_days)
 
         insiders_in_window = set()
         total_shares = 0.0
@@ -282,6 +301,7 @@ def _flag_cluster_buys(conn: sa.engine.Connection, ticker: str, config: dict) ->
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def update_sec_data(
     conn: sa.engine.Connection,
     tickers: list[str],
@@ -300,10 +320,10 @@ def update_sec_data(
     )
     conn.commit()
 
-    session   = _make_session(config)
-    limiter   = _RateLimiter(_MIN_INTERVAL)
+    session = _make_session(config)
+    limiter = _RateLimiter(_MIN_INTERVAL)
     cik_cache: dict[str, str] = {}
-    summary:   dict[str, int] = {}
+    summary: dict[str, int] = {}
 
     lookback_cfg = config["sec"].get("form_lookback_days", {})
     default_lookback = config["sec"].get("insider_lookback_days", 180)
@@ -332,22 +352,30 @@ def update_sec_data(
     # 2. Bulk-load all existing accession numbers (one query instead of one per ticker)
     existing_accs: dict[str, set[str]] = {}
     for ticker_db, acc in conn.execute(
-        sa.select(sec_filings.c.ticker, sec_filings.c.accession_no)
-        .where(sec_filings.c.ticker.in_(tickers))
+        sa.select(sec_filings.c.ticker, sec_filings.c.accession_no).where(
+            sec_filings.c.ticker.in_(tickers)
+        )
     ).fetchall():
         existing_accs.setdefault(ticker_db, set()).add(acc)
 
     # 3. Skip submissions fetch for tickers already checked today
-    checked_today: set[str] = set(conn.execute(
-        sa.select(sec_filings.c.ticker).distinct()
-        .where(sec_filings.c.fetched_at >= today)
-        .where(sec_filings.c.ticker.in_(tickers))
-    ).scalars().all())
+    checked_today: set[str] = set(
+        conn.execute(
+            sa.select(sec_filings.c.ticker)
+            .distinct()
+            .where(sec_filings.c.fetched_at >= today)
+            .where(sec_filings.c.ticker.in_(tickers))
+        )
+        .scalars()
+        .all()
+    )
 
     skipped = len(checked_today)
     logger.info(
         "SEC EDGAR ingestion for %d tickers, forms=%s — %d skipped (checked today)",
-        len(tickers), forms, skipped,
+        len(tickers),
+        forms,
+        skipped,
     )
 
     for ticker in tickers:
@@ -369,14 +397,16 @@ def update_sec_data(
         subs = _get_submissions(session, cik, limiter)
         recent = subs.get("filings", {}).get("recent", {})
 
-        form_types    = recent.get("form", [])
-        filed_dates   = recent.get("filingDate", [])
+        form_types = recent.get("form", [])
+        filed_dates = recent.get("filingDate", [])
         accession_nos = recent.get("accessionNumber", [])
-        primary_docs  = recent.get("primaryDocument", [""] * len(form_types))
+        primary_docs = recent.get("primaryDocument", [""] * len(form_types))
 
         fetched_acc = existing_accs.get(ticker, set())
 
-        for ft, fd, acc, pdoc in zip(form_types, filed_dates, accession_nos, primary_docs, strict=False):
+        for ft, fd, acc, pdoc in zip(
+            form_types, filed_dates, accession_nos, primary_docs, strict=False
+        ):
             acc_norm = acc.replace("-", "")
             if ft not in forms:
                 continue
@@ -394,7 +424,9 @@ def update_sec_data(
                 limiter.wait()
                 # primaryDocument for Form 4 is always the HTML renderer, not XML.
                 # The ownershipDocument XML is embedded in the full SGML .txt file.
-                txt_url = f"{_EDGAR_ARCH}/Archives/edgar/data/{cik.lstrip('0')}/{acc_norm}/{acc}.txt"
+                txt_url = (
+                    f"{_EDGAR_ARCH}/Archives/edgar/data/{cik.lstrip('0')}/{acc_norm}/{acc}.txt"
+                )
                 try:
                     r = session.get(txt_url, timeout=30)
                     xml_text = _extract_form4_xml(r.text) if r.ok else ""
@@ -405,7 +437,7 @@ def update_sec_data(
                 txns = _parse_form4_xml(xml_text) if xml_text else []
                 now_ts = datetime.utcnow().isoformat(timespec="seconds")
                 for txn in txns:
-                    try:
+                    with contextlib.suppress(sa.exc.IntegrityError):
                         conn.execute(
                             insert_or_ignore(conn, insider_transactions).values(
                                 ticker=ticker,
@@ -423,8 +455,6 @@ def update_sec_data(
                                 fetched_at=now_ts,
                             )
                         )
-                    except sa.exc.IntegrityError:
-                        pass
 
             conn.execute(
                 insert_or_ignore(conn, sec_filings).values(
@@ -446,9 +476,12 @@ def update_sec_data(
             sa.update(sec_filings)
             .where(
                 (sec_filings.c.ticker == ticker)
-                & (sec_filings.c.fetched_at == sa.select(
-                    sa.func.max(sec_filings.c.fetched_at)
-                ).where(sec_filings.c.ticker == ticker).scalar_subquery())
+                & (
+                    sec_filings.c.fetched_at
+                    == sa.select(sa.func.max(sec_filings.c.fetched_at))
+                    .where(sec_filings.c.ticker == ticker)
+                    .scalar_subquery()
+                )
             )
             .values(fetched_at=now_ts)
         )
@@ -457,6 +490,9 @@ def update_sec_data(
         summary[ticker] = stored
 
     total = sum(summary.values())
-    logger.info("SEC ingestion complete — %d filings stored across %d tickers",
-                total, len([v for v in summary.values() if v > 0]))
+    logger.info(
+        "SEC ingestion complete — %d filings stored across %d tickers",
+        total,
+        len([v for v in summary.values() if v > 0]),
+    )
     return summary
