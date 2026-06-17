@@ -1,5 +1,5 @@
 # Runtime dependencies — edit here, then run: make compile
-yfinance>=0.2.40
+yfinance>=1.4.1
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
 lxml>=5.0.0
