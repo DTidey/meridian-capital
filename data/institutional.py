@@ -187,6 +187,24 @@ _CORP_NOISE = re.compile(
 )
 
 
+def _prior_quarter_report_date(date_str: str | None) -> str | None:
+    """Return the report date for the prior quarter (subtract 3 months, preserve day string)."""
+    if not date_str:
+        return None
+    try:
+        parts = str(date_str).split("-")
+        if len(parts) != 3:
+            return None
+        year, month, day = int(parts[0]), int(parts[1]), parts[2]
+        month -= 3
+        if month <= 0:
+            month += 12
+            year -= 1
+        return f"{year}-{month:02d}-{day}"
+    except (ValueError, AttributeError):
+        return None
+
+
 def _norm_name(name: str) -> str:
     name = _CORP_NOISE.sub("", name.upper())
     return re.sub(r"[^\w]+", " ", name).strip()
@@ -264,7 +282,7 @@ def _summarise_holdings(conn: sa.engine.Connection) -> None:
         ).scalar()
 
         net_change = None
-        new_positions = 0
+        new_positions = funds  # all holders are new when no prior quarter exists
         if prior_date:
             prior = conn.execute(
                 sa.select(sa.func.sum(institutional_holdings.c.shares_held)).where(
