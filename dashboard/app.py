@@ -96,6 +96,7 @@ PAGES = {
     "IV": "PERFORMANCE",
     "V": "EXECUTION",
     "VI": "LETTER",
+    "VII": "TICKER",
 }
 
 if "page" not in st.session_state:
@@ -135,5 +136,7 @@ elif page == "V":
     from dashboard.page_execution import render
 elif page == "VI":
     from dashboard.page_letter import render
+elif page == "VII":
+    from dashboard.page_ticker import render
 
 render(engine, cfg)  # type: ignore[possibly-undefined]
