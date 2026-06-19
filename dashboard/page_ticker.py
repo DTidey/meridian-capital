@@ -185,9 +185,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
 
         current_year = int(price_df["date"].dt.year.max())
         ytd_df = price_df[price_df["date"].dt.year == current_year]
-        ret_ytd = (
-            latest_price / float(ytd_df["adj_close"].iloc[0]) - 1 if len(ytd_df) > 1 else 0.0
-        )
+        ret_ytd = latest_price / float(ytd_df["adj_close"].iloc[0]) - 1 if len(ytd_df) > 1 else 0.0
 
         k1, k2, k3, k4, k5 = st.columns(5)
         with k1:
@@ -409,6 +407,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _score_colour(val: float | None) -> str:
     if val is None:

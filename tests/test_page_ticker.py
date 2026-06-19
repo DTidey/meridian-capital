@@ -19,6 +19,7 @@ from data.db import (
 # AC5 — _score_colour helper
 # ---------------------------------------------------------------------------
 
+
 def test_score_colour_green():
     assert _score_colour(75) == LONG_COL
 
@@ -47,13 +48,26 @@ def test_score_colour_none():
 # AC1 — ticker list query
 # ---------------------------------------------------------------------------
 
+
 def test_ticker_list_query(tmp_engine):
     with tmp_engine.connect() as conn:
         conn.execute(
             sp500_universe.insert(),
             [
-                {"ticker": "MSFT", "company_name": "Microsoft Corp", "gics_sector": "IT", "gics_sub_industry": "Software", "updated_at": "2026-01-01"},
-                {"ticker": "AAPL", "company_name": "Apple Inc", "gics_sector": "IT", "gics_sub_industry": "Hardware", "updated_at": "2026-01-01"},
+                {
+                    "ticker": "MSFT",
+                    "company_name": "Microsoft Corp",
+                    "gics_sector": "IT",
+                    "gics_sub_industry": "Software",
+                    "updated_at": "2026-01-01",
+                },
+                {
+                    "ticker": "AAPL",
+                    "company_name": "Apple Inc",
+                    "gics_sector": "IT",
+                    "gics_sub_industry": "Hardware",
+                    "updated_at": "2026-01-01",
+                },
             ],
         )
         conn.commit()
@@ -74,6 +88,7 @@ def test_ticker_list_query(tmp_engine):
 # AC2 — price query returns empty DataFrame without raising
 # ---------------------------------------------------------------------------
 
+
 def test_price_chart_no_data_does_not_raise(tmp_engine):
     with tmp_engine.connect() as conn:
         rows = conn.execute(
@@ -89,6 +104,7 @@ def test_price_chart_no_data_does_not_raise(tmp_engine):
 # ---------------------------------------------------------------------------
 # AC3 — price KPI calculations
 # ---------------------------------------------------------------------------
+
 
 def _make_price_df(n_rows: int = 260, base_price: float = 100.0) -> pd.DataFrame:
     """Build a synthetic price DataFrame with incrementing prices."""
@@ -142,7 +158,11 @@ def test_ytd_return_single_row():
     df = pd.DataFrame({"date": dates, "adj_close": [150.0], "volume": [1_000_000]})
     current_year = int(df["date"].dt.year.max())
     ytd_df = df[df["date"].dt.year == current_year]
-    ret = df["adj_close"].iloc[-1] / float(ytd_df["adj_close"].iloc[0]) - 1 if len(ytd_df) > 1 else 0.0
+    ret = (
+        df["adj_close"].iloc[-1] / float(ytd_df["adj_close"].iloc[0]) - 1
+        if len(ytd_df) > 1
+        else 0.0
+    )
     assert ret == 0.0
 
 
@@ -156,6 +176,7 @@ def test_avg_volume_30d():
 # ---------------------------------------------------------------------------
 # AC9 — insider query limit
 # ---------------------------------------------------------------------------
+
 
 def test_insider_query_limit(tmp_engine):
     rows = [
@@ -197,11 +218,10 @@ def test_insider_query_limit(tmp_engine):
 # AC10 — empty universe guard
 # ---------------------------------------------------------------------------
 
+
 def test_empty_universe_returns_early(tmp_engine):
     with tmp_engine.connect() as conn:
-        rows = conn.execute(
-            sa.select(sp500_universe).order_by(sp500_universe.c.ticker)
-        ).fetchall()
+        rows = conn.execute(sa.select(sp500_universe).order_by(sp500_universe.c.ticker)).fetchall()
 
     assert rows == []
 
@@ -229,5 +249,3 @@ def test_earnings_caption_query(tmp_engine):
     er = dict(zip(earnings_calendar.columns.keys(), row, strict=False))
     assert er["earnings_date"] == "2026-07-30"
     assert er["eps_estimate"] == pytest.approx(1.45)
-
-
