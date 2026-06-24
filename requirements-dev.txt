@@ -283,7 +283,7 @@ rpds-py==2026.5.1
     #   referencing
 ruff==0.15.17
     # via -r requirements-dev.in
-scipy==1.17.1
+scipy==1.18.0
     # via -r requirements.in
 six==1.17.0
     # via python-dateutil
