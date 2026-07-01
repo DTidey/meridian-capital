@@ -246,5 +246,5 @@ websockets==16.0
     #   alpaca-py
     #   streamlit
     #   yfinance
-yfinance==1.4.1
+yfinance==1.5.1
     # via -r requirements.in

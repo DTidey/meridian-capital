@@ -350,7 +350,7 @@ websockets==16.0
     #   yfinance
 wheel==0.47.0
     # via pip-tools
-yfinance==1.4.1
+yfinance==1.5.1
     # via -r requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
