@@ -4,7 +4,7 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements-dev.in
 #
-alpaca-py==0.43.4
+alpaca-py==0.43.5
     # via -r requirements.in
 altair==6.2.1
     # via streamlit
