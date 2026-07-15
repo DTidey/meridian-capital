@@ -201,7 +201,7 @@ psycopg2-binary==2.9.12
     # via -r requirements.in
 py-serializable==2.1.0
     # via cyclonedx-python-lib
-pyarrow==24.0.0
+pyarrow==25.0.0
     # via
     #   -r requirements.in
     #   streamlit
