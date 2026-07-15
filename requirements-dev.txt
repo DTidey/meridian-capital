@@ -187,7 +187,7 @@ platformdirs==4.10.0
     #   python-discovery
     #   virtualenv
     #   yfinance
-plotly==6.8.0
+plotly==6.9.0
     # via -r requirements.in
 pluggy==1.6.0
     # via pytest

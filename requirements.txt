@@ -134,7 +134,7 @@ pillow==12.2.0
     #   streamlit
 platformdirs==4.10.0
     # via yfinance
-plotly==6.8.0
+plotly==6.9.0
     # via -r requirements.in
 protobuf==7.35.1
     # via
