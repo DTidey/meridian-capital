@@ -142,7 +142,7 @@ protobuf==7.35.1
     #   yfinance
 psycopg2-binary==2.9.12
     # via -r requirements.in
-pyarrow==24.0.0
+pyarrow==25.0.0
     # via
     #   -r requirements.in
     #   streamlit
