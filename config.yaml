@@ -1,5 +1,5 @@
 database:
-  url: postgresql+psycopg2://meridian:meridian@localhost:5432/meridian
+  url: postgresql+psycopg2://meridian:meridian@postgres.tidey.co.uk:5432/meridian
 
 universe:
   wikipedia_url: "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
