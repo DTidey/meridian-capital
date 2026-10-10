@@ -24,6 +24,8 @@ Release policy:
 ### Changed
 - `CLAUDE.md` imports `AGENTS.md` and `10Rules.md`; specs and test plans 09-12 brought up to the
   `.ai/templates` structure after a Reviewer pass (packet `13-agent-guidance-compliance`).
+- `10Rules.md` merged into `AGENTS.md` and deleted; `AGENTS.md` is now the single source of
+  agent rules (packet `14-merge-10rules-into-agents`).
 
 ### Security
 - Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,
