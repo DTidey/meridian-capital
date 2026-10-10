@@ -56,7 +56,7 @@ class TestProviderSettings:
 
     def test_unknown_env_provider_raises(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "bogus")
-        with pytest.raises(ValueError, match="Unknown llm.provider"):
+        with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
             provider_settings({})
 
     def test_unknown_provider_raises(self):
@@ -108,3 +108,71 @@ class TestJsonModeExtraBody:
 
     def test_require_parameters_for_openrouter(self):
         assert json_mode_extra_body(_OPENROUTER) == {"provider": {"require_parameters": True}}
+
+
+class TestOverrideScoping:
+    _OR_OVERRIDES = {
+        "llm": {
+            "provider": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key_env": "MY_OR_KEY",
+        }
+    }
+
+    def test_env_openai_ignores_openrouter_overrides(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        s = provider_settings(self._OR_OVERRIDES)
+        assert s["provider"] == "openai"
+        assert s["base_url"] is None
+        assert s["api_key_env"] == "OPENAI_API_KEY"
+
+    def test_openai_key_not_sent_to_openrouter(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        monkeypatch.setenv("MY_OR_KEY", "sk-or")
+        client = make_client(self._OR_OVERRIDES)
+        assert str(client.base_url) == "https://api.openai.com/v1/"
+        assert client.api_key == "sk-openai"
+
+    def test_env_openrouter_ignores_openai_overrides(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+        cfg = {"llm": {"base_url": "http://proxy.invalid/v1", "api_key_env": "MY_OPENAI_KEY"}}
+        s = provider_settings(cfg)
+        assert s["base_url"] == "https://openrouter.ai/api/v1"
+        assert s["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_overrides_kept_when_provider_matches_env(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+        assert provider_settings(self._OR_OVERRIDES)["api_key_env"] == "MY_OR_KEY"
+
+    def test_app_name_applies_under_env_override(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+        s = provider_settings({"llm": {"provider": "openai", "app_name": "Meridian"}})
+        assert s["app_name"] == "Meridian"
+
+
+class TestProviderValue:
+    @pytest.mark.parametrize("value", [" openrouter ", "OpenRouter", "OPENROUTER"])
+    def test_env_value_normalised(self, monkeypatch, value):
+        monkeypatch.setenv("LLM_PROVIDER", value)
+        assert provider_settings({})["provider"] == "openrouter"
+
+    def test_config_value_normalised(self):
+        assert provider_settings({"llm": {"provider": " OpenAI "}})["provider"] == "openai"
+
+    def test_invalid_config_raises_even_under_env_override(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        with pytest.raises(ValueError, match="Unknown llm.provider 'bogus'"):
+            provider_settings({"llm": {"provider": "bogus"}})
+
+    @pytest.mark.parametrize("value", ["", "   ", None])
+    def test_blank_config_value_defaults_to_openai(self, value):
+        assert provider_settings({"llm": {"provider": value}})["provider"] == "openai"
+
+    def test_non_string_config_value_raises_value_error(self):
+        with pytest.raises(ValueError, match="Unknown llm.provider '1'"):
+            provider_settings({"llm": {"provider": 1}})
+
+    def test_unknown_config_value_names_config_key(self):
+        with pytest.raises(ValueError, match="Unknown llm.provider 'bogus'"):
+            provider_settings({"llm": {"provider": "Bogus"}})

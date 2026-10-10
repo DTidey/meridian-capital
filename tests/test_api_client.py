@@ -205,3 +205,59 @@ class TestOpenAIDefault:
         ) as mock_create:
             client.chat("sys", "user")
         assert "extra_body" not in mock_create.call_args.kwargs
+
+
+def _status_error(status: int) -> openai.APIStatusError:
+    response = MagicMock(status_code=status, headers={})
+    return openai.APIStatusError(f"HTTP {status}", response=response, body=None)
+
+
+class TestRetryPolicy:
+    @pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 422])
+    def test_permanent_errors_not_retried(self, status):
+        client, _ = _make_client()
+        with (
+            patch.object(
+                client._client.chat.completions, "create", side_effect=_status_error(status)
+            ) as mock_create,
+            patch("analysis.api_client.time.sleep") as mock_sleep,
+            pytest.raises(openai.APIStatusError),
+        ):
+            client.chat("sys", "user")
+        assert mock_create.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 503])
+    def test_transient_errors_retried(self, status):
+        client, _ = _make_client()
+        good = _mock_response({"ok": True})
+        with (
+            patch.object(
+                client._client.chat.completions,
+                "create",
+                side_effect=[_status_error(status), good],
+            ),
+            patch("analysis.api_client.time.sleep") as mock_sleep,
+        ):
+            assert client.chat("sys", "user") == {"ok": True}
+        mock_sleep.assert_called_once()
+
+
+class TestOpenRouterEndToEnd:
+    def test_env_override_reaches_client(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+        tracker = CostTracker(ceiling_usd=25.0)
+        client = OpenAIClient(
+            api_key="sk-or-test",
+            model="gpt-4o-mini",
+            cost_tracker=tracker,
+            config={"llm": {"provider": "openai"}},
+        )
+        assert str(client._client.base_url).startswith("https://openrouter.ai/api/v1")
+        with patch.object(
+            client._client.chat.completions, "create", return_value=_mock_response({"ok": True})
+        ) as mock_create:
+            client.chat("sys", "user")
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["model"] == "openai/gpt-4o-mini"
+        assert kwargs["extra_body"] == {"provider": {"require_parameters": True}}

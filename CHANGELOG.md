@@ -32,6 +32,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- LLM layer (packet `16-llm-review-findings`): permanent API errors are no longer retried; config
+  overrides can't send a key to another provider's host; JARVIS streaming tolerates chunks with
+  empty `choices`; BYOK upstream cost honours `is_byok`; provider values are case-insensitive.
 - Lint passes on ruff 0.16.10: Markdown excluded from ruff, since 0.16 formats Markdown code
   blocks by default (packet `15-ruff-0-16`).
 - `make sync` works again with pip 26.2: pip-tools raised to 7.6.2 and upgraded alongside

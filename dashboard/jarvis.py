@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterator
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
@@ -223,6 +224,20 @@ def _fetch_snapshot(engine: sqlalchemy.engine.Engine) -> dict:
     }
 
 
+def _stream_reply(cfg: dict, messages: list[dict]) -> Iterator[str]:
+    """Yield JARVIS's reply as text deltas, skipping chunks without choices (e.g. usage)."""
+    from analysis.llm import make_client, resolve_model
+
+    client = make_client(cfg)
+    model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
+    stream = client.chat.completions.create(
+        model=model, messages=messages, stream=True, max_tokens=600, temperature=0.7
+    )
+    for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
 def render_chat(engine: sqlalchemy.engine.Engine, snapshot: dict, cfg: dict | None = None) -> None:
     """Render the Ask JARVIS chat widget (last 6 turns, streaming)."""
     if "jarvis_history" not in st.session_state:
@@ -254,24 +269,10 @@ def render_chat(engine: sqlalchemy.engine.Engine, snapshot: dict, cfg: dict | No
         messages.append(turn)
 
     try:
-        from analysis.llm import make_client, resolve_model
-
-        cfg = cfg or {}
-        client = make_client(cfg)
-        model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
-
         with st.chat_message("assistant"):
             response_placeholder = st.empty()
             full_response = ""
-            stream = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                max_tokens=600,
-                temperature=0.7,
-            )
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
+            for delta in _stream_reply(cfg or {}, messages):
                 full_response += delta
                 response_placeholder.markdown(full_response + "▌")
             response_placeholder.markdown(full_response)

@@ -95,6 +95,8 @@ LLM_PROVIDER=openrouter
 - AC4 -> docs review; live routing check
 
 ## Decision log
+- 2026-10-10: AC2's error wording was superseded by packet 16 AC3: the unknown-value error now
+  names its source (`LLM_PROVIDER` or `llm.provider`), and values are case-insensitive.
 - 2026-10-10: Chose an env var over gitignoring `config.yaml`, because the file holds
   versioned strategy parameters. It also matches the `DATABASE_URL` pattern.
 - 2026-10-10: Used an autouse fixture rather than per-test cleanup, because any test importing an

@@ -59,11 +59,16 @@ Path: `docs/test-plans/09-openrouter-provider.md`
   - JSON mode off on OpenRouter sends no routing constraint:
     `tests/test_api_client.py::TestOpenRouterProvider::test_no_extra_body_without_json_mode`
   - Namespaced model ID through tiktoken: `TestOpenRouterProvider::test_estimate_tokens_strips_namespace`
-- Gaps found in the 2026-10-10 Reviewer pass (to be added in packet 14):
-  - JARVIS stream whose final chunk has empty `choices` and carries usage
-  - `usage.cost == 0` (free model) records 0.0, not table pricing
-  - Non-BYOK usage with a non-null `upstream_inference_cost`
-  - Permanent OpenRouter errors (402/404) are not retried for about 62 s
+- Gaps found in the 2026-10-10 Reviewer pass, closed in packet 16:
+  - JARVIS stream whose final chunk has empty `choices` and carries usage:
+    `tests/test_llm_call_sites.py::TestJarvisStream::test_empty_choices_chunk_is_skipped`
+  - `usage.cost == 0` (free model) records 0.0, not table pricing:
+    `tests/test_cost_tracker.py::TestByokRule::test_free_model_zero_cost_recorded_as_zero`
+  - Non-BYOK usage with a non-null `upstream_inference_cost`:
+    `TestByokRule::test_non_byok_ignores_upstream_cost`
+  - Permanent OpenRouter errors are not retried:
+    `tests/test_api_client.py::TestRetryPolicy::test_permanent_errors_not_retried`
+  - AC6 wiring: `tests/test_llm_call_sites.py::TestReportingCallSites`
 
 ## Notes
 - Flaky risks: none. All provider calls are mocked; live checks are manual.

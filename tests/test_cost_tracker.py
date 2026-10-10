@@ -182,3 +182,24 @@ class TestOpenRouterCost:
             }
         )
         assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.21)
+
+
+class TestByokRule:
+    @staticmethod
+    def _usage(**fields):
+        from openai.types import CompletionUsage
+
+        base = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        return CompletionUsage.model_validate({**base, **fields})
+
+    def test_free_model_zero_cost_recorded_as_zero(self):
+        usage = self._usage(cost=0, is_byok=False)
+        assert CostTracker().record(usage, "meta-llama/some-free-model") == 0.0
+
+    def test_non_byok_ignores_upstream_cost(self):
+        usage = self._usage(cost=0.05, is_byok=False, cost_details={"upstream_inference_cost": 0.2})
+        assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.05)
+
+    def test_byok_adds_upstream_cost(self):
+        usage = self._usage(cost=0, is_byok=True, cost_details={"upstream_inference_cost": 0.2})
+        assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.2)
