@@ -1,6 +1,9 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# ruff >= 0.16 formats Python code blocks in Markdown by default; doc snippets are
+# illustrative and deliberately compact, so leave them as written.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [
