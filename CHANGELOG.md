@@ -21,6 +21,10 @@ Release policy:
 - `LLM_PROVIDER` env var overrides `llm.provider`, so a machine can switch provider via `.env`
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
+### Changed
+- `CLAUDE.md` imports `AGENTS.md` and `10Rules.md`; specs and test plans 09-12 brought up to the
+  `.ai/templates` structure after a Reviewer pass (packet `13-agent-guidance-compliance`).
+
 ### Security
 - Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).

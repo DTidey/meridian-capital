@@ -46,6 +46,29 @@ Path: `docs/test-plans/09-openrouter-provider.md`
   turn in the dashboard. Confirm the responses, and that the logged cost matches the OpenRouter
   activity page.
 
+## Edge cases
+- From spec:
+  - Absent `llm` block: `TestProviderSettings::test_defaults_to_openai_when_block_absent`
+  - Already-namespaced model: `TestResolveModel::test_openrouter_keeps_namespaced_model`
+  - No reported cost (direct OpenAI): existing `TestRecord` pricing-table tests
+- Additional adversarial cases:
+  - Real SDK `CompletionUsage` with dict-shaped `cost_details`:
+    `tests/test_cost_tracker.py::TestOpenRouterCost::test_byok_upstream_cost_from_real_sdk_usage`
+  - `cost_details=None` and a non-OpenAI model counting toward the ceiling:
+    `TestOpenRouterCost::test_reported_cost_counts_toward_ceiling`
+  - JSON mode off on OpenRouter sends no routing constraint:
+    `tests/test_api_client.py::TestOpenRouterProvider::test_no_extra_body_without_json_mode`
+  - Namespaced model ID through tiktoken: `TestOpenRouterProvider::test_estimate_tokens_strips_namespace`
+- Gaps found in the 2026-10-10 Reviewer pass (to be added in packet 14):
+  - JARVIS stream whose final chunk has empty `choices` and carries usage
+  - `usage.cost == 0` (free model) records 0.0, not table pricing
+  - Non-BYOK usage with a non-null `upstream_inference_cost`
+  - Permanent OpenRouter errors (402/404) are not retried for about 62 s
+
+## Notes
+- Flaky risks: none. All provider calls are mocked; live checks are manual.
+- Determinism considerations: `time.sleep` is patched in retry tests.
+
 ## Commands
 
 ```bash

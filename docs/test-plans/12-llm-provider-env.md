@@ -22,6 +22,24 @@ Path: `docs/test-plans/12-llm-provider-env.md`
   `llm.provider: openai` committed and `LLM_PROVIDER=openrouter` in `.env`: a live call is routed
   to OpenRouter (`openai/gpt-4o-mini`).
 
+## Edge cases
+- From spec:
+  - Env var with no `llm` block: `test_env_var_overrides_missing_block`
+  - Blank or whitespace value: `test_blank_env_var_falls_back_to_config`
+  - Unknown value: `test_unknown_env_provider_raises`
+- Additional adversarial cases:
+  - None present. The 2026-10-10 Reviewer pass found the four tests map one-to-one to the ACs.
+    To be added in packet 14:
+    - `LLM_PROVIDER=openai` with a committed OpenRouter `base_url`: the OpenAI key must not be
+      sent to OpenRouter (exposes a latent defect)
+    - Padded and mixed-case values (`" openrouter "`, `"OpenRouter"`)
+    - End to end: an `OpenAIClient` built under the env override has the OpenRouter base URL,
+      a namespaced model and JSON-mode `extra_body`
+
+## Notes
+- Flaky risks: a developer's `.env` leaking into tests; prevented by the autouse fixture.
+- Determinism considerations: none.
+
 ## Commands
 
 ```bash
