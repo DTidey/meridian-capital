@@ -130,6 +130,7 @@ runs Bandit across the source directories and pip-audit against both requirement
 DATABASE_URL          # PostgreSQL connection string
 OPENAI_API_KEY        # OpenAI (Layer 3 AI analysis + JARVIS) when llm.provider is openai
 OPENROUTER_API_KEY    # OpenRouter, used instead when llm.provider is openrouter
+LLM_PROVIDER          # optional: overrides llm.provider in config.yaml (openai | openrouter)
 FMP_API_KEY           # Financial Modeling Prep (optional — falls back to SEC 8-K mining)
 ALPACA_API_KEY        # Alpaca brokerage
 ALPACA_SECRET_KEY     # Alpaca brokerage

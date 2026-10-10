@@ -14,9 +14,13 @@ _PROVIDERS: dict[str, dict] = {
 
 
 def provider_settings(config: dict | None) -> dict:
-    """Resolve the `llm` config block against per-provider defaults."""
+    """Resolve the `llm` config block against per-provider defaults.
+
+    The LLM_PROVIDER env var, if set, overrides `llm.provider` so a machine can switch
+    provider via .env without editing the committed config.
+    """
     llm_cfg = (config or {}).get("llm") or {}
-    provider = llm_cfg.get("provider", "openai")
+    provider = os.environ.get("LLM_PROVIDER", "").strip() or llm_cfg.get("provider", "openai")
     if provider not in _PROVIDERS:
         raise ValueError(f"Unknown llm.provider {provider!r}; expected one of {list(_PROVIDERS)}")
     settings = {"provider": provider, **_PROVIDERS[provider]}

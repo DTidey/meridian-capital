@@ -127,6 +127,7 @@ scoring:
 #   openrouter: OpenRouter's OpenAI-compatible API, key in OPENROUTER_API_KEY.
 #               Bare model names below (gpt-4o) are sent as openai/gpt-4o; use a full
 #               OpenRouter "vendor/model" ID to pick a non-OpenAI model.
+# The LLM_PROVIDER env var (e.g. in .env) overrides `provider` for a single machine.
 llm:
   provider: openai
   # base_url: null       # override the provider default

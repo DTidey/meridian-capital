@@ -77,6 +77,7 @@ Edit `.env` and fill in:
 ```
 DATABASE_URL=postgresql+psycopg2://meridian:meridian@localhost:5432/meridian
 OPENAI_API_KEY=sk-...            # or OPENROUTER_API_KEY when llm.provider is openrouter
+# LLM_PROVIDER=openrouter        # optional: overrides llm.provider in config.yaml
 ALPACA_API_KEY=...
 ALPACA_SECRET_KEY=...
 ALPACA_PAPER=true

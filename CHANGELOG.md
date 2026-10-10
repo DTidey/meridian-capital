@@ -18,6 +18,8 @@ Release policy:
 - Selectable LLM provider (`llm.provider` in `config.yaml`): OpenAI direct or OpenRouter.
   All LLM call sites share one client factory; cost tracking uses OpenRouter's reported cost
   when present (packet `09-openrouter-provider`).
+- `LLM_PROVIDER` env var overrides `llm.provider`, so a machine can switch provider via `.env`
+  without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Security
 - Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,

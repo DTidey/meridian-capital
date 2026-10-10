@@ -12,6 +12,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data.db import get_engine, initialise_schema
 
 
+@pytest.fixture(autouse=True)
+def _no_llm_provider_override(monkeypatch):
+    """Keep a developer's LLM_PROVIDER (loaded from .env by entry-point imports) out of tests."""
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+
 @pytest.fixture
 def tmp_engine(tmp_path):
     """SQLAlchemy Engine backed by a throw-away SQLite file."""
