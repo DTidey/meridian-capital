@@ -1,16 +1,45 @@
 # Dependency Security Bumps
 
 **Spec file:** `docs/specs/10-dependency-security-bumps.md`
+**Spec slug:** dependency-security-bumps
 **Status:** Done
+**Owner:** DTidey
 **Date:** 2026-10-10
 
-## Purpose
+## Problem statement
+- pip-audit (CI's Security step) has failed on `main` since 2026-09-24 because of advisories
+  against seven indirect dependencies.
+- The failure stops the job before the Test step, so no PR has had its tests run in CI.
 
-CI's Security step (`make security`, which runs pip-audit) has failed on `main` since 2026-09-24
-because of published advisories against seven indirect dependencies in the lock files. That
-failure stops the job before the Test step, so no PR currently gets its tests run in CI. This
-change raises only the affected packages to their first fixed versions and leaves every other pin
-unchanged.
+## Scope
+In scope:
+- Raising the affected lock-file pins to fixed versions.
+
+Out of scope / non-goals:
+- Upgrading any other dependency, or any direct dependency.
+- Changing `.in` files or the Python version.
+- Clearing the open Dependabot PRs.
+
+## Assumptions
+- The pip-audit advisory database as of 2026-10-10.
+- The packages are only used indirectly, so raising their minor or patch versions doesn't change
+  behaviour the test suite would miss.
+
+## Proposed behavior / API
+### Public interface
+- None. Only the lock files `requirements.txt` and `requirements-dev.txt` change.
+- CLI entry points: none.
+
+### Inputs / outputs
+- Inputs: the existing lock files.
+- Outputs: the lock files with raised pins.
+- Error handling: not applicable.
+
+### Examples
+```bash
+pip-compile -P anyio -P "gitpython>=3.1.57" -P msgpack -P pillow -P soupsieve==2.9.0 \
+    -P urllib3 requirements.in -o requirements.txt
+```
 
 ## Acceptance criteria
 
@@ -33,10 +62,33 @@ unchanged.
 | `requirements-dev.txt` | Same six, plus virtualenv and python-discovery |
 
 ## Security considerations
-
 - Auth/authz impact: None.
+- Input handling or injection risk: None.
 - Secrets or credential handling: None.
-- Network or external service impact: None. This change fixes known advisories. gitpython goes
-  to 3.2.0 rather than 3.1.51, because 3.1.51 still has advisories that are only fixed in
-  3.1.54-3.1.57. soupsieve is held at 2.9, not 3.x, to avoid a major-version change to HTML
-  parsing.
+- Data exposure or privacy impact: None.
+- File system access impact: None.
+- Network or external service impact: None.
+- Dependency or supply-chain impact: Removes known advisories. No new packages; versions come from
+  PyPI via pip-compile.
+- Security notes for reviewers/testers: Re-run pip-audit on both lock files, and check that the
+  diff touches only the listed pins.
+
+## Edge cases
+- The first fixed version still has later advisories (gitpython 3.1.51): move to a version
+  that clears all of them.
+- A package can't move without a dependency moving too (virtualenv needs python-discovery).
+- An unconstrained upgrade would cross a major version (soupsieve 3.x): pin to the smallest fix.
+
+## Test guidance
+- AC1 -> `make security` (pip-audit: no known vulnerabilities)
+- AC2 -> `git diff main -- requirements*.txt` review
+- AC3 -> `make test` with the new versions installed; BeautifulSoup selector and dashboard import
+  checks
+
+## Decision log
+- 2026-10-10: gitpython goes to 3.2.0, not 3.1.51; the advisories against 3.1.51 are only
+  fixed in 3.1.54 to 3.1.57.
+- 2026-10-10: soupsieve is held at 2.9 to avoid a major-version change to HTML parsing.
+- 2026-10-10: virtualenv went to 21.14.5 with python-discovery 1.6.2. It's dev-only, so a larger
+  jump is acceptable.
+- 2026-10-10: Kept as a separate PR from packet 09, because it fixes `main` independently.

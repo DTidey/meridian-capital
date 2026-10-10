@@ -18,6 +18,18 @@ Path: `docs/test-plans/10-dependency-security-bumps.md`
   run `make test` (full suite) and `make lint`. Manual check: BeautifulSoup CSS selection works
   with soupsieve 2.9, and the Streamlit dashboard modules import with gitpython 3.2.0.
 
+## Edge cases
+- From spec:
+  - First fixed version still has later advisories (gitpython): pip-audit re-run after each change
+  - A package that needs a dependency bumped too (virtualenv with python-discovery)
+- Additional adversarial cases:
+  - Not applicable: lock-file-only change with no new code paths. Covered by pip-audit plus the
+    full suite on the new versions, and by BeautifulSoup selector and dashboard import checks.
+
+## Notes
+- Flaky risks: pip-audit results change as new advisories are published.
+- Determinism considerations: none.
+
 ## Commands
 
 ```bash
