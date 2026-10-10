@@ -39,6 +39,26 @@ class TestProviderSettings:
         assert s["api_key_env"] == "MY_KEY"
         assert s["base_url"] == "http://x/v1"
 
+    def test_env_var_overrides_config(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+        s = provider_settings({"llm": {"provider": "openai"}})
+        assert s["provider"] == "openrouter"
+        assert s["api_key_env"] == "OPENROUTER_API_KEY"
+
+    def test_env_var_overrides_missing_block(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+        assert provider_settings({})["provider"] == "openrouter"
+
+    def test_blank_env_var_falls_back_to_config(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "  ")
+        assert provider_settings(_OPENROUTER)["provider"] == "openrouter"
+        assert provider_settings({})["provider"] == "openai"
+
+    def test_unknown_env_provider_raises(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "bogus")
+        with pytest.raises(ValueError, match="Unknown llm.provider"):
+            provider_settings({})
+
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown llm.provider"):
             provider_settings({"llm": {"provider": "bogus"}})
