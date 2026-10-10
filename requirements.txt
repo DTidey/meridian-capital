@@ -86,7 +86,9 @@ jsonschema-specifications==2025.9.1
 kiwisolver==1.5.0
     # via matplotlib
 lxml==6.1.1
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   yfinance
 markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
@@ -246,5 +248,5 @@ websockets==16.0
     #   alpaca-py
     #   streamlit
     #   yfinance
-yfinance==1.4.1
+yfinance==1.7.0
     # via -r requirements.in
