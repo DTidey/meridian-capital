@@ -42,7 +42,8 @@ def _reported_cost(usage) -> float | None:
         upstream = details.get("upstream_inference_cost")
     else:
         upstream = getattr(details, "upstream_inference_cost", None)
-    if isinstance(upstream, int | float):
+    # Upstream cost is only a separate bill on BYOK; usage without is_byok keeps the old rule
+    if isinstance(upstream, int | float) and getattr(usage, "is_byok", None) is not False:
         cost += upstream
     return float(cost)
 

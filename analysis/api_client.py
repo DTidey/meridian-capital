@@ -12,7 +12,14 @@ from analysis.llm import json_mode_extra_body, make_client, resolve_model
 logger = logging.getLogger(__name__)
 
 _RETRY_DELAYS = [2, 4, 8, 16, 32]  # seconds between retries
-_RETRYABLE = (openai.RateLimitError, openai.APIStatusError)
+
+
+def _is_retryable(exc: openai.APIStatusError) -> bool:
+    """Retry only temporary failures: the status codes the openai SDK itself retries."""
+    if isinstance(exc, openai.RateLimitError | openai.InternalServerError):
+        return True
+    status = exc.status_code
+    return status in (408, 409, 429) or status >= 500
 
 
 class OpenAIClient:
@@ -87,8 +94,9 @@ class OpenAIClient:
                 self._tracker.record(response.usage, effective_model)
                 content = response.choices[0].message.content
                 return json.loads(content)
-            except _RETRYABLE as exc:
-                # Rate limit or transient server error — retry
+            except openai.APIStatusError as exc:
+                if not _is_retryable(exc):
+                    raise
                 last_error = exc
                 logger.warning("LLM API error (attempt %d): %s", attempt, exc)
             except json.JSONDecodeError as exc:

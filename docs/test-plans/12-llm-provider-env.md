@@ -28,13 +28,14 @@ Path: `docs/test-plans/12-llm-provider-env.md`
   - Blank or whitespace value: `test_blank_env_var_falls_back_to_config`
   - Unknown value: `test_unknown_env_provider_raises`
 - Additional adversarial cases:
-  - None present. The 2026-10-10 Reviewer pass found the four tests map one-to-one to the ACs.
-    To be added in packet 14:
+  - The 2026-10-10 Reviewer pass found the original four tests map one-to-one to the ACs.
+    Closed in packet 16:
     - `LLM_PROVIDER=openai` with a committed OpenRouter `base_url`: the OpenAI key must not be
-      sent to OpenRouter (exposes a latent defect)
-    - Padded and mixed-case values (`" openrouter "`, `"OpenRouter"`)
-    - End to end: an `OpenAIClient` built under the env override has the OpenRouter base URL,
-      a namespaced model and JSON-mode `extra_body`
+      sent to OpenRouter.
+      `tests/test_llm.py::TestOverrideScoping::test_openai_key_not_sent_to_openrouter`
+    - Padded and mixed-case values: `tests/test_llm.py::TestProviderValue::test_env_value_normalised`
+    - End to end under the env override:
+      `tests/test_api_client.py::TestOpenRouterEndToEnd::test_env_override_reaches_client`
 
 ## Notes
 - Flaky risks: a developer's `.env` leaking into tests; prevented by the autouse fixture.

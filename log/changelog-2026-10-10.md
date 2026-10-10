@@ -77,3 +77,18 @@
 - **Pre-commit is covered.** Explicit paths bypass excludes, but both hooks use
   `pass_filenames: false`, so ruff discovers files itself.
 - **Packet numbering:** this took 15, so the Reviewer-pass fixes move to 16.
+
+# 2026-10-10: LLM review findings (packet 16)
+
+- **Tests first.** The 31 new tests ran before any fix (5 more were added after the Reviewer pass, again failing first where they exposed a gap). The 18 that failed were exactly the
+  defects; the 13 that passed pin correct behaviour (temporary-error retries, letter and
+  commentary wiring).
+- **Retry rule copied from the SDK** (`_should_retry`: 408, 409, 429, >= 500) rather than
+  invented. `RateLimitError` and `InternalServerError` are matched by type first, so mocks
+  without a real status code still behave.
+- **Override scoping keeps the config shape.** Overrides belong to `llm.provider`, rather than
+  introducing per-provider blocks. The default provider is `openai`.
+- **`is_byok` is excluded only when explicitly False**, so usage without the field (direct
+  OpenAI, older responses) keeps the previous rule.
+- **JARVIS helper extracted** to make the empty-`choices` guard testable without Streamlit, which
+  also brings `render_chat` within the 50-line limit.

@@ -13,6 +13,13 @@ _PROVIDERS: dict[str, dict] = {
 }
 
 
+def _provider_name(value: str, source: str) -> str:
+    name = value.strip().lower()
+    if name not in _PROVIDERS:
+        raise ValueError(f"Unknown {source} {name!r}; expected one of {list(_PROVIDERS)}")
+    return name
+
+
 def provider_settings(config: dict | None) -> dict:
     """Resolve the `llm` config block against per-provider defaults.
 
@@ -20,11 +27,14 @@ def provider_settings(config: dict | None) -> dict:
     provider via .env without editing the committed config.
     """
     llm_cfg = (config or {}).get("llm") or {}
-    provider = os.environ.get("LLM_PROVIDER", "").strip() or llm_cfg.get("provider", "openai")
-    if provider not in _PROVIDERS:
-        raise ValueError(f"Unknown llm.provider {provider!r}; expected one of {list(_PROVIDERS)}")
+    config_value = str(llm_cfg.get("provider") or "").strip() or "openai"
+    config_provider = _provider_name(config_value, "llm.provider")
+    env_value = os.environ.get("LLM_PROVIDER", "")
+    provider = _provider_name(env_value, "LLM_PROVIDER") if env_value.strip() else config_provider
     settings = {"provider": provider, **_PROVIDERS[provider]}
-    for key in ("base_url", "api_key_env", "app_name"):
+    # base_url/api_key_env were written for config_provider; never apply them to another host
+    scoped = ("base_url", "api_key_env") if provider == config_provider else ()
+    for key in (*scoped, "app_name"):
         if llm_cfg.get(key):
             settings[key] = llm_cfg[key]
     return settings
