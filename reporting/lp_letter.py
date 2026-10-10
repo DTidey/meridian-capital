@@ -1,10 +1,9 @@
-"""Daily LP letter — generated via OpenAI, cached in lp_letters table."""
+"""Daily LP letter — generated via the configured LLM provider, cached in lp_letters table."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -49,7 +48,7 @@ def generate(
         return cached[0]
 
     context = _build_context(engine)
-    content = _call_openai(context, cfg)
+    content = _call_llm(context, cfg)
     doc_id = f"MCP-IM-{today_str[:4]}-{today_str[5:7]}{today_str[8:]}"
 
     with engine.begin() as conn:
@@ -168,11 +167,11 @@ def _build_context(engine: sqlalchemy.engine.Engine) -> str:
     return json.dumps(ctx, default=str, indent=2)
 
 
-def _call_openai(context: str, cfg: dict) -> str:
-    import openai
+def _call_llm(context: str, cfg: dict) -> str:
+    from analysis.llm import make_client, resolve_model
 
-    model = (cfg.get("analysis") or {}).get("openai_model", "gpt-4o")
-    client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
+    client = make_client(cfg)
     resp = client.chat.completions.create(
         model=model,
         messages=[

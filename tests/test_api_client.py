@@ -141,3 +141,67 @@ class TestEstimateTokens:
         short = client.estimate_tokens("short", "short")
         long = client.estimate_tokens("a" * 1000, "b" * 1000)
         assert long > short
+
+
+class TestOpenRouterProvider:
+    _CFG = {"llm": {"provider": "openrouter"}}
+
+    def _client(self):
+        tracker = CostTracker(ceiling_usd=25.0)
+        client = OpenAIClient(
+            api_key="sk-or-test", model="gpt-4o-mini", cost_tracker=tracker, config=self._CFG
+        )
+        return client, tracker
+
+    def test_points_at_openrouter(self):
+        client, _ = self._client()
+        assert str(client._client.base_url).startswith("https://openrouter.ai/api/v1")
+
+    def test_model_namespaced(self):
+        client, _ = self._client()
+        with patch.object(
+            client._client.chat.completions, "create", return_value=_mock_response({"ok": True})
+        ) as mock_create:
+            client.chat("sys", "user")
+        assert mock_create.call_args.kwargs["model"] == "openai/gpt-4o-mini"
+
+    def test_json_mode_requires_parameter_support(self):
+        client, _ = self._client()
+        with patch.object(
+            client._client.chat.completions, "create", return_value=_mock_response({"ok": True})
+        ) as mock_create:
+            client.chat("sys", "user")
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["response_format"] == {"type": "json_object"}
+        assert kwargs["extra_body"] == {"provider": {"require_parameters": True}}
+
+    def test_no_extra_body_without_json_mode(self):
+        client, _ = self._client()
+        with patch.object(
+            client._client.chat.completions, "create", return_value=_mock_response({"ok": True})
+        ) as mock_create:
+            client.chat("sys", "user", json_mode=False)
+        assert "extra_body" not in mock_create.call_args.kwargs
+
+    def test_records_reported_cost(self):
+        client, tracker = self._client()
+        resp = _mock_response({"ok": True})
+        resp.usage.cost = 0.0123
+        resp.usage.cost_details = MagicMock(upstream_inference_cost=None)
+        with patch.object(client._client.chat.completions, "create", return_value=resp):
+            client.chat("sys", "user")
+        assert tracker.total_cost_usd() == pytest.approx(0.0123)
+
+    def test_estimate_tokens_strips_namespace(self):
+        client, _ = self._client()
+        assert client.estimate_tokens("sys", "user", model="openai/gpt-4o") > 0
+
+
+class TestOpenAIDefault:
+    def test_no_extra_body_for_openai(self):
+        client, _ = _make_client()
+        with patch.object(
+            client._client.chat.completions, "create", return_value=_mock_response({"ok": True})
+        ) as mock_create:
+            client.chat("sys", "user")
+        assert "extra_body" not in mock_create.call_args.kwargs

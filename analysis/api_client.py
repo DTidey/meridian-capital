@@ -1,4 +1,4 @@
-"""OpenAI SDK wrapper: retry, JSON mode, cost guard."""
+"""OpenAI SDK wrapper: retry, JSON mode, cost guard. Works against OpenAI or OpenRouter."""
 
 import json
 import logging
@@ -7,6 +7,7 @@ import time
 import openai
 
 from analysis.cost_tracker import CostCeilingExceeded, CostTracker
+from analysis.llm import json_mode_extra_body, make_client, resolve_model
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,10 @@ class OpenAIClient:
         api_key: str,
         model: str,
         cost_tracker: CostTracker,
+        config: dict | None = None,
     ) -> None:
-        self._client = openai.OpenAI(api_key=api_key)
+        self._config = config or {}
+        self._client = make_client(self._config, api_key=api_key)
         self._model = model
         self._tracker = cost_tracker
 
@@ -49,7 +52,7 @@ class OpenAIClient:
             CostCeilingExceeded: if cumulative spend is at or above the ceiling.
             openai.APIError: if all retries are exhausted.
         """
-        effective_model = model or self._model
+        effective_model = resolve_model(self._config, model or self._model)
 
         if self._tracker.would_exceed_ceiling(model=effective_model):
             raise CostCeilingExceeded(
@@ -64,6 +67,9 @@ class OpenAIClient:
         kwargs: dict = {"model": effective_model, "messages": messages}
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+            extra_body = json_mode_extra_body(self._config)
+            if extra_body:
+                kwargs["extra_body"] = extra_body
 
         last_error: Exception | None = None
         for attempt, delay in enumerate([0] + _RETRY_DELAYS, start=1):
@@ -84,7 +90,7 @@ class OpenAIClient:
             except _RETRYABLE as exc:
                 # Rate limit or transient server error — retry
                 last_error = exc
-                logger.warning("OpenAI error (attempt %d): %s", attempt, exc)
+                logger.warning("LLM API error (attempt %d): %s", attempt, exc)
             except json.JSONDecodeError as exc:
                 # JSON mode should prevent this, but handle defensively
                 logger.error("JSON decode error from model response: %s", exc)
@@ -98,7 +104,8 @@ class OpenAIClient:
         """Count tokens in both prompts using tiktoken (no API call)."""
         import tiktoken
 
-        effective_model = model or self._model
+        # Strip any provider namespace ("openai/gpt-4o") so tiktoken recognises the model
+        effective_model = (model or self._model).split("/")[-1]
         try:
             enc = tiktoken.encoding_for_model(effective_model)
         except KeyError:

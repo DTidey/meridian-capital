@@ -135,3 +135,50 @@ class TestEstimateCost:
 
     def test_estimate_zero_tokens(self):
         assert CostTracker.estimate_cost(0, "gpt-4o") == pytest.approx(0.0)
+
+
+class TestOpenRouterCost:
+    def test_namespaced_model_uses_openai_pricing(self):
+        tracker = CostTracker()
+        cost = tracker.record(_mock_usage(prompt=1_000_000, completion=0), "openai/gpt-4o-mini")
+        assert cost == pytest.approx(_PRICING["gpt-4o-mini"]["input"])
+
+    def test_reported_cost_overrides_table(self):
+        usage = _mock_usage(prompt=1_000_000, completion=0)
+        usage.cost = 0.42
+        usage.cost_details = MagicMock(upstream_inference_cost=None)
+        assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.42)
+
+    def test_byok_adds_upstream_cost(self):
+        usage = _mock_usage()
+        usage.cost = 0.01
+        usage.cost_details = MagicMock(upstream_inference_cost=0.20)
+        assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.21)
+
+    def test_reported_cost_counts_toward_ceiling(self):
+        tracker = CostTracker(ceiling_usd=1.0)
+        usage = _mock_usage(prompt=10, completion=10)
+        usage.cost = 1.5
+        usage.cost_details = None
+        tracker.record(usage, "anthropic/some-model")
+        assert tracker.would_exceed_ceiling(0, "anthropic/some-model")
+
+    def test_estimate_cost_namespaced(self):
+        assert CostTracker.estimate_cost(1_000_000, "openai/gpt-4o") == pytest.approx(
+            _PRICING["gpt-4o"]["input"]
+        )
+
+    def test_byok_upstream_cost_from_real_sdk_usage(self):
+        # The openai SDK keeps OpenRouter's unknown nested fields as plain dicts
+        from openai.types import CompletionUsage
+
+        usage = CompletionUsage.model_validate(
+            {
+                "prompt_tokens": 194,
+                "completion_tokens": 2,
+                "total_tokens": 196,
+                "cost": 0.01,
+                "cost_details": {"upstream_inference_cost": 0.2},
+            }
+        )
+        assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.21)

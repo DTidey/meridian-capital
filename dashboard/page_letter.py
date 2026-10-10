@@ -7,6 +7,7 @@ from datetime import date
 import sqlalchemy as sa
 import streamlit as st
 
+from analysis.llm import api_key_env
 from reporting.db import lp_letters, portfolio_nav
 from reporting.lp_letter import generate, render_full
 
@@ -35,7 +36,7 @@ def render(engine, cfg: dict) -> None:
                 content = generate(engine, cfg=cfg, letter_date=today)
             except Exception as e:
                 st.error(f"Letter generation failed: {e}")
-                st.caption("Set `OPENAI_API_KEY` env var to enable JARVIS letter generation.")
+                st.caption(f"Set `{api_key_env(cfg)}` env var to enable JARVIS letter generation.")
                 return
         with engine.connect() as conn:
             cached = conn.execute(

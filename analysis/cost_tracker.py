@@ -1,4 +1,4 @@
-"""Token and cost accounting for OpenAI API calls."""
+"""Token and cost accounting for LLM API calls (OpenAI direct or via OpenRouter)."""
 
 import logging
 
@@ -20,6 +20,31 @@ _PRICING: dict[str, dict[str, float]] = {
 
 # Fall back to gpt-4o pricing for unknown models
 _DEFAULT_PRICING = _PRICING["gpt-4o"]
+
+
+def _pricing(model: str) -> dict[str, float]:
+    """Look up pricing, accepting OpenRouter-namespaced IDs such as "openai/gpt-4o"."""
+    return _PRICING.get(model.removeprefix("openai/"), _DEFAULT_PRICING)
+
+
+def _reported_cost(usage) -> float | None:
+    """Return the USD cost OpenRouter reports on the usage object, or None if absent.
+
+    `cost` is what OpenRouter charged; with a bring-your-own-key request the upstream
+    provider's bill is reported separately in `cost_details.upstream_inference_cost`.
+    """
+    cost = getattr(usage, "cost", None)
+    if not isinstance(cost, int | float):
+        return None
+    # The SDK keeps unknown nested fields as plain dicts
+    details = getattr(usage, "cost_details", None)
+    if isinstance(details, dict):
+        upstream = details.get("upstream_inference_cost")
+    else:
+        upstream = getattr(details, "upstream_inference_cost", None)
+    if isinstance(upstream, int | float):
+        cost += upstream
+    return float(cost)
 
 
 class CostCeilingExceeded(Exception):
@@ -47,12 +72,14 @@ class CostTracker:
         cached_tokens = getattr(details, "cached_tokens", 0) or 0
         regular_input = prompt_tokens - cached_tokens
 
-        pricing = _PRICING.get(model, _DEFAULT_PRICING)
-        cost = (
-            regular_input * pricing["input"] / 1_000_000
-            + cached_tokens * pricing["cached_input"] / 1_000_000
-            + completion_tokens * pricing["output"] / 1_000_000
-        )
+        cost = _reported_cost(usage)
+        if cost is None:
+            pricing = _pricing(model)
+            cost = (
+                regular_input * pricing["input"] / 1_000_000
+                + cached_tokens * pricing["cached_input"] / 1_000_000
+                + completion_tokens * pricing["output"] / 1_000_000
+            )
 
         self._calls.append(
             {
@@ -91,7 +118,7 @@ class CostTracker:
 
     def would_exceed_ceiling(self, estimated_tokens: int = 0, model: str = "gpt-4o") -> bool:
         """Return True if current spend (+ estimated next call) would exceed the ceiling."""
-        pricing = _PRICING.get(model, _DEFAULT_PRICING)
+        pricing = _pricing(model)
         estimated_cost = estimated_tokens * pricing["input"] / 1_000_000
         return (self.total_cost_usd() + estimated_cost) >= self._ceiling
 
@@ -112,5 +139,5 @@ class CostTracker:
     @staticmethod
     def estimate_cost(token_count: int, model: str) -> float:
         """Estimate the cost of a single call with the given input token count."""
-        pricing = _PRICING.get(model, _DEFAULT_PRICING)
+        pricing = _pricing(model)
         return token_count * pricing["input"] / 1_000_000

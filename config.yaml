@@ -122,6 +122,17 @@ scoring:
     Real Estate:              XLRE
     Utilities:                XLU
 
+# LLM provider for Layer 3 analysis, LP letter, weekly commentary and JARVIS chat.
+#   openai:     direct OpenAI API, key in OPENAI_API_KEY
+#   openrouter: OpenRouter's OpenAI-compatible API, key in OPENROUTER_API_KEY.
+#               Bare model names below (gpt-4o) are sent as openai/gpt-4o; use a full
+#               OpenRouter "vendor/model" ID to pick a non-OpenAI model.
+llm:
+  provider: openai
+  # base_url: null       # override the provider default
+  # api_key_env: null    # override the provider default env var name
+  app_name: Meridian Capital Partners   # OpenRouter attribution header (X-Title)
+
 analysis:
   openai_model: gpt-4o
   openai_model_cheap: gpt-4o-mini
