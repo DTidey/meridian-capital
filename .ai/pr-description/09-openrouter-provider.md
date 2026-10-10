@@ -26,7 +26,7 @@
 - [x] AC5: Reported cost (plus BYOK upstream cost) is preferred over the pricing table, and the
   cost ceiling applies to it.
 - [x] AC6: All call sites use the shared factory; JARVIS model comes from config; missing-key
-  messages name the right env var.
+  messages name the configured provider (log) or key env var (letter page).
 
 ## Security Review
 

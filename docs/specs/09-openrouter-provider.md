@@ -38,8 +38,10 @@ plus setting `OPENROUTER_API_KEY`. The `openai` Python SDK is kept for both prov
 
 - AC6: `analysis/api_client.py`, `reporting/lp_letter.py`, `reporting/commentary.py` and
   `dashboard/jarvis.py` all build their client through `analysis.llm.make_client`. JARVIS uses
-  `analysis.openai_model` from config rather than a hardcoded model. `run_analysis.py` and the
-  letter page name the provider-specific key env var in their missing-key messages.
+  `analysis.openai_model` from config rather than a hardcoded model. On a missing key,
+  `run_analysis.py` logs the configured provider and the letter page names the provider-specific
+  key env var. The key variable name is kept out of logs so CodeQL's clear-text-logging check
+  doesn't flag it.
 
 ## Files changed
 

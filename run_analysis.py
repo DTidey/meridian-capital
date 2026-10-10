@@ -42,7 +42,7 @@ from analysis.combined_score import (  # noqa: E402
     compute_combined_scores,
 )
 from analysis.cost_tracker import CostTracker  # noqa: E402
-from analysis.llm import api_key_env, get_api_key  # noqa: E402
+from analysis.llm import get_api_key, provider_settings  # noqa: E402
 from analysis.report_generator import generate_reports  # noqa: E402
 from analysis.sector_analysis import analyse_sectors  # noqa: E402
 from data.db import get_engine, initialise_schema  # noqa: E402
@@ -137,7 +137,9 @@ def run(args) -> None:
 
     api_key = get_api_key(config)
     if not api_key:
-        logger.error("%s not set — aborting", api_key_env(config))
+        logger.error(
+            "API key for llm.provider=%s not set — aborting", provider_settings(config)["provider"]
+        )
         sys.exit(1)
 
     analysis_cfg = config.get("analysis", {})

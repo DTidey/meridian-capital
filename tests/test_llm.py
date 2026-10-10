@@ -58,7 +58,7 @@ class TestApiKey:
 class TestMakeClient:
     def test_openai_client_uses_default_base_url(self):
         client = make_client({}, api_key="sk-test")
-        assert "api.openai.com" in str(client.base_url)
+        assert str(client.base_url) == "https://api.openai.com/v1/"
 
     def test_openrouter_client_base_url_and_header(self):
         client = make_client(_OPENROUTER, api_key="sk-or-test")
