@@ -266,7 +266,7 @@ requests==2.34.2
     #   streamlit
     #   tiktoken
     #   yfinance
-responses==0.26.1
+responses==0.26.3
     # via -r requirements-dev.in
 rich==15.0.0
     # via
