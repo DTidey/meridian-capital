@@ -32,5 +32,7 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Lint passes on ruff 0.16.10: Markdown excluded from ruff, since 0.16 formats Markdown code
+  blocks by default (packet `15-ruff-0-16`).
 - `make sync` works again with pip 26.2: pip-tools raised to 7.6.2 and upgraded alongside
   pip (packet `11-pip-tools-compat`).

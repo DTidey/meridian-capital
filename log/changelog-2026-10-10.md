@@ -67,3 +67,13 @@
 - **Extended existing bullets where rules overlapped**, rather than adding a separate
   "Ten Commandments" section that repeats most of AGENTS.md.
 - **Packet numbering:** this took 14, so the Reviewer-pass code fixes move to 15.
+
+# 2026-10-10: Ruff 0.16 upgrade (packet 15)
+
+- **Exclude Markdown, don't reformat it.** Ruff 0.16 formats Python blocks in Markdown by
+  default and would rewrite 146 lines across 8 docs, mostly historical specs. The snippets are
+  illustrative and compact on purpose (e.g. one-line signatures), so `extend-exclude = ["*.md"]`
+  is used, the documented opt-out.
+- **Pre-commit is covered.** Explicit paths bypass excludes, but both hooks use
+  `pass_filenames: false`, so ruff discovers files itself.
+- **Packet numbering:** this took 15, so the Reviewer-pass fixes move to 16.
