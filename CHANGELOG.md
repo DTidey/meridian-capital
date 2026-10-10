@@ -22,3 +22,7 @@ Release policy:
 ### Security
 - Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
+
+### Fixed
+- `make sync` works again with pip 26.2: pip-tools raised to 7.6.2 and upgraded alongside
+  pip (packet `11-pip-tools-compat`).
