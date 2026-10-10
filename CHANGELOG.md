@@ -15,3 +15,7 @@ Release policy:
   construction, risk management, order execution, reporting and dashboard.
 - Initial spec-first workflow integration: specs `01`–`07` document all seven layers
   with acceptance criteria, companion test plans, and PR drafts.
+
+### Security
+- Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,
+  virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
