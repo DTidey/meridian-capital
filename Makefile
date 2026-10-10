@@ -11,7 +11,7 @@ compile:
 	. .venv/bin/activate && pip-compile requirements-dev.in -o requirements-dev.txt
 
 sync:
-	. .venv/bin/activate && $(PYTHON) -m pip install -U pip setuptools wheel
+	. .venv/bin/activate && $(PYTHON) -m pip install -U pip setuptools wheel pip-tools
 	. .venv/bin/activate && pip-sync requirements.txt requirements-dev.txt
 
 lint:
