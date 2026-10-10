@@ -42,6 +42,7 @@ from analysis.combined_score import (  # noqa: E402
     compute_combined_scores,
 )
 from analysis.cost_tracker import CostTracker  # noqa: E402
+from analysis.llm import api_key_env, get_api_key  # noqa: E402
 from analysis.report_generator import generate_reports  # noqa: E402
 from analysis.sector_analysis import analyse_sectors  # noqa: E402
 from data.db import get_engine, initialise_schema  # noqa: E402
@@ -134,9 +135,9 @@ def run(args) -> None:
     engine = get_engine(db_url)
     initialise_schema(engine)
 
-    api_key = os.environ.get("OPENAI_API_KEY", "")
+    api_key = get_api_key(config)
     if not api_key:
-        logger.error("OPENAI_API_KEY not set — aborting")
+        logger.error("%s not set — aborting", api_key_env(config))
         sys.exit(1)
 
     analysis_cfg = config.get("analysis", {})
@@ -145,7 +146,7 @@ def run(args) -> None:
     default_model = analysis_cfg.get("openai_model", "gpt-4o")
 
     tracker = CostTracker(ceiling_usd=cost_ceiling)
-    client = OpenAIClient(api_key=api_key, model=default_model, cost_tracker=tracker)
+    client = OpenAIClient(api_key=api_key, model=default_model, cost_tracker=tracker, config=config)
 
     with engine.connect() as conn:
         cache = AnalysisCache(conn, ttl_days=cache_ttl)

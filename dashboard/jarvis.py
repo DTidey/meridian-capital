@@ -1,10 +1,9 @@
-"""JARVIS snapshot builder and OpenAI streaming chat widget."""
+"""JARVIS snapshot builder and streaming chat widget (configured LLM provider)."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
@@ -224,8 +223,8 @@ def _fetch_snapshot(engine: sqlalchemy.engine.Engine) -> dict:
     }
 
 
-def render_chat(engine: sqlalchemy.engine.Engine, snapshot: dict) -> None:
-    """Render the Ask JARVIS chat widget (last 6 turns, OpenAI streaming)."""
+def render_chat(engine: sqlalchemy.engine.Engine, snapshot: dict, cfg: dict | None = None) -> None:
+    """Render the Ask JARVIS chat widget (last 6 turns, streaming)."""
     if "jarvis_history" not in st.session_state:
         st.session_state.jarvis_history = []
 
@@ -255,15 +254,17 @@ def render_chat(engine: sqlalchemy.engine.Engine, snapshot: dict) -> None:
         messages.append(turn)
 
     try:
-        import openai
+        from analysis.llm import make_client, resolve_model
 
-        client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        cfg = cfg or {}
+        client = make_client(cfg)
+        model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
 
         with st.chat_message("assistant"):
             response_placeholder = st.empty()
             full_response = ""
             stream = client.chat.completions.create(
-                model="gpt-4o",
+                model=model,
                 messages=messages,
                 stream=True,
                 max_tokens=600,
@@ -285,4 +286,4 @@ def render_chat(engine: sqlalchemy.engine.Engine, snapshot: dict) -> None:
 
     except Exception as exc:
         st.error(f"JARVIS offline: {exc}")
-        log.error("OpenAI chat error: %s", exc)
+        log.error("JARVIS chat error: %s", exc)

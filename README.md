@@ -11,7 +11,7 @@ The system is structured as seven sequential layers, each with its own entry poi
 | 1 | `run_data.py` | Data ingestion — prices, fundamentals, SEC filings, transcripts, institutional 13-F holdings |
 | 2 | `run_scoring.py` | Factor scoring across 8 dimensions with regime-conditional weighting |
 | — | `run_transcripts.py` | Earnings transcript ingestion (run between Layers 2 and 3) |
-| 3 | `run_analysis.py` | AI analysis via OpenAI — earnings, filings, risk, insider signals |
+| 3 | `run_analysis.py` | AI analysis via OpenAI or OpenRouter — earnings, filings, risk, insider signals |
 | 4 | `run_portfolio.py` | Portfolio construction — MVO optimizer, conviction weighting, rebalance scheduling |
 | 5 | `run_risk_check.py` | Risk management — pre-trade veto, circuit breakers, tail risk, stress tests |
 | 6 | `run_execution.py` | Order execution via Alpaca brokerage API |
@@ -53,7 +53,7 @@ Weights shift automatically based on the VIX regime (low vol / normal / high vol
 - Python 3.12
 - Docker (for PostgreSQL)
 - An [Alpaca](https://alpaca.markets/) account (paper or live)
-- An [OpenAI](https://platform.openai.com/) API key
+- An [OpenAI](https://platform.openai.com/) API key, or an [OpenRouter](https://openrouter.ai/) key with `llm.provider: openrouter` in `config.yaml`
 - Optional: [Financial Modeling Prep](https://financialmodelingprep.com/) key for earnings transcripts; [FRED](https://fred.stlouisfed.org/) key for macro tail-risk data
 
 ## Setup
@@ -76,7 +76,7 @@ Edit `.env` and fill in:
 
 ```
 DATABASE_URL=postgresql+psycopg2://meridian:meridian@localhost:5432/meridian
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=sk-...            # or OPENROUTER_API_KEY when llm.provider is openrouter
 ALPACA_API_KEY=...
 ALPACA_SECRET_KEY=...
 ALPACA_PAPER=true
@@ -137,7 +137,7 @@ Open `http://localhost:8502`. The dashboard auto-refreshes every 5 minutes durin
 | Polygon.io | Price data alternative (optional; falls back to yfinance) |
 | FRED | Macro indicators for tail-risk monitoring (optional) |
 | Alpaca | Order execution and shortability checks |
-| OpenAI | GPT-4o for earnings and filing analysis; GPT-4o-mini for lower-cost tasks |
+| OpenAI / OpenRouter | GPT-4o for earnings and filing analysis; GPT-4o-mini for lower-cost tasks. Provider set by `llm.provider` in `config.yaml` |
 
 ## Development
 

@@ -49,7 +49,7 @@ and registered on a single SQLAlchemy `MetaData` object.
 | 1 | `run_data.py` | Data ingestion (prices, fundamentals, SEC filings, transcripts) |
 | 2 | `run_scoring.py` | Factor scoring (momentum, quality, value, revisions, insider, growth, short interest, institutional) |
 | Transcript | `run_transcripts.py` | Earnings transcript ingestion (between Layers 2 and 3) |
-| 3 | `run_analysis.py` | AI analysis via OpenAI (earnings, filings, risk, insider) |
+| 3 | `run_analysis.py` | AI analysis via OpenAI or OpenRouter (earnings, filings, risk, insider) |
 | 4 | `run_portfolio.py` | Portfolio construction (MVO optimizer, conviction weighting) |
 | 5 | `run_risk_check.py` | Risk management (pre-trade veto, circuit breakers, tail risk) |
 | 6 | `run_execution.py` | Order execution via Alpaca |
@@ -128,7 +128,8 @@ runs Bandit across the source directories and pip-audit against both requirement
 
 ```
 DATABASE_URL          # PostgreSQL connection string
-OPENAI_API_KEY        # OpenAI (Layer 3 AI analysis + JARVIS)
+OPENAI_API_KEY        # OpenAI (Layer 3 AI analysis + JARVIS) when llm.provider is openai
+OPENROUTER_API_KEY    # OpenRouter, used instead when llm.provider is openrouter
 FMP_API_KEY           # Financial Modeling Prep (optional — falls back to SEC 8-K mining)
 ALPACA_API_KEY        # Alpaca brokerage
 ALPACA_SECRET_KEY     # Alpaca brokerage

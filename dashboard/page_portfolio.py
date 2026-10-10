@@ -108,7 +108,7 @@ def render(engine, cfg: dict) -> None:
         )
 
         section_header("ASK JARVIS")
-        render_chat(engine, snap)
+        render_chat(engine, snap, cfg)
 
     # -----------------------------------------------------------------------
     # RIGHT — gradient panel

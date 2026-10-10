@@ -15,6 +15,9 @@ Release policy:
   construction, risk management, order execution, reporting and dashboard.
 - Initial spec-first workflow integration: specs `01`–`07` document all seven layers
   with acceptance criteria, companion test plans, and PR drafts.
+- Selectable LLM provider (`llm.provider` in `config.yaml`): OpenAI direct or OpenRouter.
+  All LLM call sites share one client factory; cost tracking uses OpenRouter's reported cost
+  when present (packet `09-openrouter-provider`).
 
 ### Security
 - Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,
