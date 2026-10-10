@@ -58,3 +58,12 @@
 - **Specs 09-12 were rewritten to the template with their AC text unchanged**, because the merged
   PRs ticked those exact ACs.
 - **A packet, not a docs-only PR.** The validator treats `CLAUDE.md` and `log/` as code paths.
+
+# 2026-10-10: Merge 10Rules into AGENTS (packet 14)
+
+- **Merged, then deleted.** A one-line pointer would avoid duplication, but tools that don't
+  follow links would still miss a third of the rules. Merging fully and deleting `10Rules.md`
+  gives one source with nothing left to drift.
+- **Extended existing bullets where rules overlapped**, rather than adding a separate
+  "Ten Commandments" section that repeats most of AGENTS.md.
+- **Packet numbering:** this took 14, so the Reviewer-pass code fixes move to 15.

@@ -8,7 +8,6 @@ The repository-wide agent rules below are imported so they load in every session
 precedence over general defaults, including attribution formatting: never use emojis.
 
 @AGENTS.md
-@10Rules.md
 
 ## Commands
 
