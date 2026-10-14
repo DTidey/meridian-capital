@@ -123,6 +123,16 @@ class TestValuation:
         rows = [_q(d, fcf=-5e9) for d in ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")]
         assert valuation(100.0, rows)["fcf_yield"] < 0
 
+    def test_balance_sheet_from_latest_quarter_that_has_one(self):
+        # BAC after packet 23: income for 2026-06-30 published, balance sheet not yet
+        newest = _q(
+            "2026-06-30", shares_outstanding=None, total_debt=None, cash=None, total_equity=None
+        )
+        v = valuation(50.0, [newest] + [_q(d) for d in ("2026-03-31", "2025-12-31", "2025-09-30")])
+        assert v["market_cap"] == pytest.approx(50.0 * 15e9)
+        assert v["quarter_end"] == "2026-03-31"
+        assert v["pe"] == pytest.approx(50.0 * 15e9 / 100e9)  # TTM still the latest four
+
     def test_no_price_or_shares(self):
         assert valuation(None, _AAPL) is None
         assert valuation(100.0, []) is None

@@ -44,6 +44,9 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     for ticker in tickers:
         ticker_funds = funds[funds["ticker"] == ticker].sort_values("period_end")
+        # Score from quarters with a balance sheet: Yahoo can publish the income statement
+        # first, and an income-only newest quarter would fail every balance-sheet test
+        ticker_funds = ticker_funds[ticker_funds["total_assets"].notna()]
         if ticker_funds.empty:
             raw.loc[ticker] = np.nan
             continue

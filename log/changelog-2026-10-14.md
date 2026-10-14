@@ -86,3 +86,18 @@
   apart (both Alphabet classes are filed as "ALPHABET INC").
 - **Name match kept as fallback** for no API key, OpenFIGI outages, and tickers OpenFIGI spells
   differently from the universe.
+
+# 2026-10-14: Fundamentals integrity (packet 23)
+
+- **Started as 12 duplicate annual rows; the share count was the bigger problem.** "Share
+  Issued" includes treasury stock, overstating shares for banks and buyback-heavy companies
+  (JPM by 54%), which skews market cap, the value factor's yields and the quality factor's
+  dilution measure.
+- **Positional pairing of statements.** Found by sampling 20 tickers: 7 of 40 statement sets
+  had different periods, and BAC/GS were off by a whole quarter for every row.
+- **Month-end keys.** Yahoo has used both fiscal ends and month-ends over time; month-end is
+  the stable key and also what quarterly rows mostly already use.
+- **Newest row wins in a merge**, never a mix of fields, because the two fetches define items
+  differently (AAPL FY2025 debt 112.4B vs 98.7B).
+- **Valuation follow-on.** After realignment, the newest BAC/GS quarter has income but no
+  balance sheet, so valuation now takes balance items from the latest quarter that has them.
