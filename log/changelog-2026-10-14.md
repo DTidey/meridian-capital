@@ -143,3 +143,10 @@
 - **Reasoning headroom added on top of the visible limit**, not replacing it, so a 600-token
   JARVIS reply isn't eaten by reasoning.
 - **Cache mismatch is a miss**, then overwritten on the same key: no schema or key migration.
+
+# 2026-10-14: GPT-6 for non-trading uses (packet 29)
+
+- **Sector analysis moves too.** It reads `openai_model` but only feeds the research reports,
+  not combined scores, so it counts as non-trading.
+- **Pinning test for `analyzer_models`**, so the scoring move can't happen by a casual config
+  edit before the shadow test.

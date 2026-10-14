@@ -34,6 +34,8 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- JARVIS, LP letter, weekly commentary and sector reports use gpt-6-sol; filing summaries use
+  gpt-6-luna. Scoring analyzers unchanged (packet `29-gpt6-non-trading`).
 - Reference docs, README and `.env.example` brought up to date; `docs/README.md` separates
   living references from historical records (packet `27-reference-docs-refresh`).
 - Growth factor revenue acceleration is now the trend of up to four YoY growth points (needs 4

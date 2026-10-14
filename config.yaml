@@ -135,8 +135,11 @@ llm:
   app_name: Meridian Capital Partners   # OpenRouter attribution header (X-Title)
 
 analysis:
-  openai_model: gpt-4o
-  openai_model_cheap: gpt-4o-mini
+  # Non-trading uses (packet 29): JARVIS, LP letter, weekly commentary and sector reports use
+  # openai_model; filing summaries use openai_model_cheap. The scoring analyzers are pinned
+  # separately in analyzer_models and move only after a shadow test (stage 3).
+  openai_model: gpt-6-sol
+  openai_model_cheap: gpt-6-luna
   cost_ceiling_usd: 25.0
   cache_ttl_days: 30
   score_date: null
