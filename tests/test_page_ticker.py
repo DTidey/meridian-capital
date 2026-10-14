@@ -249,3 +249,221 @@ def test_earnings_caption_query(tmp_engine):
     er = dict(zip(earnings_calendar.columns.keys(), row, strict=False))
     assert er["earnings_date"] == "2026-07-30"
     assert er["eps_estimate"] == pytest.approx(1.45)
+
+
+# ---------------------------------------------------------------------------
+# Packet 18 AC10 — whole-page render smoke tests
+# ---------------------------------------------------------------------------
+
+
+def _ticker_app(db_url: str) -> None:
+    from dashboard.page_ticker import render
+    from data.db import get_engine
+
+    cfg = {"institutional": {"tracked_funds": [{"name": "Citadel"}, {"name": "Point72"}]}}
+    render(get_engine(db_url), cfg)
+
+
+def _seed_universe(conn) -> None:
+    conn.execute(
+        sp500_universe.insert().values(
+            ticker="AAPL",
+            company_name="Apple Inc",
+            gics_sector="IT",
+            gics_sub_industry="Hardware",
+            updated_at="2026-01-01",
+        )
+    )
+
+
+def _seed_all(conn) -> None:
+    from analysis.db import ai_scores, analysis_results, combined_scores
+    from data.db import (
+        analyst_estimates,
+        earnings_transcripts,
+        insider_cluster_flags,
+        institutional_holdings,
+        institutional_summary,
+        sec_filings,
+        short_interest,
+    )
+    from factors.db import factor_scores
+
+    conn.execute(
+        daily_prices.insert(),
+        [
+            {"ticker": "AAPL", "date": f"2026-06-{d:02d}", "adj_close": 280.0 + d, "volume": 1}
+            for d in range(1, 20)
+        ],
+    )
+    conn.execute(
+        factor_scores.insert().values(
+            ticker="AAPL",
+            score_date="2026-10-13",
+            regime="NORMAL",
+            mom_12_1=70.0,
+            institutional_score=93.0,
+            composite_score=15.0,
+            direction="SHORT",
+        )
+    )
+    conn.execute(
+        ai_scores.insert().values(ticker="AAPL", score_date="2026-10-13", ai_composite=5.0)
+    )
+    conn.execute(
+        combined_scores.insert().values(
+            ticker="AAPL",
+            score_date="2026-10-13",
+            quant_composite=14.7,
+            ai_composite=float("nan"),
+            combined_score=18.7,
+            direction="SHORT",
+        )
+    )
+    conn.execute(
+        analysis_results.insert(),
+        [
+            {
+                "analyzer": "insider",
+                "ticker": "AAPL",
+                "artifact_id": "AAPL_2026-10-13",
+                "model": "gpt-4o-mini",
+                "result_json": '{"signal_strength": "STRONG_SELL", "one_line_summary": "$5 sold"}',
+                "created_at": "2026-10-13T22:09:10+00:00",
+            },
+            {
+                "analyzer": "risk",
+                "ticker": "AAPL",
+                "artifact_id": "AAPL_x",
+                "model": "gpt-4o",
+                "result_json": "not json",
+                "created_at": "2026-10-10T19:13:39+00:00",
+            },
+        ],
+    )
+    conn.execute(
+        sec_filings.insert(),
+        [
+            {
+                "ticker": "AAPL",
+                "form_type": form,
+                "filed_date": "2026-10-01",
+                "accession_no": f"ACC-{form}",
+                "filing_url": "https://www.sec.gov/Archives/edgar/data/320193/x/",
+            }
+            for form in ("10-K", "8-K", "4")
+        ],
+    )
+    conn.execute(
+        earnings_transcripts.insert().values(
+            ticker="AAPL", earnings_date="2026-07-30", quarter="Q2", year=2026, content="Rev $1B"
+        )
+    )
+    conn.execute(
+        analyst_estimates.insert(),
+        [
+            {"ticker": "AAPL", "date": d, "price_target": p, "eps_estimate_fwd": 7.0}
+            for d, p in (("2026-09-01", 300.0), ("2026-10-01", 310.0))
+        ],
+    )
+    conn.execute(
+        short_interest.insert(),
+        [
+            {"ticker": "AAPL", "date": d, "short_pct_float": 0.01, "short_ratio": 1.5}
+            for d in ("2026-09-15", "2026-09-30")
+        ],
+    )
+    conn.execute(
+        insider_cluster_flags.insert().values(
+            ticker="AAPL",
+            window_start="2026-09-30",
+            window_end="2026-10-30",
+            insider_count=3,
+            total_shares=604.0,
+        )
+    )
+    conn.execute(
+        institutional_holdings.insert(),
+        [
+            {
+                "fund_name": f,
+                "ticker": "AAPL",
+                "shares_held": s,
+                "market_value": s * 289.36,
+                "report_date": p,
+                "filed_date": "2026-08-14",
+            }
+            for f, s, p in (
+                ("Citadel", 7_000_000, "2026-03-31"),
+                ("Citadel", 7_296_076, "2026-06-30"),
+                ("Point72", 100, "2026-06-30"),
+            )
+        ],
+    )
+    conn.execute(
+        institutional_summary.insert().values(
+            ticker="AAPL",
+            report_date="2026-06-30",
+            funds_holding=2,
+            net_share_change=296_076.0,
+            new_positions=0,
+        )
+    )
+
+
+class TestRenderSmoke:
+    def _run(self, tmp_path, seed):
+        from streamlit.testing.v1 import AppTest
+
+        from data.db import get_engine, initialise_schema
+
+        url = f"sqlite:///{tmp_path / 'app.db'}"
+        engine = get_engine(url)
+        initialise_schema(engine)
+        with engine.connect() as conn:
+            seed(conn)
+            conn.commit()
+        engine.dispose()
+        at = AppTest.from_function(_ticker_app, args=(url,), default_timeout=30)
+        return at.run()
+
+    def _text(self, at) -> str:
+        return " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
+
+    def test_renders_with_only_universe(self, tmp_path):
+        at = self._run(tmp_path, _seed_universe)
+        assert not at.exception
+        assert "No institutional holdings among tracked funds." in self._text(at)
+
+    def test_renders_with_all_sections(self, tmp_path):
+        def seed(conn):
+            _seed_universe(conn)
+            _seed_all(conn)
+
+        at = self._run(tmp_path, seed)
+        assert not at.exception
+        text = self._text(at)
+        for header in ("SIGNAL", "INSTITUTIONAL HOLDINGS", "SEC FILINGS"):
+            assert header in text
+        labels = [e.label for e in at.expander]
+        assert "Sub-factor scores" in labels
+        assert "Earnings release - Q2 2026 (2026-07-30)" in labels
+        assert "Insider analysis — \\$5 sold" in labels
+        assert "Risk analysis" in labels
+        assert "Stored analysis could not be read." in text
+
+        cards = " ".join(m.value for m in at.markdown if "metric-card" in m.value)
+        assert ">2 / 2<" in cards  # AC1 funds holding
+        assert ">+296,076<" not in cards and ">+0.30M<" in cards  # AC1 net change
+        assert f'color:{SHORT_COL}">SHORT<' in cards  # AC3 direction
+        assert '<div class="label">AI</div><div class="value" style="color:#' in cards
+        assert ">—<" in cards  # AC3 NaN AI composite
+
+        frames = [df.value for df in at.dataframe]
+        filings = next(f for f in frames if "Form" in f.columns)
+        assert sorted(filings["Form"]) == ["10-K", "8-K"]  # AC6: Form 4 excluded
+        funds = next(f for f in frames if "Fund" in f.columns)
+        assert list(funds["Fund"]) == ["Citadel", "Point72"]  # AC2
+
+        assert len(at.get("plotly_chart")) == 4  # price, factor bars, two AC8 trends
+        assert "Insider cluster: 2026-09-30 to 2026-10-30, 3 insiders, 604 shares" in text
