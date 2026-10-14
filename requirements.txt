@@ -104,7 +104,7 @@ numpy==2.4.6
     #   scipy
     #   streamlit
     #   yfinance
-openai==3.26.0
+openai==3.29.0
     # via -r requirements.in
 packaging==26.2
     # via
