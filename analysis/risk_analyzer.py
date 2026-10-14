@@ -59,18 +59,18 @@ def analyse(
     accession_no = filing["accession_no"]
     artifact_id = AnalysisCache.artifact_id_risk(ticker, accession_no)
 
-    cached = cache.get("risk", ticker, artifact_id)
+    model = (
+        config.get("analysis", {})
+        .get("analyzer_models", {})
+        .get("risk", config.get("analysis", {}).get("openai_model", "gpt-4o"))
+    )
+    cached = cache.get("risk", ticker, artifact_id, model=model)
     if cached is not None:
         logger.debug("Risk: cache hit for %s (%s)", ticker, accession_no)
         return cached
 
     max_chars = config.get("analysis", {}).get("filing_risk_max_chars", 80_000)
     text = _strip_html(filing["content_text"] or "")[:max_chars]
-    model = (
-        config.get("analysis", {})
-        .get("analyzer_models", {})
-        .get("risk", config.get("analysis", {}).get("openai_model", "gpt-4o"))
-    )
 
     prior_note = ""
     prior = _fetch_prior_10k(conn, ticker, accession_no, score_date)

@@ -11,6 +11,9 @@ Release policy:
 ## Unreleased
 
 ### Added
+- Reasoning-model support for LLM calls (GPT-5/GPT-6, o-series): no temperature, extra output
+  headroom, configurable effort; model-aware analysis cache; GPT-6 prices (packet
+  `28-reasoning-model-support`).
 - Ticker page valuation (packet `21-ticker-valuation`): market cap, enterprise value, P/E,
   EV/EBIT, price/book, FCF yield and dividend yield from the latest price and trailing four
   quarters.

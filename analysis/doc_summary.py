@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator
 
-from analysis.llm import make_client, resolve_model
+from analysis.llm import completion_params, make_client, resolve_model
 
 MAX_SOURCE_TOKENS = 100_000  # gpt-4o-mini context is 128k
 MAX_OUTPUT_TOKENS = 1_500
@@ -56,13 +56,13 @@ def stream_summary(
 ) -> Iterator[str]:
     """Yield the summary as text deltas; on_usage receives the final usage object."""
     client = make_client(cfg)
+    model = summary_model(cfg)
     stream = client.chat.completions.create(
-        model=summary_model(cfg),
+        model=model,
         messages=summary_messages(form_type, text),
         stream=True,
         stream_options={"include_usage": True},
-        max_tokens=MAX_OUTPUT_TOKENS,
-        temperature=0.2,
+        **completion_params(cfg, model, max_tokens=MAX_OUTPUT_TOKENS, temperature=0.2),
     )
     for chunk in stream:
         if getattr(chunk, "usage", None) is not None:

@@ -67,16 +67,15 @@ def analyse(
     latest_period = str(fund_df["period_end"].max())[:10]
     artifact_id = AnalysisCache.artifact_id_filing(ticker, latest_period)
 
-    cached = cache.get("filing", ticker, artifact_id)
-    if cached is not None:
-        logger.debug("Filing: cache hit for %s (%s)", ticker, latest_period)
-        return cached
-
     model = (
         config.get("analysis", {})
         .get("analyzer_models", {})
         .get("filing", config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
     )
+    cached = cache.get("filing", ticker, artifact_id, model=model)
+    if cached is not None:
+        logger.debug("Filing: cache hit for %s (%s)", ticker, latest_period)
+        return cached
 
     table_json = fund_df.tail(8).to_json(orient="records", date_format="iso")
     user_prompt = (

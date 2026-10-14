@@ -61,18 +61,18 @@ def analyse(
     earnings_date = transcript_row["earnings_date"]
     artifact_id = AnalysisCache.artifact_id_earnings(ticker, str(earnings_date))
 
-    cached = cache.get("earnings", ticker, artifact_id)
+    model = (
+        config.get("analysis", {})
+        .get("analyzer_models", {})
+        .get("earnings", config.get("analysis", {}).get("openai_model", "gpt-4o"))
+    )
+    cached = cache.get("earnings", ticker, artifact_id, model=model)
     if cached is not None:
         logger.debug("Earnings: cache hit for %s (%s)", ticker, earnings_date)
         return cached
 
     max_chars = config.get("analysis", {}).get("transcript_max_chars", 120_000)
     content = (transcript_row["content"] or "")[:max_chars]
-    model = (
-        config.get("analysis", {})
-        .get("analyzer_models", {})
-        .get("earnings", config.get("analysis", {}).get("openai_model", "gpt-4o"))
-    )
 
     user_prompt = (
         f"Company: {ticker}\n"

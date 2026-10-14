@@ -53,16 +53,15 @@ def analyse(
         return None
 
     artifact_id = AnalysisCache.artifact_id_insider(ticker, score_date)
-    cached = cache.get("insider", ticker, artifact_id)
-    if cached is not None:
-        logger.debug("Insider: cache hit for %s", ticker)
-        return cached
-
     model = (
         config.get("analysis", {})
         .get("analyzer_models", {})
         .get("insider", config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
     )
+    cached = cache.get("insider", ticker, artifact_id, model=model)
+    if cached is not None:
+        logger.debug("Insider: cache hit for %s", ticker)
+        return cached
 
     cluster = _fetch_cluster(conn, ticker, window_start, score_date)
     txn_text = _format_transactions(txns, cluster)

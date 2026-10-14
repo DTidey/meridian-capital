@@ -203,3 +203,38 @@ class TestByokRule:
     def test_byok_adds_upstream_cost(self):
         usage = self._usage(cost=0, is_byok=True, cost_details={"upstream_inference_cost": 0.2})
         assert CostTracker().record(usage, "openai/gpt-4o") == pytest.approx(0.2)
+
+
+class TestGpt6Pricing:
+    @pytest.mark.parametrize(
+        "model,inp,out",
+        [
+            ("gpt-6-luna", 0.10, 0.50),
+            ("openai/gpt-6-luna-pro", 0.10, 0.50),
+            ("gpt-6-sol", 2.00, 10.00),
+            ("openai/gpt-6.1-sol", 2.00, 10.00),
+            ("gpt-6-astra", 10.00, 50.00),
+        ],
+    )
+    def test_list_prices(self, model, inp, out):
+        from analysis.cost_tracker import _pricing
+
+        p = _pricing(model)
+        assert p["input"] == pytest.approx(inp)
+        assert p["output"] == pytest.approx(out)
+        assert p["cached_input"] == pytest.approx(inp)  # no discount assumed
+
+    def test_luna_cost_computed_not_gpt4o_fallback(self):
+        tracker = CostTracker()
+        usage = _mock_usage(prompt=1_000_000, completion=1_000_000)
+        usage.cost = None
+        assert tracker.record(usage, "openai/gpt-6-luna") == pytest.approx(0.60)
+
+
+class TestProSuffix:
+    def test_other_pro_models_not_priced_as_base(self):
+        # Adversarial: o1-pro must not inherit a base model's price silently
+        from analysis.cost_tracker import _DEFAULT_PRICING, _pricing
+
+        assert _pricing("o1-pro") is _DEFAULT_PRICING
+        assert _pricing("gpt-4o-pro") is _DEFAULT_PRICING
