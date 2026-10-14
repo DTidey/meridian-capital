@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from factors._utils import safe_div, sector_rank
+from factors._utils import safe_div, sector_rank, value_and_prior
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +90,11 @@ def _roe_stability(df: pd.DataFrame) -> float:
 
 
 def _gm_trend(df: pd.DataFrame) -> float:
-    """Latest gross margin minus gross margin 4 quarters ago."""
-    if len(df) < 5:
+    """Latest gross margin minus the gross margin 12 months earlier (by date)."""
+    latest, prior = value_and_prior(df, "gross_margin", 12)
+    if latest is None or prior is None:
         return np.nan
-    latest = df.iloc[-1]["gross_margin"]
-    prior = df.iloc[-5]["gross_margin"] if len(df) >= 5 else None
-    if latest is None or prior is None or np.isnan(float(latest)) or np.isnan(float(prior)):
-        return np.nan
-    return float(latest) - float(prior)
+    return latest - prior
 
 
 def _de_inv(row: pd.Series) -> float:

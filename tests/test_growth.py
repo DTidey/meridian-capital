@@ -181,3 +181,93 @@ class TestCompute:
         result = compute(data, _CONFIG)
         # SHORT should get 50 for yoy sub-factors (NaN → 50 after ranking)
         assert result.loc["SHORT", "grw_rev_yoy"] == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# Packet 25 — date-based comparisons
+# ---------------------------------------------------------------------------
+
+from factors._utils import value_and_prior  # noqa: E402
+
+
+class TestValueAndPrior:
+    def test_exact_month_lookup(self):
+        df = _fund_series("T", n=6, rev_growth=0.10)
+        latest, prior = value_and_prior(df, "revenue", 12)
+        assert latest == pytest.approx(df.iloc[-1]["revenue"])
+        assert prior == pytest.approx(df.iloc[-5]["revenue"])
+
+    def test_missing_period_gives_none(self):
+        df = _fund_series("T", n=6).drop(index=1)  # drop the quarter 12 months before the latest
+        latest, prior = value_and_prior(df, "revenue", 12)
+        assert latest is not None and prior is None
+
+    def test_empty_newest_row_skipped(self):
+        df = _fund_series("T", n=6)
+        empty = df.iloc[[-1]].copy()
+        empty["period_end"] = empty["period_end"] + pd.DateOffset(months=3)
+        empty["revenue"] = np.nan
+        df2 = pd.concat([df, empty], ignore_index=True)
+        assert value_and_prior(df2, "revenue", 12) == value_and_prior(df, "revenue", 12)
+
+    def test_unsorted_input(self):
+        df = _fund_series("T", n=6).iloc[::-1]
+        latest, _ = value_and_prior(df, "revenue", 12)
+        assert latest == pytest.approx(_fund_series("T", n=6).iloc[-1]["revenue"])
+
+
+class TestDateBased:
+    def test_gap_gives_nan_not_fifteen_months(self):
+        # Adversarial: a missing quarter must not turn "4 rows back" into 15 months back
+        df = _fund_series("T", n=7, rev_growth=0.10).drop(index=2)
+        assert np.isnan(_yoy(df, "revenue"))
+
+    def test_gap_elsewhere_still_computes(self):
+        df = _fund_series("T", n=7, rev_growth=0.10).drop(index=0)
+        assert _yoy(df, "revenue") == pytest.approx(1.1**4 - 1)
+
+    def test_acceleration_by_date(self):
+        df = _fund_series("T", n=9, rev_growth=0.10)
+        assert _acceleration(df, "revenue") == pytest.approx(0.0, abs=1e-9)
+        df_gap = df.drop(index=4)  # the 12-months-back quarter
+        assert np.isnan(_acceleration(df_gap, "revenue"))
+
+    def test_empty_newest_quarter_keeps_growth(self):
+        # BAC/GS after packet 23: newest row empty
+        base = _fund_series("BAC", n=8, rev_growth=0.10)
+        empty = base.iloc[[-1]].copy()
+        empty["period_end"] = empty["period_end"] + pd.DateOffset(months=3)
+        for col in ("revenue", "net_income", "fcf", "rd_expense"):
+            empty[col] = np.nan
+        lagged = pd.concat([base, empty], ignore_index=True)
+        assert _yoy(lagged, "revenue") == pytest.approx(_yoy(base, "revenue"))
+
+        def run(frame):
+            data = {
+                "universe": pd.DataFrame(
+                    [("BAC", "IT"), ("X", "IT")], columns=["ticker", "sector"]
+                ),
+                "fundamentals": pd.concat([frame, _fund_series("X", n=8)], ignore_index=True),
+                "prices": pd.DataFrame(),
+            }
+            return compute(data, _CONFIG)
+
+        assert run(lagged).loc["BAC", "growth_score"] == pytest.approx(
+            run(base).loc["BAC", "growth_score"]
+        )
+        assert run(lagged).loc["BAC", "grw_rd_intensity"] == pytest.approx(
+            run(base).loc["BAC", "grw_rd_intensity"]
+        )
+
+
+class TestDateBasedMore:
+    def test_acceleration_missing_two_years_back(self):
+        df = _fund_series("T", n=9, rev_growth=0.10).drop(index=0)  # the 24-months-back quarter
+        assert np.isnan(_acceleration(df, "revenue"))
+
+    def test_duplicate_index_labels(self):
+        # Adversarial: concatenated frames can repeat index labels
+        df = _fund_series("T", n=6)
+        df.index = [0] * len(df)
+        latest, prior = value_and_prior(df, "revenue", 12)
+        assert latest is not None and prior is not None

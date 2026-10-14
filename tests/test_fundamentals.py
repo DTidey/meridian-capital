@@ -791,3 +791,53 @@ class TestProcessTickerAlignment:
         fund_mod.merge_period_duplicates(tmp_db)
         rows = tmp_db.execute(sa.select(fundamentals_table.c.total_debt)).scalars().all()
         assert rows == [2.0]
+
+
+class TestGrowthRatiosByDate:
+    def test_income_gap_uses_dated_periods(self, tmp_db):
+        # WMT-like: income statement skips 2025-04-30
+        dates = ["2026-01-31", "2025-10-31", "2025-07-31", "2025-01-31"]
+        inc = _stmt({"Total Revenue": [130.0, 120.0, 110.0, 100.0]}, dates)
+        empty = pd.DataFrame()
+
+        class FakeTicker:
+            quarterly_income_stmt = inc
+            quarterly_balance_sheet = quarterly_cashflow = empty
+            income_stmt = balance_sheet = cashflow = empty
+
+        with patch("data.fundamentals.yf.Ticker", return_value=FakeTicker()):
+            fund_mod._process_ticker_yfinance(tmp_db, "WMT")
+        rows = {
+            r.period_end: (r.revenue_growth_qoq, r.revenue_growth_yoy)
+            for r in tmp_db.execute(sa.select(fundamentals_table))
+        }
+        assert rows["2026-01-31"] == (pytest.approx(130 / 120 - 1), pytest.approx(130 / 100 - 1))
+        assert rows["2025-10-31"][0] == pytest.approx(120 / 110 - 1)
+        assert rows["2025-07-31"] == (None, None)  # 2025-04-30 missing: no QoQ, no wrong period
+
+
+class TestGrowthRatiosAnnualAndLeap:
+    def test_annual_rows_and_february_year_end(self, tmp_db):
+        dates = ["2025-02-28", "2024-02-29", "2023-02-28"]
+        inc = _stmt(
+            {"Total Revenue": [130.0, 120.0, 100.0], "Net Income": [13.0, 12.0, 10.0]}, dates
+        )
+        empty = pd.DataFrame()
+
+        class FakeTicker:
+            quarterly_income_stmt = quarterly_balance_sheet = quarterly_cashflow = empty
+            income_stmt, balance_sheet, cashflow = inc, empty, empty
+
+        with patch("data.fundamentals.yf.Ticker", return_value=FakeTicker()):
+            fund_mod._process_ticker_yfinance(tmp_db, "X")
+        rows = {
+            r.period_end: (r.revenue_growth_qoq, r.revenue_growth_yoy, r.earnings_growth_yoy)
+            for r in tmp_db.execute(sa.select(fundamentals_table))
+        }
+        assert rows["2025-02-28"] == (
+            pytest.approx(130 / 120 - 1),
+            pytest.approx(130 / 120 - 1),
+            pytest.approx(13 / 12 - 1),
+        )
+        assert rows["2024-02-29"][1] == pytest.approx(120 / 100 - 1)
+        assert rows["2023-02-28"] == (None, None, None)

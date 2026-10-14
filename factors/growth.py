@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from factors._utils import pct_change, safe_div, sector_rank
+from factors._utils import pct_change, safe_div, sector_rank, value_and_prior
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,8 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             raw.loc[ticker] = np.nan
             continue
 
-        latest = tf.iloc[-1]
+        with_revenue = tf[tf["revenue"].notna()]
+        latest = with_revenue.iloc[-1] if not with_revenue.empty else tf.iloc[-1]
         raw.loc[ticker, "grw_rev_yoy"] = _yoy(tf, "revenue")
         raw.loc[ticker, "grw_earn_yoy"] = _yoy(tf, "net_income")
         raw.loc[ticker, "grw_rev_accel"] = _acceleration(tf, "revenue")
@@ -59,20 +60,18 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
 
 def _yoy(df: pd.DataFrame, col: str) -> float:
-    """YoY % change: compare latest period to the same period one year prior (4 quarters back)."""
-    if len(df) < 5:
-        return np.nan
-    latest = df.iloc[-1][col]
-    prior = df.iloc[-5][col]
-    return pct_change(latest, prior)
+    """YoY % change: latest reported period vs the period 12 months earlier (by date)."""
+    latest, prior = value_and_prior(df, col, 12)
+    change = pct_change(latest, prior)
+    return np.nan if change is None else change
 
 
 def _acceleration(df: pd.DataFrame, col: str) -> float:
-    """YoY growth acceleration: latest YoY minus YoY from 4 quarters ago."""
-    if len(df) < 9:
-        return np.nan
-    current_yoy = pct_change(df.iloc[-1][col], df.iloc[-5][col])
-    prior_yoy = pct_change(df.iloc[-5][col], df.iloc[-9][col])
+    """YoY growth acceleration: latest YoY minus the YoY ending 12 months earlier (by date)."""
+    latest, year_ago = value_and_prior(df, col, 12)
+    _, two_years_ago = value_and_prior(df, col, 24)
+    current_yoy = pct_change(latest, year_ago)
+    prior_yoy = pct_change(year_ago, two_years_ago)
     if current_yoy is None or prior_yoy is None:
         return np.nan
     return current_yoy - prior_yoy

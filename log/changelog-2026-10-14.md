@@ -108,3 +108,11 @@
   packet 23 stopped filling it from a neighbouring quarter, which exposed the strict "four latest,
   all present" rule. Skipping unreported quarters per field, with the 300-day span check, keeps
   gaps rejected.
+
+# 2026-10-14: Date-based growth comparisons (packet 25)
+
+- **Exact calendar-month match.** "4 rows back" became 15 months back for 10 tickers with a
+  missing quarter, and the empty newest BAC/GS row (packet 23) neutralised their growth score.
+  A missing period now gives a blank, which ranks as neutral, rather than a wrong comparison.
+- **Acceleration is effectively always neutral**, before and after: it needs 24 months of
+  quarters and Yahoo supplies about 5-7. Left as a known limitation.
