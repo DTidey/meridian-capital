@@ -3,7 +3,8 @@
 Meridian Capital Partners — Layer 1 Data Ingestion Entry Point
 
 Usage:
-    python run_data.py [--no-filings] [--no-13f] [--forms 10-K 10-Q] [--force-universe]
+    python run_data.py [--no-filings] [--no-13f] [--refetch-13f] [--forms 10-K 10-Q]
+                       [--force-universe]
 """
 
 import argparse
@@ -80,6 +81,12 @@ def _parse_args() -> argparse.Namespace:
         "--no-13f",
         action="store_true",
         help="Skip 13-F institutional holdings fetch — faster daily runs",
+    )
+    p.add_argument(
+        "--refetch-13f",
+        action="store_true",
+        help="Re-fetch the recent 13-F filings already stored, replacing them (after resolution "
+        "changes)",
     )
     p.add_argument(
         "--forms",
@@ -222,7 +229,7 @@ def main() -> None:
         logger.info("[9/9] 13-F institutional — SKIPPED (--no-13f)")
     else:
         logger.info("[9/9] 13-F institutional holdings")
-        inst_stats = update_institutional(conn, config)
+        inst_stats = update_institutional(conn, config, refetch=args.refetch_13f)
         inst_holdings = sum(inst_stats.values())
 
     # -----------------------------------------------------------------------

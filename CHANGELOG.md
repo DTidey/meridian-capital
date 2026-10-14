@@ -35,6 +35,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- OpenFIGI 13F ticker resolution (packet `19-openfigi-resolution`): non-US issuers found via
+  `ID_CINS`; US common stock only; non-S&P 500 holdings dropped; one lookup per identifier per
+  run; new `run_data.py --refetch-13f`.
 - 13F institutional holdings (packet `17-13f-ingestion-fixes`): values no longer 1000x too large;
   options and bonds excluded; rows per ticker summed; stored by quarter, not filing date, with
   amendments skipped; each fund compared with its own previous filing; infotables found via

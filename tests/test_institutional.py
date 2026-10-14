@@ -11,6 +11,7 @@ from data import institutional as inst
 from data.db import insert_or_ignore, institutional_holdings
 from data.institutional import (
     _aggregate_by_ticker,
+    _cusip_to_tickers_openfigi,
     _get_recent_13f_accessions,
     _infotable_filenames,
     _normalise_value_units,
@@ -748,3 +749,305 @@ class TestLoaderPointInTime:
         df = _load_institutional(tmp_db, date(2026, 8, 14))
         assert df.empty
         assert "funds_holding" in df.columns
+
+
+# ---------------------------------------------------------------------------
+# Packet 19 — OpenFIGI resolution, universe filter, re-fetch
+# ---------------------------------------------------------------------------
+
+
+class _FigiResp:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status = status
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
+
+    def json(self):
+        return self._payload
+
+
+class _FigiSession:
+    """Fake requests.Session: answers by (idType, idValue)."""
+
+    def __init__(self, answers, fail=False):
+        self.answers = answers
+        self.fail = fail
+        self.headers = {}
+        self.sent = []
+
+    def post(self, url, json=None, timeout=None):
+        self.sent.extend(json)
+        if self.fail:
+            return _FigiResp([], status=429)
+        return _FigiResp(
+            [
+                self.answers.get((j["idType"], j["idValue"]), {"warning": "No identifier found."})
+                for j in json
+            ]
+        )
+
+
+def _hit(ticker, exch="US", sec="Common Stock"):
+    return {"ticker": ticker, "exchCode": exch, "securityType": sec}
+
+
+_CHUBB = {"data": [_hit("AEX", "GR"), _hit("AEX", "GF"), _hit("CB", "US"), _hit("CB", "UA")]}
+
+
+class TestOpenFigi:
+    @pytest.fixture
+    def figi(self, monkeypatch):
+        monkeypatch.setenv("OPENFIGI_API_KEY", "test-key")
+        monkeypatch.setattr(inst.time, "sleep", lambda _s: None)
+
+        def install(session):
+            monkeypatch.setattr(inst.requests, "Session", lambda: session)
+            return session
+
+        return install
+
+    def test_cins_queried_as_id_cins(self, figi):
+        session = figi(_FigiSession({("ID_CINS", "H1467J104"): _CHUBB}))
+        assert _cusip_to_tickers_openfigi(["H1467J104", "037833100"]) == {"H1467J104": "CB"}
+        assert {"idType": "ID_CINS", "idValue": "H1467J104"} in session.sent
+        assert {"idType": "ID_CUSIP", "idValue": "037833100"} in session.sent
+
+    def test_lower_case_cins(self, figi):
+        # Adversarial: a lower-case country prefix is still a CINS
+        session = figi(_FigiSession({("ID_CINS", "h1467j104"): _CHUBB}))
+        assert _cusip_to_tickers_openfigi(["h1467j104"]) == {"h1467j104": "CB"}
+        assert session.sent[0]["idType"] == "ID_CINS"
+
+    def test_no_first_hit_fallback(self, figi):
+        figi(_FigiSession({("ID_CUSIP", "123456789"): {"data": [_hit("AEX", "GR")]}}))
+        assert _cusip_to_tickers_openfigi(["123456789"]) == {}
+
+    def test_non_common_stock_rejected(self, figi):
+        # Adversarial: an ETP or option on a US exchange is not a holding of the company
+        answers = {("ID_CUSIP", "123456789"): {"data": [_hit("XYZ", "US", "ETP")]}}
+        figi(_FigiSession(answers))
+        assert _cusip_to_tickers_openfigi(["123456789"]) == {}
+
+    def test_cache_prevents_repeat_lookups(self, figi):
+        session = figi(_FigiSession({("ID_CUSIP", "037833100"): {"data": [_hit("AAPL")]}}))
+        cache: dict = {}
+        _cusip_to_tickers_openfigi(["037833100", "999999999"], cache)
+        _cusip_to_tickers_openfigi(["037833100", "999999999"], cache)
+        assert len(session.sent) == 2
+        assert cache == {"037833100": "AAPL", "999999999": None}
+
+    def test_failed_batch_warned_and_not_cached(self, figi, caplog):
+        session = figi(_FigiSession({}, fail=True))
+        cache: dict = {}
+        with caplog.at_level("WARNING", logger="data.institutional"):
+            assert _cusip_to_tickers_openfigi(["037833100"], cache) == {}
+        assert "OpenFIGI batch" in caplog.text
+        assert cache == {}
+        _cusip_to_tickers_openfigi(["037833100"], cache)
+        assert len(session.sent) == 2  # retried next time
+
+    def test_malformed_response_is_failed_batch(self, figi, caplog):
+        # Adversarial: a 200 with a non-list body must be a logged failure, not a crash
+        class Bad(_FigiSession):
+            def post(self, url, json=None, timeout=None):
+                self.sent.extend(json)
+                return _FigiResp({"error": "oops"})
+
+        figi(Bad({}))
+        with caplog.at_level("WARNING", logger="data.institutional"):
+            assert _cusip_to_tickers_openfigi(["037833100"]) == {}
+        assert "OpenFIGI batch" in caplog.text
+
+    def test_short_response_leaves_rest_unresolved(self, figi):
+        # Adversarial: fewer results than identifiers must not shift tickers onto wrong rows
+        class Short(_FigiSession):
+            def post(self, url, json=None, timeout=None):
+                self.sent.extend(json)
+                return _FigiResp([{"data": [_hit("AAPL")]}])
+
+        session = figi(Short({}))
+        cache: dict = {}
+        assert _cusip_to_tickers_openfigi(["037833100", "594918104"], cache) == {
+            "037833100": "AAPL"
+        }
+        assert cache["594918104"] is None  # cached, so not sent again this run
+        _cusip_to_tickers_openfigi(["594918104"], cache)
+        assert len(session.sent) == 2
+
+    def test_no_key_skips_lookup(self, monkeypatch):
+        monkeypatch.delenv("OPENFIGI_API_KEY", raising=False)
+        assert _cusip_to_tickers_openfigi(["037833100"]) == {}
+
+
+class TestUniverseFilter:
+    def test_only_universe_tickers_returned(self, tmp_db, monkeypatch):
+        tmp_db.execute(
+            sa.text(
+                "INSERT INTO sp500_universe (ticker, company_name) VALUES "
+                "('AAPL', 'Apple Inc.'), ('CB', 'Chubb Limited')"
+            )
+        )
+        tmp_db.commit()
+        xml = _infotable(
+            "<infoTable><nameOfIssuer>APPLE INC</nameOfIssuer><cusip>037833100</cusip>"
+            "<value>100</value><shrsOrPrnAmt><sshPrnamt>1</sshPrnamt></shrsOrPrnAmt></infoTable>",
+            "<infoTable><nameOfIssuer>CHUBB LTD SWITZ</nameOfIssuer><cusip>H1467J104</cusip>"
+            "<value>100</value><shrsOrPrnAmt><sshPrnamt>1</sshPrnamt></shrsOrPrnAmt></infoTable>",
+            "<infoTable><nameOfIssuer>APPLIED DIGITAL</nameOfIssuer><cusip>038169207</cusip>"
+            "<value>100</value><shrsOrPrnAmt><sshPrnamt>1</sshPrnamt></shrsOrPrnAmt></infoTable>",
+        )
+        monkeypatch.setattr(inst, "_infotable_filenames", lambda *a: ["x.xml"])
+        lookups = []
+
+        def fake_figi(cusips, cache=None):
+            lookups.append(sorted(cusips))
+            return {"H1467J104": "CB", "038169207": "APLD"}
+
+        monkeypatch.setattr(inst, "_cusip_to_tickers_openfigi", fake_figi)
+
+        class S:
+            def get(self, url, timeout=None):
+                return type("R", (), {"ok": True, "content": b"x", "text": xml})()
+
+        rows = inst._fetch_13f_infotable(S(), "1", "0000-00-0", _RateLimiter(0), tmp_db)
+        assert sorted(r["ticker"] for r in rows) == ["AAPL", "CB"]
+        assert lookups == [["038169207", "H1467J104"]]
+
+
+class TestShareClassTickers:
+    def test_class_suffixes_normalised_and_class_pairs_kept(self, tmp_db, monkeypatch):
+        tmp_db.execute(
+            sa.text(
+                "INSERT INTO sp500_universe (ticker, company_name) VALUES "
+                "('BRK-B', 'Berkshire Hathaway'), ('BF-B', 'Brown-Forman'), "
+                "('FOX', 'Fox Corporation (Class B)'), ('FOXA', 'Fox Corporation (Class A)')"
+            )
+        )
+        tmp_db.commit()
+        entries = [
+            ("BERKSHIRE HATHAWAY INC DEL", "084670702"),
+            ("BROWN FORMAN CORP", "115637209"),
+            ("FOX CORP CL A", "35137L105"),
+            ("FOX CORP CL B", "35137L204"),
+        ]
+        xml = _infotable(
+            *(
+                f"<infoTable><nameOfIssuer>{n}</nameOfIssuer><cusip>{c}</cusip><value>100"
+                "</value><shrsOrPrnAmt><sshPrnamt>1</sshPrnamt></shrsOrPrnAmt></infoTable>"
+                for n, c in entries
+            )
+        )
+        monkeypatch.setattr(inst, "_infotable_filenames", lambda *a: ["x.xml"])
+        monkeypatch.setattr(
+            inst,
+            "_cusip_to_tickers_openfigi",
+            lambda cusips, cache=None: {
+                "084670702": "BRK/B",
+                "115637209": "BF.B",
+                "35137L105": "FOXA",
+                "35137L204": "FOX",
+            },
+        )
+
+        class S:
+            def get(self, url, timeout=None):
+                return type("R", (), {"ok": True, "content": b"x", "text": xml})()
+
+        rows = inst._fetch_13f_infotable(S(), "1", "0000-00-0", _RateLimiter(0), tmp_db)
+        assert sorted(r["ticker"] for r in rows) == ["BF-B", "BRK-B", "FOX", "FOXA"]
+
+
+class TestRefetch:
+    def test_refetch_replaces_fetched_periods_only(self, tmp_db, monkeypatch, caplog):
+        # Q2 is re-fetched; Q1 (outside the fetched window) and an untracked fund are kept
+        _insert_holding(tmp_db, "Citadel", "AAPL", 1, "2026-06-30", filed_date="2026-08-14")
+        _insert_holding(tmp_db, "Citadel", "MSFT", 1, "2026-06-30", filed_date="2026-08-14")
+        _insert_holding(tmp_db, "Citadel", "AAPL", 1, "2026-03-31", filed_date="2026-05-15")
+        _insert_holding(tmp_db, "Old Fund", "AAPL", 1, "2026-06-30", filed_date="2026-08-14")
+        tmp_db.commit()
+        monkeypatch.setattr(
+            inst,
+            "_get_recent_13f_accessions",
+            lambda *a, **k: [("A2", "2026-08-14", "2026-06-30")],
+        )
+        monkeypatch.setattr(
+            inst,
+            "_fetch_13f_infotable",
+            lambda *a, **k: [{"ticker": "CB", "shares": 5.0, "market_value": 1500.0}],
+        )
+        with caplog.at_level("INFO", logger="data.institutional"):
+            update_institutional(tmp_db, _cfg(("Citadel", "1")), refetch=True)
+
+        rows = set(
+            tmp_db.execute(
+                sa.select(
+                    institutional_holdings.c.fund_name,
+                    institutional_holdings.c.ticker,
+                    institutional_holdings.c.report_date,
+                )
+            ).fetchall()
+        )
+        assert rows == {
+            ("Citadel", "CB", "2026-06-30"),
+            ("Citadel", "AAPL", "2026-03-31"),
+            ("Old Fund", "AAPL", "2026-06-30"),
+        }
+        assert "replaced 2 stored rows" in caplog.text
+
+    def test_failed_refetch_keeps_stored_rows(self, tmp_db, monkeypatch):
+        # Adversarial: an empty or failed fetch must not wipe the period
+        _insert_holding(tmp_db, "Citadel", "AAPL", 1, "2026-06-30", filed_date="2026-08-14")
+        tmp_db.commit()
+        monkeypatch.setattr(
+            inst,
+            "_get_recent_13f_accessions",
+            lambda *a, **k: [("A2", "2026-08-14", "2026-06-30")],
+        )
+        monkeypatch.setattr(inst, "_fetch_13f_infotable", lambda *a, **k: [])
+        update_institutional(tmp_db, _cfg(("Citadel", "1")), refetch=True)
+        count = tmp_db.execute(
+            sa.select(sa.func.count()).select_from(institutional_holdings)
+        ).scalar()
+        assert count == 1
+
+    def test_default_keeps_rows(self, tmp_db, monkeypatch):
+        _insert_holding(tmp_db, "Citadel", "AAPL", 1, "2026-06-30", filed_date="2026-08-14")
+        tmp_db.commit()
+        monkeypatch.setattr(inst, "_get_recent_13f_accessions", lambda *a, **k: [])
+        update_institutional(tmp_db, _cfg(("Citadel", "1")))
+        count = tmp_db.execute(
+            sa.select(sa.func.count()).select_from(institutional_holdings)
+        ).scalar()
+        assert count == 1
+
+    def test_cli_flag(self, monkeypatch):
+        import run_data
+
+        monkeypatch.setattr("sys.argv", ["run_data.py", "--refetch-13f"])
+        assert run_data._parse_args().refetch_13f is True
+        monkeypatch.setattr("sys.argv", ["run_data.py"])
+        assert run_data._parse_args().refetch_13f is False
+
+    def test_shared_cache_passed_to_every_filing(self, tmp_db, monkeypatch):
+        monkeypatch.setattr(
+            inst,
+            "_get_recent_13f_accessions",
+            lambda *a, **k: [
+                ("A2", "2026-08-14", "2026-06-30"),
+                ("A1", "2026-05-15", "2026-03-31"),
+            ],
+        )
+        caches = []
+
+        def fake_fetch(session, cik, accession, limiter, conn, cusip_cache=None):
+            caches.append(cusip_cache)
+            return []
+
+        monkeypatch.setattr(inst, "_fetch_13f_infotable", fake_fetch)
+        update_institutional(tmp_db, _cfg(("Citadel", "1"), ("Point72", "2")))
+        assert len(caches) == 4
+        assert all(c is caches[0] for c in caches)
+        assert isinstance(caches[0], dict)
