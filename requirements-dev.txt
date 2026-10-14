@@ -295,7 +295,7 @@ stevedore==5.8.0
     # via bandit
 streamlit==1.65.0
     # via -r requirements.in
-tiktoken==0.13.0
+tiktoken==0.14.0
     # via -r requirements.in
 toml==0.10.2
     # via streamlit
