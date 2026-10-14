@@ -154,7 +154,7 @@ python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
-python-dotenv==1.2.2
+python-dotenv==1.2.4
     # via -r requirements.in
 python-multipart==0.0.32
     # via streamlit
