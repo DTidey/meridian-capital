@@ -281,6 +281,7 @@ def _seed_all(conn) -> None:
     from data.db import (
         analyst_estimates,
         earnings_transcripts,
+        fundamentals,
         insider_cluster_flags,
         institutional_holdings,
         institutional_summary,
@@ -292,8 +293,33 @@ def _seed_all(conn) -> None:
     conn.execute(
         daily_prices.insert(),
         [
-            {"ticker": "AAPL", "date": f"2026-06-{d:02d}", "adj_close": 280.0 + d, "volume": 1}
+            {
+                "ticker": "AAPL",
+                "date": f"2026-06-{d:02d}",
+                "close": 280.0 + d,
+                "adj_close": 280.0 + d,
+                "volume": 1,
+            }
             for d in range(1, 20)
+        ],
+    )
+    conn.execute(
+        fundamentals.insert(),
+        [
+            {
+                "ticker": "AAPL",
+                "period_type": "quarterly",
+                "period_end": end,
+                "net_income": 25e9,
+                "ebit": 30e9,
+                "fcf": 20e9,
+                "dividends_paid": -4e9,
+                "total_equity": 100e9,
+                "total_debt": 80e9,
+                "cash": 40e9,
+                "shares_outstanding": 19.36e9,
+            }
+            for end in ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")
         ],
     )
     conn.execute(
@@ -439,6 +465,7 @@ class TestRenderSmoke:
         at = self._run(tmp_path, _seed_universe)
         assert not at.exception
         assert "No institutional holdings among tracked funds." in self._text(at)
+        assert "No valuation data." in self._text(at)
 
     def test_renders_with_all_sections(self, tmp_path):
         def seed(conn):
@@ -448,7 +475,7 @@ class TestRenderSmoke:
         at = self._run(tmp_path, seed)
         assert not at.exception
         text = self._text(at)
-        for header in ("SIGNAL", "INSTITUTIONAL HOLDINGS", "SEC FILINGS"):
+        for header in ("VALUATION", "SIGNAL", "INSTITUTIONAL HOLDINGS", "SEC FILINGS"):
             assert header in text
         labels = [e.label for e in at.expander]
         assert "Sub-factor scores" in labels
@@ -470,6 +497,7 @@ class TestRenderSmoke:
         assert list(funds["Fund"]) == ["Citadel", "Point72"]  # AC2
 
         assert len(at.get("plotly_chart")) == 4  # price, factor bars, two AC8 trends
+        assert ">$5.79T<" in cards  # packet 21: 299 x 19.36B shares
         assert "Insider cluster: 2026-09-30 to 2026-10-30, 3 insiders, 604 shares" in text
 
 
