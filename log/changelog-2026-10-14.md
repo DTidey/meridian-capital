@@ -150,3 +150,14 @@
   not combined scores, so it counts as non-trading.
 - **Pinning test for `analyzer_models`**, so the scoring move can't happen by a casual config
   edit before the shadow test.
+
+# 2026-10-14: Analyzer input fixes (packet 30)
+
+- **Found by the GPT-6 shadow test.** GPT-6 Luna refused to trust the filing table ("assets
+  $494M vs receivables $16B"); gpt-4o-mini had scored such tables for months. The model
+  comparison is only meaningful once inputs are right, so this comes before any switch.
+- **Item 1A from the EDGAR original**, where headings and contents rows are distinguishable,
+  rather than the whitespace-collapsed, 500k-capped stored text.
+- **Versioned cache keys instead of deleting rows**: reversible, and old rows age out.
+- **Risk score design is weak**: once the model reads real risk factors, nearly everything is
+  HIGH. Left for a separate decision.

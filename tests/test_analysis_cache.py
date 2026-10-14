@@ -141,12 +141,12 @@ class TestArtifactIds:
         assert AnalysisCache.artifact_id_earnings("AAPL", "2024-03-31") == "AAPL_2024-03-31"
 
     def test_filing_artifact_id(self):
-        assert AnalysisCache.artifact_id_filing("MSFT", "2024-06-30") == "MSFT_2024-06-30"
+        assert AnalysisCache.artifact_id_filing("MSFT", "2024-06-30") == "MSFT_2024-06-30_v2"
 
     def test_risk_artifact_id(self):
         assert (
             AnalysisCache.artifact_id_risk("GOOG", "0001234567-24-000001")
-            == "GOOG_0001234567-24-000001"
+            == "GOOG_0001234567-24-000001_v2"
         )
 
     def test_insider_artifact_id(self):
