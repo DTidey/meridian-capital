@@ -32,7 +32,7 @@ GOOGL, so class C holdings were booked as GOOGL (and GOOGL share counts overstat
 - Tests written first: 4 failed on the old order
 - `make lint`: pass
 - `make security`: pass
-- `make test`: 781 passed
+- `make test`: 807 passed (rebased on #56)
 - Live dry run: only Alphabet changes (33 GOOG fund-quarters added, 12 moved from GOOGL); all
   other holdings identical
 
