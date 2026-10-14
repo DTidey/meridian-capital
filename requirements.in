@@ -16,4 +16,4 @@ alpaca-py>=0.44.0
 streamlit>=1.65.0
 plotly>=7.1.0
 matplotlib>=3.11.2
-pytz>=2026.2
+pytz>=2026.5
