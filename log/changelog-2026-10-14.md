@@ -79,3 +79,10 @@
 - **300-day span check.** Four rows aren't a trailing year if a quarter is missing (JPM's
   2025-03-31 row is empty). Contiguous quarter ends are about 9 months apart and one gap makes
   about 12, so the limit is 300 days; the first draft's 13 months let a gap through (Reviewer).
+
+# 2026-10-14: CUSIP-first resolution (packet 22)
+
+- **CUSIP before name.** A CUSIP names the exact security; issuer names can't tell share classes
+  apart (both Alphabet classes are filed as "ALPHABET INC").
+- **Name match kept as fallback** for no API key, OpenFIGI outages, and tickers OpenFIGI spells
+  differently from the universe.
