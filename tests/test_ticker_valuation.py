@@ -174,3 +174,71 @@ class TestFormatting:
         assert fmt_pct(0.02727) == "2.7%"
         assert fmt_pct(-0.013) == "-1.3%"
         assert fmt_pct(None) == "—"
+
+
+class TestTtmSelection:
+    def _empty(self, end):
+        return {"period_end": end}
+
+    def test_empty_newest_quarter_skipped(self):
+        # BAC after packet 23: 2026-06-30 row empty, the four before it complete
+        rows = [_q("2026-03-31"), _q("2025-12-31"), _q("2025-09-30"), _q("2025-06-30")]
+        rows[0] |= {"shares_outstanding": 15e9}
+        v = valuation(100.0, [self._empty("2026-06-30")] + rows)
+        mcap = 100.0 * 15e9
+        assert v["pe"] == pytest.approx(mcap / 100e9)
+        assert v["ev_ebit"] == pytest.approx((mcap + 80e9 - 40e9) / 120e9)
+        assert v["fcf_yield"] == pytest.approx(80e9 / mcap)
+        assert v["div_yield"] == pytest.approx(16e9 / mcap)
+
+    def test_middle_gap_still_rejected(self):
+        # Adversarial: skipping a missing middle quarter must not pass as a trailing year
+        rows = [
+            _q("2026-06-30"),
+            _q("2026-03-31", net_income=None),
+            _q("2025-12-31"),
+            _q("2025-09-30"),
+            _q("2025-06-30"),
+        ]
+        assert valuation(100.0, rows)["pe"] is None
+
+    def test_fields_use_their_own_latest_quarters(self):
+        # Income published for the newest quarter, cash flow not yet
+        newest = _q("2026-09-30", fcf=None, net_income=40e9)
+        rows = [newest, _q("2026-06-30"), _q("2026-03-31"), _q("2025-12-31"), _q("2025-09-30")]
+        v = valuation(100.0, rows)
+        mcap = 100.0 * 15e9
+        assert v["pe"] == pytest.approx(mcap / (40e9 + 3 * 25e9))
+        assert v["fcf_yield"] == pytest.approx(4 * 20e9 / mcap)
+
+    def test_fewer_than_four_with_field(self):
+        rows = [
+            _q("2026-06-30"),
+            _q("2026-03-31"),
+            _q("2025-12-31", fcf=None),
+            _q("2025-09-30", fcf=None),
+        ]
+        assert valuation(100.0, rows)["fcf_yield"] is None
+
+
+class TestTtmRecency:
+    def test_stopped_dividend_not_shown_as_stale_yield(self):
+        # Reviewer probe: four newest quarters without dividends must not reach back a year
+        recent = [
+            _q(d, dividends_paid=None)
+            for d in ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")
+        ]
+        older = [_q(d) for d in ("2025-06-30", "2025-03-31", "2024-12-31", "2024-09-30")]
+        assert valuation(100.0, recent + older)["div_yield"] is None
+
+    def test_two_skipped_quarters_rejected(self):
+        rows = [_q(d, net_income=None) for d in ("2026-06-30", "2026-03-31")]
+        rows += [_q(d) for d in ("2025-12-31", "2025-09-30", "2025-06-30", "2025-03-31")]
+        assert valuation(100.0, rows)["pe"] is None
+
+    def test_zero_dividend_counted(self):
+        rows = [
+            _q(d, dividends_paid=0.0)
+            for d in ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")
+        ]
+        assert valuation(100.0, rows)["div_yield"] == pytest.approx(0.0)

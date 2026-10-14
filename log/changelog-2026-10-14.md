@@ -101,3 +101,10 @@
   differently (AAPL FY2025 debt 112.4B vs 98.7B).
 - **Valuation follow-on.** After realignment, the newest BAC/GS quarter has income but no
   balance sheet, so valuation now takes balance items from the latest quarter that has them.
+
+# 2026-10-14: Valuation TTM with an empty newest quarter (packet 24)
+
+- **Per-field quarter selection.** Yahoo lists BAC's and GS's 2026-06-30 quarter with no figures;
+  packet 23 stopped filling it from a neighbouring quarter, which exposed the strict "four latest,
+  all present" rule. Skipping unreported quarters per field, with the 300-day span check, keeps
+  gaps rejected.

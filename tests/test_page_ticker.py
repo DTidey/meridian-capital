@@ -498,6 +498,7 @@ class TestRenderSmoke:
 
         assert len(at.get("plotly_chart")) == 4  # price, factor bars, two AC8 trends
         assert ">$5.79T<" in cards  # packet 21: 299 x 19.36B shares
+        assert "last four reported quarters" in text  # packet 24 AC4
         assert "Insider cluster: 2026-09-30 to 2026-10-30, 3 insiders, 604 shares" in text
 
 
