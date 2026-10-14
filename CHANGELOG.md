@@ -31,6 +31,8 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Reference docs, README and `.env.example` brought up to date; `docs/README.md` separates
+  living references from historical records (packet `27-reference-docs-refresh`).
 - Growth factor revenue acceleration is now the trend of up to four YoY growth points (needs 4
   to 8 stored quarters), and fundamentals refreshes no longer blank stored figures (packet
   `26-acceleration-trend`).

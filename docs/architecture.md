@@ -5,11 +5,11 @@
 The application is a Python monorepo at `ls_equity_fund/`. It is structured as seven sequential processing layers, each in its own subdirectory. All seven layers are implemented.
 
 ```
-hedge/
-├── docker-compose.yml          # PostgreSQL service definition
-└── ls_equity_fund/
+ls_equity_fund/
+    ├── docker-compose.yml      # PostgreSQL service definition
     ├── run_data.py             # Layer 1: data ingestion entry point
     ├── run_scoring.py          # Layer 2: factor scoring entry point
+    ├── run_transcripts.py      # Earnings transcript ingestion (between Layers 2 and 3)
     ├── run_analysis.py         # Layer 3: AI analysis entry point
     ├── run_portfolio.py        # Layer 4: portfolio construction entry point
     ├── run_risk_check.py       # Layer 5: risk gate entry point
@@ -20,13 +20,13 @@ hedge/
     ├── .env                    # API keys and secrets (not committed)
     ├── data/                   # Layer 1: ingestion
     ├── factors/                # Layer 2: factor scoring
-    ├── analysis/               # Layer 3: OpenAI qualitative analysis
+    ├── analysis/               # Layer 3: LLM qualitative analysis, filing summaries
     ├── portfolio/              # Layer 4: portfolio construction
     ├── risk/                   # Layer 5: risk management
     ├── execution/              # Layer 6: Alpaca order routing
     ├── reporting/              # Layer 7: P&L reports and tear sheets
     ├── dashboard/              # Layer 7: Streamlit live dashboard
-    ├── tests/                  # Test suite (505 tests)
+    ├── tests/                  # Test suite (pytest)
     ├── cache/                  # Runtime cache (predicted covariance, shortability, halt lock)
     └── output/                 # Log files (gitignored)
 ```
@@ -39,15 +39,18 @@ hedge/
 |---------|--------|
 | Language | Python 3.12 |
 | Database | PostgreSQL 16 (via Docker) |
-| ORM / query layer | SQLAlchemy 1.4 (Core, not ORM) |
+| ORM / query layer | SQLAlchemy 2.0 (Core, not ORM) |
 | DB adapter | psycopg2-binary 2.9 |
-| Data manipulation | pandas 2.x |
+| Data manipulation | pandas 3.x |
 | Market data (free) | yfinance |
 | Market data (licensed) | Polygon.io REST API |
-| Fundamentals (licensed) | Financial Modeling Prep REST API |
-| Macro data (licensed) | FRED API (reserved — not yet used) |
+| Fundamentals | yfinance (an FMP backend exists but is not selected) |
+| Earnings transcripts | FMP REST API (optional), else 8-K Exhibit 99 from SEC EDGAR |
+| Macro data | FRED API (optional; tail-risk monitor) |
+| 13-F ticker resolution | OpenFIGI API (optional, CUSIP to ticker) |
+| HTML parsing | BeautifulSoup + lxml (EDGAR filing index and documents) |
 | Regulatory filings | SEC EDGAR REST API (public) |
-| AI analysis | OpenAI API (`gpt-4o`, `gpt-4o-mini`) |
+| AI analysis | OpenAI models via the OpenAI API or OpenRouter (`llm.provider`); per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-4o, filing and insider on gpt-4o-mini by default); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries |
 | Token counting | tiktoken |
 | Portfolio optimisation | scipy (SLSQP via `scipy.optimize.minimize`) |
 | Parquet I/O | pyarrow (predicted covariance cache) |
@@ -64,7 +67,7 @@ hedge/
 
 ### 3.1 Database
 
-PostgreSQL 16 runs in Docker. The service is defined in `docker-compose.yml` at the repository root.
+PostgreSQL 16 runs in Docker. The service is defined in `ls_equity_fund/docker-compose.yml`.
 
 ```
 docker compose up -d
@@ -76,8 +79,8 @@ docker compose up -d
 | Database | `meridian` |
 | User | `meridian` |
 | Password | `$POSTGRES_PASSWORD` (default: `meridian`) |
-| Port | 5432 (localhost only) |
-| Data volume | `postgres_data` (named, persisted across restarts) |
+| Port | 5432 |
+| Data volume | `postgres_data` (named `meridian_postgres_data`, persisted across restarts) |
 | Health check | `pg_isready -U meridian -d meridian` every 10s |
 
 The connection URL is configured in `config.yaml` and can be overridden by the `DATABASE_URL` environment variable, which takes precedence. This allows the same codebase to connect to a remote or containerised database without modifying the config file.
@@ -98,18 +101,19 @@ data/
 ├── providers.py        # API key detection and provider selection
 ├── universe.py         # S&P 500 + benchmark ticker management
 ├── market_data.py      # Daily OHLCV prices
-├── fundamentals.py     # Financial statements + 24 derived ratios
+├── fundamentals.py     # Financial statements + derived ratios (period-aligned, history kept)
 ├── short_interest.py   # Short interest snapshots
 ├── estimates.py        # Analyst EPS and price target snapshots
 ├── earnings_calendar.py# Upcoming earnings dates
-├── transcripts.py      # Earnings call transcripts (FMP)
-├── institutional.py    # 13-F holdings parsing and summary
+├── transcripts.py      # Earnings call transcripts (FMP) or 8-K earnings releases
+├── edgar_docs.py       # On-demand EDGAR filing fetch and HTML-to-markdown (dashboard viewer)
+├── institutional.py    # 13-F holdings: filing selection, parsing, CUSIP/name resolution, summary
 └── sec_data.py         # SEC EDGAR filings, Form 4 parsing, cluster detection
 ```
 
 ### 4.2 Entry point (`run_data.py`)
 
-The script runs all eight ingestion steps in sequence against a single open database connection. Steps 8a (SEC) and 8b (13-F) can be individually skipped via CLI flags for faster daily runs. A summary table is printed at the end.
+The script runs nine ingestion steps in sequence against a single open database connection. SEC filings and transcripts (`--no-filings`) and 13-F holdings (`--no-13f`) can be skipped for faster daily runs; `--refresh-fundamentals` and `--refetch-13f` force a full re-fetch of those datasets. A summary table is printed at the end.
 
 Execution sequence:
 
@@ -120,9 +124,9 @@ Execution sequence:
 4. Short interest   → short_interest
 5. Estimates        → analyst_estimates
 6. Earnings cal.    → earnings_calendar
-7. Transcripts      → earnings_transcripts
-8a. SEC filings     → sec_filings, insider_transactions, insider_cluster_flags
-8b. 13-F holdings   → institutional_holdings, institutional_summary
+7. SEC filings      → sec_filings, insider_transactions, insider_cluster_flags
+8. Transcripts      → earnings_transcripts
+9. 13-F holdings    → institutional_holdings, institutional_summary
 ```
 
 ### 4.3 Provider abstraction
@@ -132,9 +136,10 @@ Execution sequence:
 | Data type | Free fallback | Licensed upgrade |
 |-----------|--------------|-----------------|
 | Prices | yfinance | Polygon.io (`POLYGON_API_KEY`) |
-| Fundamentals | yfinance | FMP (`FMP_API_KEY`) |
-| Transcripts | (none — skipped) | FMP (`FMP_API_KEY`) |
-| Macro | (none — reserved) | FRED (`FRED_API_KEY`) |
+| Fundamentals | yfinance | (yfinance only; the FMP backend is not selected) |
+| Transcripts | 8-K Exhibit 99 from SEC EDGAR | FMP (`FMP_API_KEY`) |
+| Macro | (none) | FRED (`FRED_API_KEY`) |
+| 13-F tickers | Issuer-name match | OpenFIGI CUSIP lookup (`OPENFIGI_API_KEY`) |
 
 ### 4.4 Database layer (`db.py`)
 
@@ -145,6 +150,7 @@ Execution sequence:
 **Upsert helpers** abstract the dialect difference between SQLite (`OR REPLACE` / `OR IGNORE`) and PostgreSQL (`ON CONFLICT DO UPDATE` / `ON CONFLICT DO NOTHING`):
 
 - `insert_or_replace(conn, table)` — builds an upsert that overwrites all non-PK columns on a primary-key conflict. Used for time-series tables where the latest value should always win.
+- Fundamentals use their own upsert (`data/fundamentals.py` `_upsert_period`) that keeps stored figures where the new fetch is blank, so history builds up.
 - `insert_or_ignore(conn, table)` — builds an insert that silently discards duplicates. Used for append-only tables with natural unique keys (filings, transactions, transcripts).
 
 Both functions introspect the table's primary key at call time and delegate to the correct dialect-specific insert class (`sqlalchemy.dialects.postgresql.insert` or `sqlalchemy.dialects.sqlite.insert`).
@@ -165,7 +171,7 @@ Both functions introspect the table's primary key at call time and delegate to t
 | Table | Primary key | Description |
 |-------|-------------|-------------|
 | `daily_prices` | `(ticker, date)` | OHLCV + adjusted close, daily bars |
-| `fundamentals` | `(ticker, period_type, period_end)` | 24+ financial statement fields and derived ratios |
+| `fundamentals` | `(ticker, period_type, period_end)` | Financial statement fields and derived ratios; `period_end` is a calendar month-end |
 
 ### 5.3 Signals and snapshots
 
@@ -187,14 +193,14 @@ Both functions introspect the table's primary key at call time and delegate to t
 
 | Table | Primary key / unique | Description |
 |-------|---------------------|-------------|
-| `institutional_holdings` | `id` (auto); unique `(fund_name, ticker, report_date)` | Raw 13-F position rows |
+| `institutional_holdings` | `id` (auto); unique `(fund_name, ticker, report_date)` | 13-F positions per fund per quarter (`report_date` = quarter end, `filed_date` = filing date; S&P 500 only) |
 | `institutional_summary` | `(ticker, report_date)` | Aggregated: fund count, net share change, new positions |
 
 ### 5.6 Transcripts
 
 | Table | Primary key / unique | Description |
 |-------|---------------------|-------------|
-| `earnings_transcripts` | `id` (auto); unique `(ticker, earnings_date)` | Full transcript text from FMP |
+| `earnings_transcripts` | `id` (auto); unique `(ticker, earnings_date)` | Transcript text from FMP, or the 8-K earnings release (`source_accession_no`) |
 
 ### 5.7 Indexes
 
@@ -212,7 +218,7 @@ Five secondary indexes are defined alongside the schema to support common query 
 
 ## 6. Testing Architecture
 
-Tests live in `tests/` and run against SQLite in-memory databases created per-test via pytest fixtures. No external services or running database are required.
+Tests live in `tests/` and run against temporary-file SQLite databases created per-test via pytest fixtures. No external services or running database are required.
 
 ### 6.1 Fixtures (`conftest.py`)
 
@@ -233,7 +239,9 @@ Tests live in `tests/` and run against SQLite in-memory databases created per-te
 | `test_market_data.py` | OHLCV parsing, incremental updates, batch fetching |
 | `test_fundamentals.py` | Statement parsing, ratio derivation, FMP vs yfinance paths |
 | `test_sec_data.py` | Form 4 XML parsing, cluster-buy detection, lookback filtering |
-| `test_institutional.py` | 13-F XML parsing, prior-quarter date arithmetic, summary rebuild |
+| `test_institutional.py` | 13-F filing selection, parsing, OpenFIGI/name resolution, summary rebuild, point-in-time loader |
+| `test_earnings_calendar.py` | Earnings date ingestion |
+| `test_edgar_docs.py` | EDGAR index parsing, HTML-to-markdown table conversion |
 | `test_providers.py` | Provider selection based on env var presence |
 
 **Layer 2 — Factor scoring**
@@ -258,6 +266,9 @@ Tests live in `tests/` and run against SQLite in-memory databases created per-te
 | File | Subject |
 |------|---------|
 | `test_api_client.py` | OpenAI wrapper, retry logic, JSON mode, cost guard |
+| `test_llm.py` | Provider selection (OpenAI / OpenRouter), overrides, model resolution |
+| `test_llm_call_sites.py` | LLM wiring for letter, commentary and JARVIS |
+| `test_doc_summary.py` | Filing summary prompts, token cut, figure check, output cleaning |
 | `test_cost_tracker.py` | Token and USD cost accounting per model |
 | `test_analysis_cache.py` | PostgreSQL result cache, TTL expiry, artifact key collisions |
 | `test_insider_analyzer.py` | Signal strength enum, key transaction parsing |
@@ -308,7 +319,17 @@ Tests live in `tests/` and run against SQLite in-memory databases created per-te
 | `test_reporting_fifo.py` | FIFO round-trip position attribution |
 | `test_reporting_win_loss.py` | Win rate, streaks, breakdowns by side and sector |
 
-Total: 505 tests.
+**Dashboard**
+
+| File | Subject |
+|------|---------|
+| `test_page_ticker.py` | Ticker page queries and whole-page render tests (Streamlit `AppTest`), including the filing viewer |
+| `test_ticker_institutional.py` | Per-fund holdings table and summary formatting |
+| `test_ticker_signals.py` | Signal, sub-factor table, trend charts, insider clusters |
+| `test_ticker_research.py` | AI analysis rendering and escaping, filing links |
+| `test_ticker_valuation.py` | Market cap, EV, trailing multiples and yields |
+
+Run `make test` for the current count.
 
 ### 6.3 Upsert compatibility
 
@@ -324,11 +345,11 @@ Reads Layer 1 tables; computes 27 sub-factors across 8 dimensions for every S&P 
 
 ### Layer 3 — AI Analysis (`analysis/`)
 
-Calls the OpenAI API (`gpt-4o` / `gpt-4o-mini`) for LONG/SHORT candidates identified by Layer 2. Analyses earnings transcripts, 10-K/10-Q filings, and insider transactions. Results are cached in PostgreSQL with a 30-day TTL. Combined score: 60% Layer 2 quantitative + 40% AI normalised. Cost ceiling: $25/run. Output: `analysis_results`, `ai_scores`.
+Calls the configured LLM (OpenAI models, directly or via OpenRouter) for LONG/SHORT candidates identified by Layer 2. Analyses earnings transcripts, 10-K/10-Q filings, and insider transactions. Results are cached in PostgreSQL with a 30-day TTL. Combined score: 60% Layer 2 quantitative + 40% AI normalised. Cost ceiling: $25/run. Output: `analysis_results`, `ai_scores`.
 
 ### Layer 4 — Portfolio Construction (`portfolio/`)
 
-Consumes Layer 3 `combined_scores` to build a 20-long / 20-short book against a $10M NAV. Two methods: conviction-tilt (default, always converges) and Markowitz MVO (optional, falls back to conviction-tilt on non-convergence). Constraints: 150% gross, 0–10% net, 5% single-name cap, 25% sector gross cap, 0.15 net beta. Output: `portfolio_positions`, `portfolio_history`, `position_approvals` (PENDING).
+Consumes Layer 3 `combined_scores` to build a 20-long / 20-short book against the NAV in `portfolio.nav_usd` (set to $100,000 in `config.yaml`). Two methods: conviction-tilt (default, always converges) and Markowitz MVO (optional, falls back to conviction-tilt on non-convergence). Constraints: 150% gross, 0–10% net, 5% single-name cap, 25% sector gross cap, 0.15 net beta. Output: `portfolio_positions`, `portfolio_history`, `position_approvals` (PENDING).
 
 ### Layer 5 — Risk Management (`risk/`)
 
@@ -342,7 +363,7 @@ Reads APPROVED rows from `position_approvals`; submits day-limit orders via the 
 
 **Reporting engine** (`run_reporting.py`): nightly P&L decomposition (beta + sector Brinson + factor OLS + alpha), FIFO position attribution, win/loss analysis, tear sheets, AI-generated weekly commentary, and LP letters. Output: `pnl_attribution`, `portfolio_nav`, `position_trades`, `lp_letters`, `weekly_commentary`.
 
-**Streamlit dashboard** (`dashboard/app.py`): six pages served at `http://localhost:8502` — Portfolio, Research, Risk, Performance, Execution, Letter. Auto-refreshes every 5 minutes during market hours. JARVIS AI assistant provides live commentary via OpenAI `gpt-4o`.
+**Streamlit dashboard** (`dashboard/app.py`): seven pages served at `http://localhost:8502` — Portfolio, Research, Risk, Performance, Execution, Letter, Ticker. The Ticker page (`dashboard/ticker_*.py`) shows a ticker's valuation, signal, factor and AI scores, institutional holdings, and SEC filings with an exact EDGAR reader and saved AI summaries. Auto-refreshes every 5 minutes during market hours. The JARVIS assistant uses the configured LLM. See `docs/run_dashboard.md` for what the dashboard writes or calls.
 
 ---
 
