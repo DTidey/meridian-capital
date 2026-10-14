@@ -12,10 +12,11 @@ from data.db import (
     fundamentals,
     insider_cluster_flags,
     insider_transactions,
-    institutional_summary,
+    institutional_holdings,
     short_interest,
     sp500_universe,
 )
+from data.institutional import summarise_rows
 
 logger = logging.getLogger(__name__)
 
@@ -222,19 +223,18 @@ def _load_insider_flags(conn: sa.engine.Connection, cutoff: date) -> pd.DataFram
 
 
 def _load_institutional(conn: sa.engine.Connection, cutoff: date) -> pd.DataFrame:
-    rows = conn.execute(
+    # Summarised from holdings filed by the cutoff: report_date is the quarter end, and
+    # 13Fs are filed up to 45 days later, so the stored summary would leak future filings.
+    holdings = conn.execute(
         sa.select(
-            institutional_summary.c.ticker,
-            institutional_summary.c.report_date,
-            institutional_summary.c.funds_holding,
-            institutional_summary.c.net_share_change,
-            institutional_summary.c.new_positions,
-        )
-        .where(institutional_summary.c.report_date <= score_date_str(cutoff))
-        .order_by(institutional_summary.c.ticker, institutional_summary.c.report_date)
+            institutional_holdings.c.fund_name,
+            institutional_holdings.c.ticker,
+            institutional_holdings.c.report_date,
+            institutional_holdings.c.shares_held,
+        ).where(institutional_holdings.c.filed_date <= score_date_str(cutoff))
     ).fetchall()
     df = pd.DataFrame(
-        rows,
+        summarise_rows(holdings),
         columns=["ticker", "report_date", "funds_holding", "net_share_change", "new_positions"],
     )
     if not df.empty:

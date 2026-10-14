@@ -145,6 +145,7 @@ institutional_holdings = sa.Table(
     sa.Column("shares_held", sa.Float),
     sa.Column("market_value", sa.Float),
     sa.Column("report_date", sa.String, nullable=False),
+    sa.Column("filed_date", sa.String),
     sa.Column("fetched_at", sa.String),
     sa.UniqueConstraint("fund_name", "ticker", "report_date"),
 )
@@ -240,6 +241,7 @@ def initialise_schema(engine: sa.engine.Engine) -> None:
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         _add_column_if_missing(conn, "earnings_transcripts", "source_accession_no", "TEXT")
         _add_column_if_missing(conn, "sec_filings", "transcript_checked", "BOOLEAN DEFAULT FALSE")
+        _add_column_if_missing(conn, "institutional_holdings", "filed_date", "TEXT")
     logger.debug("Schema initialised")
 
 
