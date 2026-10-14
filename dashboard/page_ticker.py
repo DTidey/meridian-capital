@@ -29,6 +29,7 @@ from dashboard.ticker_signals import (
     render_signal,
     render_subfactors,
 )
+from dashboard.ticker_valuation import render_valuation
 from data.db import (
     analyst_estimates,
     daily_prices,
@@ -224,6 +225,7 @@ def render(engine, cfg: dict) -> None:
             note += f" | EPS estimate: ${eps_est:.2f}"
         st.caption(note)
 
+    render_valuation(engine, ticker)
     render_signal(engine, ticker)
 
     # -----------------------------------------------------------------------

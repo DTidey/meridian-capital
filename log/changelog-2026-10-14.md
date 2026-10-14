@@ -69,3 +69,13 @@
 - **Figure check is advisory.** It flags numbers not found verbatim (after removing thousands
   separators), so a correct but derived figure is also flagged; the prompt asks for exact
   quotes to keep that rare.
+
+# 2026-10-14: Ticker valuation (packet 21)
+
+- **EV/EBIT, not EV/EBITDA.** `fundamentals` has no depreciation and amortisation; the value
+  factor's `val_ev_ebitda_inv` already uses EBIT, so the dashboard labels it honestly.
+- **TTM from quarterly rows.** Annual rows have 12 near-duplicate pairs from two sources with
+  different debt and share counts; quarterly rows have none and are more current.
+- **300-day span check.** Four rows aren't a trailing year if a quarter is missing (JPM's
+  2025-03-31 row is empty). Contiguous quarter ends are about 9 months apart and one gap makes
+  about 12, so the limit is 300 days; the first draft's 13 months let a gap through (Reviewer).

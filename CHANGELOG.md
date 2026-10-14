@@ -11,6 +11,9 @@ Release policy:
 ## Unreleased
 
 ### Added
+- Ticker page valuation (packet `21-ticker-valuation`): market cap, enterprise value, P/E,
+  EV/EBIT, price/book, FCF yield and dividend yield from the latest price and trailing four
+  quarters.
 - Ticker page filing viewer (packet `20-filing-viewer`): read any recent 10-K, 10-Q or 8-K,
   converted from the EDGAR original with real paragraphs and tables, with an optional gpt-4o-mini
   summary that is saved, costed and checked for figures not in the filing.
