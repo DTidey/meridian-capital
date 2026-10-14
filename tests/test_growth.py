@@ -123,7 +123,8 @@ class TestAcceleration:
         assert result is not None
 
     def test_insufficient_history_returns_nan(self):
-        df = _fund_series("T", n=7)
+        # Packet 26: needs two YoY points, i.e. quarters t, t-3, t-12, t-15 (n=5 gives one)
+        df = _fund_series("T", n=5)
         assert np.isnan(_acceleration(df, "revenue"))
 
 
@@ -229,8 +230,9 @@ class TestDateBased:
     def test_acceleration_by_date(self):
         df = _fund_series("T", n=9, rev_growth=0.10)
         assert _acceleration(df, "revenue") == pytest.approx(0.0, abs=1e-9)
-        df_gap = df.drop(index=4)  # the 12-months-back quarter
-        assert np.isnan(_acceleration(df_gap, "revenue"))
+        # Packet 26: a missing quarter only drops the points that need it
+        df_gap = df.drop(index=4)  # the 12-months-back quarter for the latest point
+        assert _acceleration(df_gap, "revenue") == pytest.approx(0.0, abs=1e-9)
 
     def test_empty_newest_quarter_keeps_growth(self):
         # BAC/GS after packet 23: newest row empty
@@ -261,9 +263,10 @@ class TestDateBased:
 
 
 class TestDateBasedMore:
-    def test_acceleration_missing_two_years_back(self):
-        df = _fund_series("T", n=9, rev_growth=0.10).drop(index=0)  # the 24-months-back quarter
-        assert np.isnan(_acceleration(df, "revenue"))
+    def test_acceleration_without_two_years_of_history(self):
+        # Packet 26: 24 months back is no longer needed
+        df = _fund_series("T", n=9, rev_growth=0.10).drop(index=0)
+        assert _acceleration(df, "revenue") == pytest.approx(0.0, abs=1e-9)
 
     def test_duplicate_index_labels(self):
         # Adversarial: concatenated frames can repeat index labels
@@ -271,3 +274,65 @@ class TestDateBasedMore:
         df.index = [0] * len(df)
         latest, prior = value_and_prior(df, "revenue", 12)
         assert latest is not None and prior is not None
+
+
+# ---------------------------------------------------------------------------
+# Packet 26 — acceleration as the trend of YoY growth
+# ---------------------------------------------------------------------------
+
+
+def _revenue_series(revenues, start="2024-03-31"):
+    """Quarterly rows (oldest first) with the given revenues."""
+    ends = pd.date_range(start=start, periods=len(revenues), freq="QE")
+    return pd.DataFrame({"period_end": ends, "revenue": revenues})
+
+
+class TestAccelerationTrend:
+    def test_accelerating_is_positive(self):
+        # YoY: 10%, 20%, 30%, 40% for the last four quarters -> +10 points per quarter
+        base = [100.0, 100.0, 100.0, 100.0]
+        rev = base + [110.0, 120.0, 130.0, 140.0]
+        assert _acceleration(_revenue_series(rev), "revenue") == pytest.approx(0.10)
+
+    def test_decelerating_is_negative(self):
+        rev = [100.0, 100.0, 100.0, 100.0, 140.0, 130.0, 120.0, 110.0]
+        assert _acceleration(_revenue_series(rev), "revenue") == pytest.approx(-0.10)
+
+    def test_two_points_minimum(self):
+        # Four values: YoY at t-3 (10%) and t (30%) -> slope 0.20 per quarter
+        df = pd.DataFrame(
+            {
+                "period_end": pd.to_datetime(
+                    ["2024-03-31", "2024-06-30", "2025-03-31", "2025-06-30"]
+                ),
+                "revenue": [100.0, 100.0, 110.0, 130.0],
+            }
+        )
+        assert _acceleration(df, "revenue") == pytest.approx(0.20)
+
+    def test_one_point_is_nan(self):
+        df = _revenue_series([100.0, None, None, None, 110.0]).dropna()
+        assert np.isnan(_acceleration(df, "revenue"))
+
+    def test_uses_at_most_four_points(self):
+        # An old, wild quarter beyond the latest four YoY points must not matter
+        rev = [1.0, 100.0, 100.0, 100.0, 100.0, 110.0, 120.0, 130.0, 140.0]
+        assert _acceleration(_revenue_series(rev, "2023-12-31"), "revenue") == pytest.approx(0.10)
+
+    def test_non_contiguous_points_use_positions(self):
+        # Adversarial: points at t (10%) and t-9 (40%) only -> slope over 3 quarters
+        rev = [100.0, None, None, 100.0, 140.0, None, None, 110.0]
+        df = _revenue_series(rev).dropna()
+        assert _acceleration(df, "revenue") == pytest.approx(-0.10)
+
+    def test_seasonality_ignored(self):
+        # Same seasonal pattern every year, steady 10% growth -> no acceleration
+        year1 = [100.0, 80.0, 90.0, 150.0]
+        year2 = [v * 1.1 for v in year1]
+        assert _acceleration(_revenue_series(year1 + year2), "revenue") == pytest.approx(
+            0.0, abs=1e-9
+        )
+
+    def test_zero_prior_point_skipped(self):
+        rev = [0.0, 100.0, 100.0, 100.0, 110.0, 120.0, 130.0, 140.0]
+        assert _acceleration(_revenue_series(rev), "revenue") == pytest.approx(0.10)

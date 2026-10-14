@@ -9,7 +9,7 @@ import requests
 import sqlalchemy as sa
 import yfinance as yf
 
-from .db import fundamentals, insert_or_replace
+from .db import _dialect_insert, fundamentals
 from .providers import FundamentalsProvider, Providers
 
 logger = logging.getLogger(__name__)
@@ -221,14 +221,37 @@ def _upsert_period(
     raw: dict,
     ratios: dict,
 ) -> None:
+    """Insert or update a period, keeping stored values where the new fetch has none.
+
+    Yahoo keeps listing aging quarters after blanking their figures; overwriting with those
+    blanks would erase the history that multi-quarter measures rely on. Raw figures are merged
+    field by field. Ratios are kept only when the fetch has no figures at all; otherwise they
+    come from this fetch, so a ratio never outlives the figures it was computed from.
+    """
+    raw_vals = {k: _safe(v) for k, v in raw.items()}
+    ratio_vals = {k: _safe(v) for k, v in ratios.items()}
+    stmt = _dialect_insert(conn)(fundamentals).values(
+        ticker=ticker,
+        period_type=period_type,
+        period_end=month_end(period_end),
+        updated_at=datetime.utcnow().isoformat(timespec="seconds"),
+        **raw_vals,
+        **ratio_vals,
+    )
+    blank_fetch = all(v is None for v in raw_vals.values())
+    merged = {c: sa.func.coalesce(stmt.excluded[c], fundamentals.c[c]) for c in raw_vals}
+    merged |= {
+        c: (
+            sa.func.coalesce(stmt.excluded[c], fundamentals.c[c])
+            if blank_fetch
+            else stmt.excluded[c]
+        )
+        for c in ratio_vals
+    }
     conn.execute(
-        insert_or_replace(conn, fundamentals).values(
-            ticker=ticker,
-            period_type=period_type,
-            period_end=month_end(period_end),
-            updated_at=datetime.utcnow().isoformat(timespec="seconds"),
-            **raw,
-            **ratios,
+        stmt.on_conflict_do_update(
+            index_elements=["ticker", "period_type", "period_end"],
+            set_={**merged, "updated_at": stmt.excluded.updated_at},
         )
     )
 

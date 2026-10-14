@@ -311,7 +311,7 @@ YoY comparisons use the same calendar quarter from one year prior (e.g. Q1 2025 
 |--------|-------------|
 | `grw_rev_yoy` | `(revenue[latest] − revenue[4q ago]) / abs(revenue[4q ago])` |
 | `grw_earn_yoy` | `(net_income[latest] − net_income[4q ago]) / abs(net_income[4q ago])` |
-| `grw_rev_accel` | `grw_rev_yoy[latest] − grw_rev_yoy[4q ago]` — acceleration in revenue growth |
+| `grw_rev_accel` | Slope per quarter of YoY revenue growth over the latest four quarters (2 to 4 points); superseded the original "latest YoY − YoY 4q ago" in packet 26 (`docs/specs/26-acceleration-trend.md`) |
 | `grw_rd_intensity` | `rd_expense / revenue`; `NaN` where revenue ≤ 0 |
 | `grw_fcf_yoy` | `(fcf[latest] − fcf[4q ago]) / abs(fcf[4q ago])`; `NaN` when base is 0 |
 
