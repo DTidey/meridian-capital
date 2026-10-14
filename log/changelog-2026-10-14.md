@@ -125,3 +125,11 @@
   only coalesce for a fully blank fetch; a partial fetch replaces them, so they never mix old
   and new figures (Reviewer).
 - **Coverage 203 of 503 today**, rising each quarter as history accumulates.
+
+# 2026-10-14: Reference docs refresh (packet 27)
+
+- **Historical packet docs left alone.** They record each change as made; rewriting them would
+  lose that. `docs/README.md` now says which docs are living and which are records.
+- **ERD generated from the schema** so drift can be checked mechanically (5 tables and many
+  columns had been missed by hand edits).
+- **Test counts removed** from docs; every hard-coded count had gone stale.
