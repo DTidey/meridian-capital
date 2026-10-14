@@ -25,6 +25,7 @@ _EDGAR_ARCH = "https://www.sec.gov"
 _SUBMISSIONS = "https://data.sec.gov/submissions"
 _OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 _OPENFIGI_BATCH = 100
+_US_EXCHANGES = ("US", "UN", "UA", "UQ", "UR", "UT")
 _OPENFIGI_SLEEP = 0.5  # 25 req/10 s free-tier limit → stay at 2/s
 _MIN_INTERVAL = 1.0 / 8  # 8 req/s (SEC)
 _XML_NAME = re.compile(r"[\w.-]+\.xml", re.IGNORECASE)  # plain filename, no path
@@ -112,8 +113,9 @@ def _fetch_13f_infotable(
     accession: str,
     limiter: _RateLimiter,
     conn: sa.engine.Connection,
+    cusip_cache: dict[str, str | None] | None = None,
 ) -> list[dict]:
-    """Download, parse, and ticker-resolve a 13-F infotable XML."""
+    """Download, parse, and resolve a 13-F infotable to S&P 500 tickers (others dropped)."""
     acc_clean = accession.replace("-", "")
     cik_clean = cik.lstrip("0")
     base = f"{_EDGAR_ARCH}/Archives/edgar/data/{cik_clean}/{acc_clean}"
@@ -135,22 +137,37 @@ def _fetch_13f_infotable(
         logger.debug("No infotable found for %s", accession)
         return []
 
+    resolved = _resolve_tickers(raw, conn, cusip_cache)
+    logger.debug("13F %s: %d/%d rows resolved to tickers", accession, len(resolved), len(raw))
+    return resolved
+
+
+def _resolve_tickers(
+    raw: list[dict], conn: sa.engine.Connection, cusip_cache: dict[str, str | None] | None
+) -> list[dict]:
+    """Fill tickers by issuer name, then CUSIP; keep S&P 500 universe holdings only."""
+    name_map = _build_name_ticker_map(conn)
+    universe = set(conn.execute(sa.select(sp500_universe.c.ticker)).scalars())
     needs = [h for h in raw if not h["ticker"]]
     if needs:
         # Primary: match issuer name against our stored S&P 500 universe
-        name_map = _build_name_ticker_map(conn)
         for h in needs:
             h["ticker"] = name_map.get(_norm_name(h["name"]))
 
         # Fallback: CUSIP lookup via OpenFIGI (only when API key is configured)
         still_unresolved = [h for h in needs if not h["ticker"] and h.get("cusip")]
         if still_unresolved:
-            cusip_map = _cusip_to_tickers_openfigi(list({h["cusip"] for h in still_unresolved}))
+            cusip_map = _cusip_to_tickers_openfigi(
+                sorted({h["cusip"] for h in still_unresolved}), cusip_cache
+            )
             for h in still_unresolved:
                 h["ticker"] = cusip_map.get(h["cusip"])
 
-    resolved = [h for h in raw if h.get("ticker")]
-    logger.debug("13F %s: %d/%d rows resolved to tickers", accession, len(resolved), len(raw))
+    for h in raw:
+        if h.get("ticker"):
+            # Universe spells share classes BRK-B; OpenFIGI says BRK/B, filings may say BRK.B
+            h["ticker"] = re.sub(r"[./]", "-", h["ticker"])
+    resolved = [h for h in raw if h.get("ticker") in universe]
     return resolved
 
 
@@ -282,50 +299,77 @@ def _norm_name(name: str) -> str:
 
 
 def _build_name_ticker_map(conn: sa.engine.Connection) -> dict[str, str]:
-    """Normalised company name → ticker for the stored S&P 500 universe."""
+    """Normalised company name → ticker for the stored S&P 500 universe.
+
+    Names shared by several tickers (share classes: FOX/FOXA, NWS/NWSA) are left out,
+    so those holdings fall through to the CUSIP lookup, which can tell the classes apart.
+    """
     rows = conn.execute(
         sa.select(sp500_universe.c.ticker, sp500_universe.c.company_name)
     ).fetchall()
-    return {_norm_name(name): ticker for ticker, name in rows if name}
+    by_name: dict[str, set[str]] = {}
+    for ticker, name in rows:
+        if name:
+            by_name.setdefault(_norm_name(name), set()).add(ticker)
+    return {name: next(iter(t)) for name, t in by_name.items() if len(t) == 1}
 
 
-def _cusip_to_tickers_openfigi(cusips: list[str]) -> dict[str, str]:
-    """CUSIP → ticker via OpenFIGI.  Requires OPENFIGI_API_KEY (free registration)."""
+def _cusip_to_tickers_openfigi(
+    cusips: list[str], cache: dict[str, str | None] | None = None
+) -> dict[str, str]:
+    """CUSIP/CINS → US common-stock ticker via OpenFIGI.  Requires OPENFIGI_API_KEY.
+
+    `cache` (shared across one run) records answers, including unresolved ones, so each
+    identifier is looked up once; identifiers from failed batches are left out to retry.
+    """
     api_key = os.getenv("OPENFIGI_API_KEY", "").strip()
     if not api_key:
         return {}
+    cache = {} if cache is None else cache
 
-    result: dict[str, str] = {}
     session = requests.Session()
     session.headers.update({"Content-Type": "application/json", "X-OPENFIGI-APIKEY": api_key})
-
-    for i in range(0, len(cusips), _OPENFIGI_BATCH):
-        batch = cusips[i : i + _OPENFIGI_BATCH]
+    todo = [c for c in cusips if c not in cache]
+    for i in range(0, len(todo), _OPENFIGI_BATCH):
+        batch = todo[i : i + _OPENFIGI_BATCH]
         try:
             resp = session.post(
                 _OPENFIGI_URL,
-                json=[{"idType": "ID_CUSIP", "idValue": c} for c in batch],
+                # CINS (non-US issuers) start with a letter and need their own id type
+                json=[
+                    {"idType": "ID_CINS" if c[:1].isalpha() else "ID_CUSIP", "idValue": c}
+                    for c in batch
+                ],
                 timeout=30,
             )
             resp.raise_for_status()
-            for cusip, item in zip(batch, resp.json(), strict=False):
-                hits = item.get("data", [])
-                for hit in hits:
-                    if (
-                        hit.get("securityType") in ("Common Stock", "ETP")
-                        and hit.get("exchCode", "") in ("US", "UN", "UA", "UQ", "UR", "UT")
-                        and hit.get("ticker")
-                    ):
-                        result[cusip] = hit["ticker"]
-                        break
-                if cusip not in result and hits and hits[0].get("ticker"):
-                    result[cusip] = hits[0]["ticker"]
+            items = resp.json()
+            if not isinstance(items, list):
+                raise ValueError(f"unexpected response type {type(items).__name__}")
         except Exception as exc:
-            logger.debug("OpenFIGI batch %d failed: %s", i // _OPENFIGI_BATCH, exc)
-        time.sleep(_OPENFIGI_SLEEP)
+            logger.warning("OpenFIGI batch %d failed: %s", i // _OPENFIGI_BATCH, exc)
+            continue
+        finally:
+            time.sleep(_OPENFIGI_SLEEP)
+        for j, cusip in enumerate(batch):
+            item = items[j] if j < len(items) and isinstance(items[j], dict) else {}
+            cache[cusip] = _us_common_ticker(item.get("data", []))
 
+    result = {c: cache[c] for c in cusips if cache.get(c)}
     logger.debug("OpenFIGI resolved %d/%d CUSIPs", len(result), len(cusips))
     return result
+
+
+def _us_common_ticker(hits: list[dict]) -> str | None:
+    """First US-listed common stock ticker; foreign listings can collide with US tickers."""
+    for hit in hits:
+        if (
+            hit.get("securityType") == "Common Stock"
+            and hit.get("exchCode", "") in _US_EXCHANGES
+            and hit.get("ticker")
+        ):
+            return hit["ticker"]
+    return None
 
 
 def _summarise_holdings(conn: sa.engine.Connection) -> None:
@@ -449,42 +493,75 @@ def _load_filing(
     accession: str,
     filed_date: str,
     report_date: str,
+    cusip_cache: dict[str, str | None],
+    refetch: bool = False,
 ) -> int:
-    """Fetch and store one filing unless its period is already loaded; returns rows stored."""
+    """Fetch and store one filing; returns rows stored.
+
+    A period already loaded is skipped, or with refetch replaced once the new fetch succeeds.
+    """
+    this_filing = (institutional_holdings.c.fund_name == name) & (
+        institutional_holdings.c.report_date == report_date
+    )
     existing = conn.execute(
-        sa.select(sa.func.count())
-        .select_from(institutional_holdings)
-        .where(
-            (institutional_holdings.c.fund_name == name)
-            & (institutional_holdings.c.report_date == report_date)
-        )
+        sa.select(sa.func.count()).select_from(institutional_holdings).where(this_filing)
     ).scalar()
-    if existing > 0:
+    if existing > 0 and not refetch:
         logger.debug("13-F for %s %s already loaded (%d rows)", name, report_date, existing)
         return 0
 
-    holdings = _aggregate_by_ticker(_fetch_13f_infotable(session, cik, accession, limiter, conn))
+    holdings = _aggregate_by_ticker(
+        _fetch_13f_infotable(session, cik, accession, limiter, conn, cusip_cache=cusip_cache)
+    )
     if not holdings:
         logger.warning("No holdings parsed for %s %s", name, accession)
         return 0
     if _normalise_value_units(holdings):
         logger.info("13-F %s (%s) reported in $ thousands; rescaled", name, report_date)
 
+    if existing:
+        conn.execute(sa.delete(institutional_holdings).where(this_filing))
+        logger.info("13-F %s (%s): replaced %d stored rows", name, report_date, existing)
     _store_holdings(conn, name, holdings, report_date, filed_date)
     conn.commit()
     logger.info("13-F %s (%s): %d holdings stored", name, report_date, len(holdings))
     return len(holdings)
 
 
+def _load_fund(
+    conn: sa.engine.Connection,
+    session: requests.Session,
+    limiter: _RateLimiter,
+    fund: dict,
+    cusip_cache: dict[str, str | None],
+    refetch: bool,
+) -> int:
+    """Load a fund's recent 13F filings; returns holdings stored."""
+    name, cik = fund["name"], fund["cik"]
+    filings = _get_recent_13f_accessions(session, cik, limiter)
+    if not filings:
+        logger.warning("No 13-F found for %s (CIK %s)", name, cik)
+        return 0
+    return sum(
+        _load_filing(
+            conn, session, limiter, name, cik, accession, filed, period, cusip_cache, refetch
+        )
+        for accession, filed, period in filings
+    )
+
+
 def update_institutional(
     conn: sa.engine.Connection,
     config: dict,
+    refetch: bool = False,
 ) -> dict[str, int]:
     """Fetch 13-F filings for tracked funds. Returns {fund_name: holdings_stored}."""
     funds = config["institutional"]["tracked_funds"]
     session = _make_session()
     limiter = _RateLimiter(_MIN_INTERVAL)
     summary: dict[str, int] = {}
+
+    cusip_cache: dict[str, str | None] = {}
 
     purged = _purge_legacy_rows(conn)
     if purged:
@@ -493,22 +570,7 @@ def update_institutional(
     logger.info("Fetching 13-F filings for %d tracked funds", len(funds))
 
     for fund in funds:
-        name = fund["name"]
-        cik = fund["cik"]
-
-        filings = _get_recent_13f_accessions(session, cik, limiter)
-        if not filings:
-            logger.warning("No 13-F found for %s (CIK %s)", name, cik)
-            summary[name] = 0
-            continue
-
-        total_stored = 0
-        for accession, filed_date, report_date in filings:
-            total_stored += _load_filing(
-                conn, session, limiter, name, cik, accession, filed_date, report_date
-            )
-
-        summary[name] = total_stored
+        summary[fund["name"]] = _load_fund(conn, session, limiter, fund, cusip_cache, refetch)
 
     _summarise_holdings(conn)
 

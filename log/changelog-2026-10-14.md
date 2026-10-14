@@ -38,3 +38,17 @@
   "CHUBB LTD SWITZ"), about 3% of holdings, which creates false "New" positions in the table
   and the factor. Options: set `OPENFIGI_API_KEY`, or store CUSIPs and reuse a mapping once
   resolved.
+
+# 2026-10-14: OpenFIGI resolution (packet 19)
+
+- **Prompted by the user adding an OpenFIGI key.** A dry run showed the existing fallback made
+  things worse (46k rows, 26 flags) and still missed Chubb, so it was fixed before the key was
+  used on the real database.
+- **`ID_CINS` by first character.** CUSIPs for US/Canadian issuers start with a digit; CINS
+  start with a country letter. OpenFIGI doesn't treat them as interchangeable.
+- **No first-hit fallback.** Foreign listings come first for some issuers (Chubb: `AEX`), and
+  a wrong ticker is worse than an unresolved one.
+- **Non-universe holdings dropped at ingestion.** They were 86% of rows, unused, and drove most
+  of the "3+ funds opening" flags.
+- **Remaining one-quarter gaps are real trading.** All are at the three high-turnover funds;
+  six sampled Bridgewater Q1 2026 gaps are absent from its actual filing.
