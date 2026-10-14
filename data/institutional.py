@@ -5,6 +5,7 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET  # nosec B405
+from collections import Counter
 from datetime import datetime
 
 import requests
@@ -26,6 +27,7 @@ _OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 _OPENFIGI_BATCH = 100
 _OPENFIGI_SLEEP = 0.5  # 25 req/10 s free-tier limit → stay at 2/s
 _MIN_INTERVAL = 1.0 / 8  # 8 req/s (SEC)
+_XML_NAME = re.compile(r"[\w.-]+\.xml", re.IGNORECASE)  # plain filename, no path
 
 
 class _RateLimiter:
@@ -50,8 +52,11 @@ def _make_session() -> requests.Session:
 
 def _get_recent_13f_accessions(
     session: requests.Session, cik: str, limiter: _RateLimiter, max_filings: int = 6
-) -> list[tuple[str, str]]:
-    """Return up to max_filings (accession_number, filed_date) for recent 13-F-HRs."""
+) -> list[tuple[str, str, str]]:
+    """Return (accession, filed_date, period) for the latest original 13F-HR per period.
+
+    Amendments (13F-HR/A) are skipped: originals give one consistent filing per quarter.
+    """
     limiter.wait()
     padded = cik.lstrip("0").zfill(10)
     url = f"{_SUBMISSIONS}/CIK{padded}.json"
@@ -67,14 +72,38 @@ def _get_recent_13f_accessions(
     forms = recent.get("form", [])
     dates = recent.get("filingDate", [])
     accs = recent.get("accessionNumber", [])
+    periods = recent.get("reportDate", [])
 
     results = []
-    for ft, fd, acc in zip(forms, dates, accs, strict=False):
-        if ft in ("13F-HR", "13F-HR/A"):
-            results.append((acc, fd))
-            if len(results) >= max_filings:
-                break
+    seen: set[str] = set()
+    rows = sorted(zip(forms, dates, accs, periods, strict=False), key=lambda r: r[1], reverse=True)
+    # Newest first, so the first filing seen for a period wins
+    for ft, fd, acc, period in rows:
+        if ft != "13F-HR" or not period or period in seen:
+            continue
+        seen.add(period)
+        results.append((acc, fd, period))
+        if len(results) >= max_filings:
+            break
     return results
+
+
+def _infotable_filenames(session: requests.Session, base: str, limiter: _RateLimiter) -> list[str]:
+    """Infotable candidates from the filing's index.json; legacy names if none are listed."""
+    names: list[str] = []
+    limiter.wait()
+    try:
+        resp = session.get(f"{base}/index.json", timeout=30)
+        resp.raise_for_status()
+        items = resp.json()["directory"]["item"]
+        names = [
+            i["name"]
+            for i in items
+            if _XML_NAME.fullmatch(i["name"]) and i["name"] != "primary_doc.xml"
+        ]
+    except Exception as exc:
+        logger.debug("index.json fetch failed (%s): %s", base, exc)
+    return names or ["infotable.xml", "form13fInfoTable.xml"]
 
 
 def _fetch_13f_infotable(
@@ -90,7 +119,7 @@ def _fetch_13f_infotable(
     base = f"{_EDGAR_ARCH}/Archives/edgar/data/{cik_clean}/{acc_clean}"
 
     raw: list[dict] = []
-    for filename in ("infotable.xml", "form13fInfoTable.xml"):
+    for filename in _infotable_filenames(session, base, limiter):
         limiter.wait()
         try:
             resp = session.get(f"{base}/{filename}", timeout=60)
@@ -125,11 +154,43 @@ def _fetch_13f_infotable(
     return resolved
 
 
+def _normalise_value_units(rows: list[dict]) -> bool:
+    """Rescale a filing still reported in $ thousands; True if it was rescaled.
+
+    No S&P 500 stock trades near $1, so a median implied price below $1 means thousands.
+    """
+    prices = sorted(
+        r["market_value"] / r["shares"]
+        for r in rows
+        if (r.get("shares") or 0) > 0 and (r.get("market_value") or 0) > 0
+    )
+    if not prices or prices[len(prices) // 2] >= 1.0:
+        return False
+    for r in rows:
+        if r.get("market_value") is not None:
+            r["market_value"] *= 1000
+    return True
+
+
+def _aggregate_by_ticker(rows: list[dict]) -> list[dict]:
+    """Sum shares and value per ticker; a filing can list one issuer on several rows."""
+    totals: dict[str, dict] = {}
+    for row in rows:
+        agg = totals.setdefault(
+            row["ticker"], {"ticker": row["ticker"], "shares": None, "market_value": None}
+        )
+        for key in ("shares", "market_value"):
+            if row.get(key) is not None:
+                agg[key] = (agg[key] or 0.0) + row[key]
+    return list(totals.values())
+
+
 def _parse_infotable(xml_text: str) -> list[dict]:
     """Parse 13-F infotable XML.
 
     Real EDGAR filings carry CUSIP numbers but no ticker; test fixtures may
-    include an <issuerTicker> element.  Rows with neither are skipped.
+    include an <issuerTicker> element.  Rows with neither are skipped, as are
+    option rows (<putCall>) and principal amounts (PRN, i.e. bonds).
     """
     holdings = []
     try:
@@ -149,6 +210,8 @@ def _parse_infotable(xml_text: str) -> list[dict]:
         name_el = entry.find(f"{ns}nameOfIssuer")
         shares_el = entry.find(f"{ns}shrsOrPrnAmt/{ns}sshPrnamt")
         value_el = entry.find(f"{ns}value")
+        if not _is_common_stock(entry, ns):
+            continue
 
         ticker = (ticker_el.text or "").strip().upper() if ticker_el is not None else ""
         cusip = (cusip_el.text or "").strip() if cusip_el is not None else ""
@@ -162,7 +225,8 @@ def _parse_infotable(xml_text: str) -> list[dict]:
         except (ValueError, AttributeError):
             shares = None
         try:
-            value = float((value_el.text or "0").replace(",", "")) * 1000
+            # Whole dollars since 2023-01-03 (previously $ thousands)
+            value = float((value_el.text or "0").replace(",", ""))
         except (ValueError, AttributeError):
             value = None
 
@@ -177,6 +241,13 @@ def _parse_infotable(xml_text: str) -> list[dict]:
         )
 
     return holdings
+
+
+def _is_common_stock(entry: ET.Element, ns: str) -> bool:
+    """False for option rows (<putCall>) and principal amounts (PRN)."""
+    put_call = entry.findtext(f"{ns}putCall") or ""
+    amount_type = entry.findtext(f"{ns}shrsOrPrnAmt/{ns}sshPrnamtType") or ""
+    return not put_call.strip() and amount_type.strip().upper() != "PRN"
 
 
 _CORP_NOISE = re.compile(
@@ -258,75 +329,151 @@ def _cusip_to_tickers_openfigi(cusips: list[str]) -> dict[str, str]:
 
 
 def _summarise_holdings(conn: sa.engine.Connection) -> None:
-    """Aggregate per-ticker metrics from raw institutional_holdings rows."""
-    conn.execute(sa.delete(institutional_summary))
+    """Rebuild institutional_summary per (ticker, period), comparing each fund with itself.
 
+    Funds file on different days, so each fund is compared with its own previous
+    filing, and funds yet to file for a period count with their latest earlier one.
+    """
     rows = conn.execute(
         sa.select(
+            institutional_holdings.c.fund_name,
             institutional_holdings.c.ticker,
             institutional_holdings.c.report_date,
-            sa.func.count(sa.distinct(institutional_holdings.c.fund_name)).label("funds_holding"),
-            sa.func.sum(institutional_holdings.c.shares_held).label("total_shares"),
-        ).group_by(institutional_holdings.c.ticker, institutional_holdings.c.report_date)
+            institutional_holdings.c.shares_held,
+        )
     ).fetchall()
 
-    for ticker, report_date, funds, total_shares in rows:
-        # Find the most recent prior quarter actually present in the DB —
-        # avoids brittle exact-date arithmetic since filing dates shift slightly
-        # each quarter.
-        prior_date = conn.execute(
-            sa.select(sa.func.max(institutional_holdings.c.report_date)).where(
-                (institutional_holdings.c.ticker == ticker)
-                & (institutional_holdings.c.report_date < report_date)
-            )
-        ).scalar()
-
-        net_change = None
-        new_positions = funds  # all holders are new when no prior quarter exists
-        if prior_date:
-            prior = conn.execute(
-                sa.select(sa.func.sum(institutional_holdings.c.shares_held)).where(
-                    (institutional_holdings.c.ticker == ticker)
-                    & (institutional_holdings.c.report_date == prior_date)
-                )
-            ).scalar()
-            if prior is not None:
-                net_change = (total_shares or 0) - (prior or 0)
-
-            current_funds = set(
-                conn.execute(
-                    sa.select(institutional_holdings.c.fund_name).where(
-                        (institutional_holdings.c.ticker == ticker)
-                        & (institutional_holdings.c.report_date == report_date)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            prior_funds = set(
-                conn.execute(
-                    sa.select(institutional_holdings.c.fund_name).where(
-                        (institutional_holdings.c.ticker == ticker)
-                        & (institutional_holdings.c.report_date == prior_date)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            new_positions = len(current_funds - prior_funds)
-
-        conn.execute(
-            insert_or_replace(conn, institutional_summary).values(
-                ticker=ticker,
-                report_date=report_date,
-                funds_holding=funds,
-                net_share_change=net_change,
-                new_positions=new_positions,
-            )
-        )
+    conn.execute(sa.delete(institutional_summary))
+    for values in summarise_rows(rows):
+        conn.execute(insert_or_replace(conn, institutional_summary).values(**values))
 
     conn.commit()
     logger.debug("Institutional summary rebuilt")
+
+
+def summarise_rows(rows) -> list[dict]:
+    """Summary rows for (fund, ticker, period, shares) holdings; rules in _summarise_holdings."""
+    filings: dict[tuple[str, str], dict[str, float]] = {}
+    for fund, ticker, period, shares in rows:
+        filings.setdefault((fund, period), {})[ticker] = shares or 0.0
+    fund_periods: dict[str, list[str]] = {}
+    for fund, period in sorted(filings):
+        fund_periods.setdefault(fund, []).append(period)
+
+    return [
+        values
+        for period in sorted({p for _, p in filings})
+        for values in _summarise_period(filings, fund_periods, period)
+    ]
+
+
+def _summarise_period(
+    filings: dict[tuple[str, str], dict[str, float]],
+    fund_periods: dict[str, list[str]],
+    period: str,
+) -> list[dict]:
+    """Summary rows for one period; see _summarise_holdings for the rules."""
+    funds_holding: Counter[str] = Counter()
+    new_positions: Counter[str] = Counter()
+    net_change: dict[str, float] = {}
+    compared = False
+
+    for fund, periods in fund_periods.items():
+        as_of = [p for p in periods if p <= period]
+        if not as_of:
+            continue
+        current = filings[(fund, as_of[-1])]
+        funds_holding.update(current.keys())
+        if as_of[-1] != period or len(as_of) < 2:
+            continue  # not filed for this period yet, or no baseline to compare with
+        compared = True
+        prior = filings[(fund, as_of[-2])]
+        for ticker in current.keys() | prior.keys():
+            change = current.get(ticker, 0.0) - prior.get(ticker, 0.0)
+            net_change[ticker] = net_change.get(ticker, 0.0) + change
+            if ticker in current and ticker not in prior:
+                new_positions[ticker] += 1
+
+    return [
+        {
+            "ticker": ticker,
+            "report_date": period,
+            "funds_holding": funds_holding[ticker],
+            "net_share_change": net_change.get(ticker, 0.0) if compared else None,
+            "new_positions": new_positions[ticker],
+        }
+        for ticker in sorted(funds_holding.keys() | net_change.keys())
+    ]
+
+
+def _purge_legacy_rows(conn: sa.engine.Connection) -> int:
+    """Delete rows stored before filed_date existed (filing date as period, scaled values)."""
+    result = conn.execute(
+        sa.delete(institutional_holdings).where(institutional_holdings.c.filed_date.is_(None))
+    )
+    conn.commit()
+    return result.rowcount or 0
+
+
+def _store_holdings(
+    conn: sa.engine.Connection,
+    fund_name: str,
+    holdings: list[dict],
+    report_date: str,
+    filed_date: str,
+) -> None:
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    for h in holdings:
+        try:
+            conn.execute(
+                insert_or_ignore(conn, institutional_holdings).values(
+                    fund_name=fund_name,
+                    ticker=h["ticker"],
+                    shares_held=h["shares"],
+                    market_value=h["market_value"],
+                    report_date=report_date,
+                    filed_date=filed_date,
+                    fetched_at=now,
+                )
+            )
+        except Exception as exc:
+            logger.debug("Institutional insert error: %s", exc)
+
+
+def _load_filing(
+    conn: sa.engine.Connection,
+    session: requests.Session,
+    limiter: _RateLimiter,
+    name: str,
+    cik: str,
+    accession: str,
+    filed_date: str,
+    report_date: str,
+) -> int:
+    """Fetch and store one filing unless its period is already loaded; returns rows stored."""
+    existing = conn.execute(
+        sa.select(sa.func.count())
+        .select_from(institutional_holdings)
+        .where(
+            (institutional_holdings.c.fund_name == name)
+            & (institutional_holdings.c.report_date == report_date)
+        )
+    ).scalar()
+    if existing > 0:
+        logger.debug("13-F for %s %s already loaded (%d rows)", name, report_date, existing)
+        return 0
+
+    holdings = _aggregate_by_ticker(_fetch_13f_infotable(session, cik, accession, limiter, conn))
+    if not holdings:
+        logger.warning("No holdings parsed for %s %s", name, accession)
+        return 0
+    if _normalise_value_units(holdings):
+        logger.info("13-F %s (%s) reported in $ thousands; rescaled", name, report_date)
+
+    _store_holdings(conn, name, holdings, report_date, filed_date)
+    conn.commit()
+    logger.info("13-F %s (%s): %d holdings stored", name, report_date, len(holdings))
+    return len(holdings)
 
 
 def update_institutional(
@@ -338,6 +485,10 @@ def update_institutional(
     session = _make_session()
     limiter = _RateLimiter(_MIN_INTERVAL)
     summary: dict[str, int] = {}
+
+    purged = _purge_legacy_rows(conn)
+    if purged:
+        logger.warning("Removed %d legacy 13-F rows; they will be re-fetched", purged)
 
     logger.info("Fetching 13-F filings for %d tracked funds", len(funds))
 
@@ -352,45 +503,10 @@ def update_institutional(
             continue
 
         total_stored = 0
-        for accession, filed_date in filings:
-            report_date = filed_date[:10]
-
-            existing = conn.execute(
-                sa.select(sa.func.count())
-                .select_from(institutional_holdings)
-                .where(
-                    (institutional_holdings.c.fund_name == name)
-                    & (institutional_holdings.c.report_date == report_date)
-                )
-            ).scalar()
-            if existing > 0:
-                logger.debug("13-F for %s %s already loaded (%d rows)", name, report_date, existing)
-                continue
-
-            holdings = _fetch_13f_infotable(session, cik, accession, limiter, conn)
-            if not holdings:
-                logger.warning("No holdings parsed for %s %s", name, accession)
-                continue
-
-            now = datetime.utcnow().isoformat(timespec="seconds")
-            for h in holdings:
-                try:
-                    conn.execute(
-                        insert_or_ignore(conn, institutional_holdings).values(
-                            fund_name=name,
-                            ticker=h["ticker"],
-                            shares_held=h["shares"],
-                            market_value=h["market_value"],
-                            report_date=report_date,
-                            fetched_at=now,
-                        )
-                    )
-                except Exception as exc:
-                    logger.debug("Institutional insert error: %s", exc)
-
-            conn.commit()
-            total_stored += len(holdings)
-            logger.info("13-F %s (%s): %d holdings stored", name, report_date, len(holdings))
+        for accession, filed_date, report_date in filings:
+            total_stored += _load_filing(
+                conn, session, limiter, name, cik, accession, filed_date, report_date
+            )
 
         summary[name] = total_stored
 

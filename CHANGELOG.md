@@ -32,6 +32,11 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- 13F institutional holdings (packet `17-13f-ingestion-fixes`): values no longer 1000x too large;
+  options and bonds excluded; rows per ticker summed; stored by quarter, not filing date, with
+  amendments skipped; each fund compared with its own previous filing; infotables found via
+  `index.json`, so Baupost and Berkshire load; Third Point and Appaloosa CIKs corrected. Rows
+  stored under the old rules are removed and re-fetched on the next 13F run.
 - LLM layer (packet `16-llm-review-findings`): permanent API errors are no longer retried; config
   overrides can't send a key to another provider's host; JARVIS streaming tolerates chunks with
   empty `choices`; BYOK upstream cost honours `is_byok`; provider values are case-insensitive.
