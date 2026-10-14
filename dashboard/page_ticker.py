@@ -1,4 +1,4 @@
-"""Page VII — Ticker: price chart, factor scores, fundamentals, and holdings for any universe ticker."""
+"""Page VII — Ticker: signal, scores, AI analysis, fundamentals, holdings and filings for any ticker."""
 
 from __future__ import annotations
 
@@ -17,6 +17,17 @@ from dashboard.theme import (
     metric_card,
     section_header,
 )
+from dashboard.ticker_common import chart_layout as _chart_layout
+from dashboard.ticker_common import score_colour as _score_colour
+from dashboard.ticker_institutional import render_institutional
+from dashboard.ticker_research import render_ai_analysis, render_filings
+from dashboard.ticker_signals import (
+    render_cluster_flags,
+    render_estimate_trend,
+    render_short_interest_trend,
+    render_signal,
+    render_subfactors,
+)
 from data.db import (
     analyst_estimates,
     daily_prices,
@@ -30,7 +41,7 @@ from factors.db import factor_scores
 from portfolio.db import portfolio_positions
 
 
-def render(engine, cfg: dict) -> None:  # noqa: ARG001
+def render(engine, cfg: dict) -> None:
     # -----------------------------------------------------------------------
     # Ticker selector
     # -----------------------------------------------------------------------
@@ -212,6 +223,8 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
             note += f" | EPS estimate: ${eps_est:.2f}"
         st.caption(note)
 
+    render_signal(engine, ticker)
+
     # -----------------------------------------------------------------------
     # Section 2 — Current Position (only if held)
     # -----------------------------------------------------------------------
@@ -248,7 +261,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
         fs = dict(zip(factor_scores.columns.keys(), factor_row, strict=False))
         st.caption(f"As of {fs.get('score_date', '—')}")
 
-        score_cols = st.columns(8)
+        score_cols = st.columns(9)
         factor_pairs = [
             ("Composite", "composite_score"),
             ("Momentum", "momentum_score"),
@@ -258,6 +271,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
             ("Revisions", "revisions_score"),
             ("Short Int.", "short_interest_score"),
             ("Insider", "insider_score"),
+            ("Institutional", "institutional_score"),
         ]
         for col, (label, key) in zip(score_cols, factor_pairs, strict=False):
             val = fs.get(key)
@@ -265,6 +279,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
                 metric_card(label, f"{val:.0f}" if val is not None else "—", _score_colour(val))
 
         _render_factor_bars(fs)
+        render_subfactors(fs)
 
     # -----------------------------------------------------------------------
     # Section 4 — AI Scores
@@ -285,6 +300,8 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
             val = ai.get(key)
             with col:
                 metric_card(label, f"{val:.0f}" if val is not None else "—", _score_colour(val))
+
+    render_ai_analysis(engine, ticker)
 
     # -----------------------------------------------------------------------
     # Section 5 — Fundamentals
@@ -356,6 +373,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
             with a3:
                 na = ar.get("num_analysts")
                 metric_card("# Analysts", str(na) if na else "—")
+            render_estimate_trend(engine, ticker)
         else:
             st.caption("No analyst data.")
 
@@ -377,6 +395,7 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
             with s3:
                 ss = si.get("shares_short")
                 metric_card("Shares Short", f"{ss / 1e6:.1f}M" if ss else "—")
+            render_short_interest_trend(engine, ticker)
         else:
             st.caption("No short interest data.")
 
@@ -402,21 +421,15 @@ def render(engine, cfg: dict) -> None:  # noqa: ARG001
         st.dataframe(disp, use_container_width=True, hide_index=True)
     else:
         st.caption("No insider transaction data.")
+    render_cluster_flags(engine, ticker)
+
+    render_institutional(engine, ticker, cfg)
+    render_filings(engine, ticker)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _score_colour(val: float | None) -> str:
-    if val is None:
-        return NEUTRAL
-    if val >= 60:
-        return LONG_COL
-    if val <= 40:
-        return SHORT_COL
-    return NEUTRAL
 
 
 def _render_factor_bars(fs: dict) -> None:
@@ -459,20 +472,3 @@ def _render_factor_bars(fs: dict) -> None:
     fig.update_layout(**_chart_layout(height=280, left_margin=120), showlegend=False)
     fig.update_xaxes(range=[0, 110], gridcolor="rgba(255,255,255,0.05)")
     st.plotly_chart(fig, use_container_width=True)
-
-
-def _chart_layout(height: int = 300, left_margin: int = 50) -> dict:
-    return {
-        "paper_bgcolor": "rgba(0,0,0,0)",
-        "plot_bgcolor": "rgba(0,0,0,0)",
-        "font_color": "#e2e8f0",
-        "height": height,
-        "margin": {"t": 10, "b": 30, "l": left_margin, "r": 60},
-        "legend": {
-            "bgcolor": "rgba(0,0,0,0)",
-            "bordercolor": "rgba(99,102,241,0.2)",
-            "borderwidth": 1,
-        },
-        "xaxis": {"gridcolor": "rgba(255,255,255,0.05)"},
-        "yaxis": {"gridcolor": "rgba(255,255,255,0.05)"},
-    }

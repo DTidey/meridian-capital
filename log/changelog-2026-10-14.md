@@ -22,3 +22,19 @@
   end made the stored summary leak filings into past-date scoring runs (found by the Reviewer).
   The summary rules are a pure function, so the loader reuses them on the filtered rows rather
   than storing a second as-of table.
+
+# 2026-10-14: Ticker page additions (packet 18)
+
+- **Sections in three modules by domain.** `page_ticker.render` was already about 380 lines;
+  the new sections are separate functions it calls. Shared helpers moved to `ticker_common.py`
+  to avoid a circular import, keeping their old names in `page_ticker` for existing tests.
+- **Form 4 left out of the filings list.** It is 83% of `sec_filings` and would push out every
+  10-K/10-Q/8-K; insider trades already have their own section.
+- **Model output escaped, release text in a text area.** LLM text derived from filings is
+  outside input. Escaping also stops `$` amounts rendering as LaTeX, which `st.markdown` does.
+- **Generic renderer for analysis JSON.** The four analyzers' shapes differ; one renderer for
+  dict/list/scalar values avoids four bespoke layouts and survives prompt changes.
+- **Follow-up, not fixed: issuer-name ticker matching.** It misses some quarters (Berkshire's
+  "CHUBB LTD SWITZ"), about 3% of holdings, which creates false "New" positions in the table
+  and the factor. Options: set `OPENFIGI_API_KEY`, or store CUSIPs and reuse a mapping once
+  resolved.

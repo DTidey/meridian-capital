@@ -15,6 +15,9 @@ Release policy:
   construction, risk management, order execution, reporting and dashboard.
 - Initial spec-first workflow integration: specs `01`–`07` document all seven layers
   with acceptance criteria, companion test plans, and PR drafts.
+- Ticker page shows institutional holdings, the combined signal and direction, factor
+  sub-scores, AI analysis write-ups, SEC filings and the latest earnings release, plus estimate
+  and short-interest history and insider cluster flags (packet `18-ticker-page-additions`).
 - Selectable LLM provider (`llm.provider` in `config.yaml`): OpenAI direct or OpenRouter.
   All LLM call sites share one client factory; cost tracking uses OpenRouter's reported cost
   when present (packet `09-openrouter-provider`).
