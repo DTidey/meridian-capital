@@ -183,7 +183,7 @@ plotly==7.1.0
     # via -r requirements.in
 pluggy==1.6.0
     # via pytest
-pre-commit==4.6.0
+pre-commit==4.6.2
     # via -r requirements-dev.in
 protobuf==7.35.1
     # via
