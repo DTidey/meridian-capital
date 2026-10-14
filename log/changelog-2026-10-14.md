@@ -52,3 +52,20 @@
   of the "3+ funds opening" flags.
 - **Remaining one-quarter gaps are real trading.** All are at the three high-turnover funds;
   six sampled Bridgewater Q1 2026 gaps are absent from its actual filing.
+
+# 2026-10-14: Filing viewer (packet 20)
+
+- **The squashed text is an ingestion artefact.** `sec_data.py` and `transcripts.py` strip tags
+  and collapse all whitespace, so line breaks and table structure are gone before any display.
+- **Hybrid chosen by the user.** Exact EDGAR conversion for reading (numbers exact, any length,
+  free) and AI only for summaries. AI reformatting of stored text was rejected: a 10-K exceeds
+  gpt-4o-mini's output limit, and rebuilding squashed tables risks altered figures.
+- **Fetch on demand, not re-ingest.** Changing ingestion would alter the AI analysts' inputs and
+  require re-downloading 38k filings.
+- **Columns merged where no row has real content in both.** The first prototype merged `$`
+  cells per row and misaligned AAPL's 10-Q; EDGAR uses `colspan`, so the grid is expanded first.
+- **Summaries kept 10 years in `analysis_results`.** Filings don't change; the 30-day analysis
+  TTL would make the dashboard pay again for the same summary.
+- **Figure check is advisory.** It flags numbers not found verbatim (after removing thousands
+  separators), so a correct but derived figure is also flagged; the prompt asks for exact
+  quotes to keep that rare.

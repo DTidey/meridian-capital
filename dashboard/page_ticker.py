@@ -19,6 +19,7 @@ from dashboard.theme import (
 )
 from dashboard.ticker_common import chart_layout as _chart_layout
 from dashboard.ticker_common import score_colour as _score_colour
+from dashboard.ticker_documents import render_document_viewer
 from dashboard.ticker_institutional import render_institutional
 from dashboard.ticker_research import render_ai_analysis, render_filings
 from dashboard.ticker_signals import (
@@ -425,6 +426,7 @@ def render(engine, cfg: dict) -> None:
 
     render_institutional(engine, ticker, cfg)
     render_filings(engine, ticker)
+    render_document_viewer(engine, ticker, cfg)
 
 
 # ---------------------------------------------------------------------------

@@ -11,10 +11,10 @@ import streamlit as st
 
 from analysis.db import analysis_results
 from dashboard.theme import section_header
-from data.db import earnings_transcripts, sec_filings
+from data.db import sec_filings
 
 ANALYZERS = ("earnings", "filing", "insider", "risk")
-_FILING_FORMS = ("10-K", "10-Q", "8-K")
+FILING_FORMS = ("10-K", "10-Q", "8-K")
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]#<>|$~])")
 _SEC_PREFIX = "https://www.sec.gov/"
 
@@ -100,7 +100,7 @@ def render_filings(engine, ticker: str) -> None:
     with engine.connect() as conn:
         rows = conn.execute(
             sa.select(sec_filings.c.filed_date, sec_filings.c.form_type, sec_filings.c.filing_url)
-            .where((sec_filings.c.ticker == ticker) & sec_filings.c.form_type.in_(_FILING_FORMS))
+            .where((sec_filings.c.ticker == ticker) & sec_filings.c.form_type.in_(FILING_FORMS))
             .order_by(sec_filings.c.filed_date.desc())
             .limit(15)
         ).fetchall()
@@ -116,26 +116,4 @@ def render_filings(engine, ticker: str) -> None:
             width="stretch",
             hide_index=True,
             column_config={"Link": st.column_config.LinkColumn(display_text="EDGAR")},
-        )
-    _render_earnings_release(engine, ticker)
-
-
-def _render_earnings_release(engine, ticker: str) -> None:
-    with engine.connect() as conn:
-        row = conn.execute(
-            sa.select(earnings_transcripts)
-            .where(earnings_transcripts.c.ticker == ticker)
-            .order_by(earnings_transcripts.c.earnings_date.desc())
-            .limit(1)
-        ).fetchone()
-    if row is None:
-        return
-    row = row._asdict()
-    with st.expander(release_title(row)):
-        st.text_area(
-            "Release text",
-            row["content"] or "",
-            height=320,
-            disabled=True,
-            label_visibility="collapsed",
         )
