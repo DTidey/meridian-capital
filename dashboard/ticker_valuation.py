@@ -12,6 +12,7 @@ from dashboard.theme import metric_card, section_header
 from data.db import daily_prices, fundamentals
 
 _TTM_FIELDS = ("net_income", "ebit", "fcf", "dividends_paid")
+_MAX_SKIP_DAYS = 100  # one quarter
 _MAX_TTM_SPAN_DAYS = 300  # four contiguous quarter ends are ~9 months apart; a gap makes ~12
 
 
@@ -22,15 +23,22 @@ def _num(value) -> float | None:
 
 
 def _ttm(quarters: list[dict], field: str) -> float | None:
-    """Sum of the four latest quarters, if they form a trailing year and all are present."""
-    if len(quarters) < 4:
+    """Sum over the four latest quarters reporting this field, if they form a trailing year.
+
+    Quarters without the field are skipped (Yahoo can list a period before publishing its
+    figures); the span check still rejects a gap in the middle of the series.
+    """
+    reported = [q for q in quarters if _num(q.get(field)) is not None][:4]
+    if len(reported) < 4:
         return None
-    first, last = (date.fromisoformat(q["period_end"][:10]) for q in (quarters[3], quarters[0]))
-    if (last - first).days > _MAX_TTM_SPAN_DAYS:
+    newest, first, last = (
+        date.fromisoformat(q["period_end"][:10]) for q in (quarters[0], reported[3], reported[0])
+    )
+    # Contiguous, and recent: at most one quarter skipped, so a stopped dividend doesn't
+    # show last year's yield
+    if (last - first).days > _MAX_TTM_SPAN_DAYS or (newest - last).days > _MAX_SKIP_DAYS:
         return None
-    values = [_num(q.get(field)) for q in quarters[:4]]
-    if any(v is None for v in values):
-        return None
+    values = [_num(q[field]) for q in reported]
     # Dividends are cash outflows; sum their sizes so mixed signs can't cancel
     return sum(abs(v) for v in values) if field == "dividends_paid" else sum(values)
 
@@ -116,7 +124,7 @@ def render_valuation(engine, ticker: str) -> None:
                     (fundamentals.c.ticker == ticker) & (fundamentals.c.period_type == "quarterly")
                 )
                 .order_by(fundamentals.c.period_end.desc())
-                .limit(6)
+                .limit(8)
             )
         ]
     v = valuation(price.close if price else None, quarters)
@@ -125,7 +133,7 @@ def render_valuation(engine, ticker: str) -> None:
         return
     st.caption(
         f"Close on {price.date}; balance sheet at the quarter ending {v['quarter_end']}; "
-        "P/E, EV/EBIT and yields over the last four quarters."
+        "P/E, EV/EBIT and yields over the last four reported quarters."
     )
     cards = [
         ("Market Cap", fmt_money(v["market_cap"])),
