@@ -41,6 +41,8 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Growth comparisons (growth factor, quality's margin trend, stored growth ratios) pick the
+  earlier period by date, not row position (packet `25-date-based-growth`).
 - Ticker valuation skips a newest quarter Yahoo hasn't filled in yet, so BAC and GS show
   P/E again (packet `24-valuation-ttm-empty-quarter`).
 - Fundamentals (packet `23-fundamentals-integrity`): shares outstanding exclude treasury

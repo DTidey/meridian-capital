@@ -59,3 +59,20 @@ def pct_change(current, prior, default=None):
         return (c - p) / abs(p)
     except (TypeError, ValueError):
         return default
+
+
+def value_and_prior(df: pd.DataFrame, col: str, months: int) -> tuple[float | None, float | None]:
+    """(latest reported value, value exactly `months` calendar months earlier) for a column.
+
+    Matched by calendar year and month rather than row position, so a missing quarter gives
+    None instead of a comparison with the wrong period, and an empty newest row is skipped.
+    """
+    rows = df[df[col].notna()]
+    if rows.empty:
+        return None, None
+    ends = pd.to_datetime(rows["period_end"])
+    latest_end = ends.max()
+    target = latest_end - pd.DateOffset(months=months)
+    latest = rows[col].iloc[ends.values.argmax()]  # positional: index labels may repeat
+    prior = rows.loc[(ends.dt.year == target.year) & (ends.dt.month == target.month), col]
+    return float(latest), (float(prior.iloc[0]) if not prior.empty else None)

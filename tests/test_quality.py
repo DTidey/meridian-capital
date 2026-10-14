@@ -330,3 +330,20 @@ class TestIncomeOnlyNewestQuarter:
         b = compute(_make_data(["BAC", "X"], {"BAC": with_lag, "X": _fund_rows("X", n=8)}), _CONFIG)
         assert b.loc["BAC", "qual_piotroski"] == pytest.approx(a.loc["BAC", "qual_piotroski"])
         assert b.loc["BAC", "quality_score"] == pytest.approx(a.loc["BAC", "quality_score"])
+
+
+class TestGmTrendDates:
+    def test_gap_gives_nan(self):
+        from factors.quality import _gm_trend
+
+        df = _fund_rows("T", n=6)
+        df = df.drop(index=1).reset_index(drop=True)  # quarter 12 months before latest
+        assert np.isnan(_gm_trend(df))
+
+    def test_by_date(self):
+        from factors.quality import _gm_trend
+
+        df = _fund_rows("T", n=6)
+        df.loc[df.index[-1], "gross_margin"] = 0.50
+        df.loc[df.index[-5], "gross_margin"] = 0.40
+        assert _gm_trend(df) == pytest.approx(0.10)

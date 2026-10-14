@@ -207,6 +207,12 @@ def _compute_ratios(d: dict, prev: dict | None, prev_yoy: dict | None) -> dict:
     }
 
 
+def _prior_period(period_data: list[dict], ends: list[str], i: int, months: int) -> dict | None:
+    """The fetched period exactly `months` before period i (by month-end), or None."""
+    target = month_end((pd.Timestamp(ends[i]) - pd.DateOffset(months=months)).strftime("%Y-%m-%d"))
+    return period_data[ends.index(target)] if target in ends else None
+
+
 def _upsert_period(
     conn: sa.engine.Connection,
     ticker: str,
@@ -245,10 +251,11 @@ def _process_ticker_yfinance(conn: sa.engine.Connection, ticker: str) -> int:
             raw = _extract_statement_data(inc_df, bal_df, cf_df, i)
             period_data.append(raw)
 
+        ends = [month_end(str(c)) for c in inc_df.columns]
+        step = 3 if period_type == "quarterly" else 12
         for i, raw in enumerate(period_data):
-            prev = period_data[i + 1] if i + 1 < len(period_data) else None
-            yoy_idx = i + 4 if period_type == "quarterly" else i + 1
-            prev_yoy = period_data[yoy_idx] if yoy_idx < len(period_data) else None
+            prev = _prior_period(period_data, ends, i, step)
+            prev_yoy = _prior_period(period_data, ends, i, 12)
 
             ratios = _compute_ratios(raw, prev, prev_yoy)
             col = inc_df.columns[i]
@@ -353,10 +360,12 @@ def _process_ticker_fmp(conn: sa.engine.Connection, ticker: str, api_key: str) -
             raw = _fmp_raw(inc, bal, cf)
             period_data.append((date, raw))
 
+        ends = [month_end(d) for d, _ in period_data]
+        raws = [r for _, r in period_data]
+        step = 3 if period_type == "quarterly" else 12
         for i, (period_end, raw) in enumerate(period_data):
-            prev = period_data[i + 1][1] if i + 1 < len(period_data) else None
-            yoy_idx = i + 4 if period_type == "quarterly" else i + 1
-            prev_yoy = period_data[yoy_idx][1] if yoy_idx < len(period_data) else None
+            prev = _prior_period(raws, ends, i, step)
+            prev_yoy = _prior_period(raws, ends, i, 12)
 
             ratios = _compute_ratios(raw, prev, prev_yoy)
             _upsert_period(conn, ticker, period_type, period_end, raw, ratios)
