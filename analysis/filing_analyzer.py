@@ -104,14 +104,10 @@ def filing_score(result: dict) -> float | None:
 
 
 def _fetch_fundamentals(conn, ticker: str, score_date: str) -> pd.DataFrame:
+    # Name the DataFrame columns in the same order they are selected
+    cols = [c for c in _FUND_COLS if c in fundamentals_table.c]
     rows = conn.execute(
-        sa.select(
-            *[
-                fundamentals_table.c[c]
-                for c in _FUND_COLS
-                if c in [col.name for col in fundamentals_table.columns]
-            ]
-        )
+        sa.select(*[fundamentals_table.c[c] for c in cols])
         .where(
             (fundamentals_table.c.ticker == ticker)
             & (fundamentals_table.c.period_type == "quarterly")
@@ -121,8 +117,7 @@ def _fetch_fundamentals(conn, ticker: str, score_date: str) -> pd.DataFrame:
         .limit(8)
     ).fetchall()
 
-    available = [col.name for col in fundamentals_table.columns if col.name in _FUND_COLS]
-    df = pd.DataFrame(rows, columns=available)
+    df = pd.DataFrame(rows, columns=cols)
     return df.sort_values("period_end") if not df.empty else df
 
 

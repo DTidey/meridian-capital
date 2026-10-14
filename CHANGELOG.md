@@ -51,6 +51,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- AI analyzer inputs (packet `30-analyzer-input-fixes`): filing analyzer columns were
+  mislabelled; risk analyzer now reads the 10-K's Item 1A section; affected cached results
+  recomputed.
 - Growth comparisons (growth factor, quality's margin trend, stored growth ratios) pick the
   earlier period by date, not row position (packet `25-date-based-growth`).
 - Ticker valuation skips a newest quarter Yahoo hasn't filled in yet, so BAC and GS show

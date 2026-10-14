@@ -114,11 +114,13 @@ class AnalysisCache:
 
     @staticmethod
     def artifact_id_filing(ticker: str, period_end: str) -> str:
-        return f"{ticker}_{period_end}"
+        # _v2: inputs fixed in packet 30 (column labels); older results are not reused
+        return f"{ticker}_{period_end}_v2"
 
     @staticmethod
     def artifact_id_risk(ticker: str, accession_no: str) -> str:
-        return f"{ticker}_{accession_no}"
+        # _v2: input fixed in packet 30 (Item 1A section); older results are not reused
+        return f"{ticker}_{accession_no}_v2"
 
     @staticmethod
     def artifact_id_insider(ticker: str, score_date: str) -> str:

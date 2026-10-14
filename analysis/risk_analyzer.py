@@ -69,8 +69,7 @@ def analyse(
         logger.debug("Risk: cache hit for %s (%s)", ticker, accession_no)
         return cached
 
-    max_chars = config.get("analysis", {}).get("filing_risk_max_chars", 80_000)
-    text = _strip_html(filing["content_text"] or "")[:max_chars]
+    text, _ = _risk_text(filing, config.get("analysis", {}).get("filing_risk_max_chars", 80_000))
 
     prior_note = ""
     prior = _fetch_prior_10k(conn, ticker, accession_no, score_date)
@@ -109,6 +108,7 @@ def _fetch_10k(conn, ticker: str, score_date: str) -> dict | None:
             sec_filings.c.accession_no,
             sec_filings.c.filed_date,
             sec_filings.c.content_text,
+            sec_filings.c.filing_url,
         )
         .where(
             (sec_filings.c.ticker == ticker)
@@ -120,7 +120,12 @@ def _fetch_10k(conn, ticker: str, score_date: str) -> dict | None:
     ).fetchone()
     if row is None:
         return None
-    return {"accession_no": row[0], "filed_date": row[1], "content_text": row[2]}
+    return {
+        "accession_no": row[0],
+        "filed_date": row[1],
+        "content_text": row[2],
+        "filing_url": row[3],
+    }
 
 
 def _fetch_prior_10k(conn, ticker: str, current_accession: str, score_date: str) -> dict | None:
@@ -141,6 +146,63 @@ def _fetch_prior_10k(conn, ticker: str, current_accession: str, score_date: str)
     if row is None:
         return None
     return {"accession_no": row[0], "filed_date": row[1]}
+
+
+_MIN_SECTION_CHARS = 2_000  # shorter means a contents entry was matched, not the section
+_ITEM_1A = re.compile(r"^item\s*1a\b", re.IGNORECASE)
+_SECTION_END = re.compile(r"^item\s*(1b|1c|2)\b", re.IGNORECASE)
+_MD_ESCAPE = re.compile(r"\\([\\`*_\[\]#<>|$~])")
+
+
+def _heading(block: str) -> str | None:
+    """Normalised text of a short heading-like block (plain line or one-row table), else None."""
+    text = re.sub(r"\s+", " ", re.sub(r"[|:]|-{2,}", " ", block)).strip()
+    return text if text and len(text) < 80 else None
+
+
+def extract_risk_factors(markdown: str) -> str | None:
+    """Item 1A section of a 10-K converted to markdown, from its heading to Item 1B/1C/2.
+
+    Table-of-contents rows sit in long multi-row tables and cross-references are long
+    sentences, so only short heading blocks count; the longest candidate section wins.
+    """
+    blocks = markdown.split("\n\n") if markdown else []
+    best: tuple[int, int] | None = None
+    for i, block in enumerate(blocks):
+        head = _heading(block)
+        if not head or not _ITEM_1A.match(head) or "risk factor" not in head.lower():
+            continue
+        end = next(
+            (
+                j
+                for j in range(i + 1, len(blocks))
+                if (h := _heading(blocks[j])) and _SECTION_END.match(h)
+            ),
+            len(blocks),
+        )
+        if best is None or sum(map(len, blocks[i:end])) > sum(map(len, blocks[best[0] : best[1]])):
+            best = (i, end)
+    return "\n\n".join(blocks[best[0] : best[1]]) if best else None
+
+
+def _risk_text(filing: dict, max_chars: int) -> tuple[str, str]:
+    """(text, source): the 10-K's Item 1A section from EDGAR, else the stored text's start."""
+    from data import edgar_docs
+
+    section = None
+    if filing.get("filing_url"):
+        try:
+            md = edgar_docs.fetch_filing_markdown(
+                filing["filing_url"], filing["accession_no"], "10-K"
+            )
+            section = extract_risk_factors(md)
+        except Exception as exc:
+            logger.info("Risk: EDGAR fetch failed for %s: %s", filing["accession_no"], exc)
+    if section and len(section) >= _MIN_SECTION_CHARS:
+        logger.info("Risk: using Item 1A from EDGAR for %s", filing["accession_no"])
+        return _MD_ESCAPE.sub(r"\1", section)[:max_chars], "edgar"
+    logger.info("Risk: Item 1A not found for %s; using stored 10-K text", filing["accession_no"])
+    return _strip_html(filing["content_text"] or "")[:max_chars], "stored"
 
 
 def _strip_html(text: str) -> str:
