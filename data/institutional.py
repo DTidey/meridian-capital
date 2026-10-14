@@ -145,30 +145,28 @@ def _fetch_13f_infotable(
 def _resolve_tickers(
     raw: list[dict], conn: sa.engine.Connection, cusip_cache: dict[str, str | None] | None
 ) -> list[dict]:
-    """Fill tickers by issuer name, then CUSIP; keep S&P 500 universe holdings only."""
-    name_map = _build_name_ticker_map(conn)
+    """Fill tickers by CUSIP (OpenFIGI), then issuer name; keep S&P 500 holdings only.
+
+    CUSIP comes first because it names the exact security: funds file both Alphabet share
+    classes as "ALPHABET INC", which a name match can't tell apart.
+    """
     universe = set(conn.execute(sa.select(sp500_universe.c.ticker)).scalars())
     needs = [h for h in raw if not h["ticker"]]
-    if needs:
-        # Primary: match issuer name against our stored S&P 500 universe
-        for h in needs:
-            h["ticker"] = name_map.get(_norm_name(h["name"]))
-
-        # Fallback: CUSIP lookup via OpenFIGI (only when API key is configured)
-        still_unresolved = [h for h in needs if not h["ticker"] and h.get("cusip")]
-        if still_unresolved:
-            cusip_map = _cusip_to_tickers_openfigi(
-                sorted({h["cusip"] for h in still_unresolved}), cusip_cache
-            )
-            for h in still_unresolved:
-                h["ticker"] = cusip_map.get(h["cusip"])
+    cusips = sorted({h["cusip"] for h in needs if h.get("cusip")})
+    cusip_map = _cusip_to_tickers_openfigi(cusips, cusip_cache) if cusips else {}
+    name_map = _build_name_ticker_map(conn)
+    for h in needs:
+        ticker = _share_class_spelling(cusip_map.get(h.get("cusip")))
+        h["ticker"] = ticker if ticker in universe else name_map.get(_norm_name(h["name"]))
 
     for h in raw:
-        if h.get("ticker"):
-            # Universe spells share classes BRK-B; OpenFIGI says BRK/B, filings may say BRK.B
-            h["ticker"] = re.sub(r"[./]", "-", h["ticker"])
-    resolved = [h for h in raw if h.get("ticker") in universe]
-    return resolved
+        h["ticker"] = _share_class_spelling(h.get("ticker"))
+    return [h for h in raw if h.get("ticker") in universe]
+
+
+def _share_class_spelling(ticker: str | None) -> str | None:
+    """Universe spells share classes BRK-B; OpenFIGI says BRK/B, filings may say BRK.B."""
+    return re.sub(r"[./]", "-", ticker) if ticker else ticker
 
 
 def _normalise_value_units(rows: list[dict]) -> bool:

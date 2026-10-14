@@ -41,6 +41,8 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- 13F holdings matched by CUSIP before issuer name, so Alphabet's GOOG and GOOGL are booked
+  separately (packet `22-cusip-first-resolution`).
 - OpenFIGI 13F ticker resolution (packet `19-openfigi-resolution`): non-US issuers found via
   `ID_CINS`; US common stock only; non-S&P 500 holdings dropped; one lookup per identifier per
   run; new `run_data.py --refetch-13f`.

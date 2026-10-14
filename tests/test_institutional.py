@@ -914,7 +914,119 @@ class TestUniverseFilter:
 
         rows = inst._fetch_13f_infotable(S(), "1", "0000-00-0", _RateLimiter(0), tmp_db)
         assert sorted(r["ticker"] for r in rows) == ["AAPL", "CB"]
-        assert lookups == [["038169207", "H1467J104"]]
+        # CUSIP first (packet 22): name-matched holdings are looked up too
+        assert lookups == [["037833100", "038169207", "H1467J104"]]
+
+
+class TestCusipFirst:
+    def _resolve(self, tmp_db, monkeypatch, figi):
+        tmp_db.execute(
+            sa.text(
+                "INSERT INTO sp500_universe (ticker, company_name) VALUES "
+                "('GOOGL', 'Alphabet Inc. (Class A)'), ('GOOG', 'Alphabet Inc. (Class C)'), "
+                "('META', 'Meta Platforms')"
+            )
+        )
+        tmp_db.commit()
+        monkeypatch.setattr(inst, "_cusip_to_tickers_openfigi", figi)
+        rows = [
+            {"ticker": None, "cusip": "02079K305", "name": "ALPHABET INC"},
+            {"ticker": None, "cusip": "02079K107", "name": "ALPHABET INC"},
+            {"ticker": None, "cusip": "30303M102", "name": "META PLATFORMS INC"},
+        ]
+        return inst._resolve_tickers(rows, tmp_db, {})
+
+    def test_share_classes_resolved_by_cusip(self, tmp_db, monkeypatch):
+        calls = []
+
+        def figi(cusips, cache=None):
+            calls.append(list(cusips))
+            return {"02079K305": "GOOGL", "02079K107": "GOOG", "30303M102": "META"}
+
+        rows = self._resolve(tmp_db, monkeypatch, figi)
+        assert [r["ticker"] for r in rows] == ["GOOGL", "GOOG", "META"]
+        assert calls == [["02079K107", "02079K305", "30303M102"]]  # one call, all CUSIPs
+
+    def test_unresolved_or_non_universe_falls_back_to_name(self, tmp_db, monkeypatch):
+        # OpenFIGI misses META and returns an old ticker for one Alphabet class
+        def figi(cusips, cache=None):
+            return {"02079K305": "GOOGL", "02079K107": "GOOGOLD"}
+
+        rows = self._resolve(tmp_db, monkeypatch, figi)
+        # "ALPHABET INC" name-matches GOOGL, which is why class C was misbooked before
+        assert [r["ticker"] for r in rows] == ["GOOGL", "GOOGL", "META"]
+
+    def test_without_key_name_only(self, tmp_db, monkeypatch):
+        monkeypatch.delenv("OPENFIGI_API_KEY", raising=False)
+        rows = self._resolve(tmp_db, monkeypatch, inst._cusip_to_tickers_openfigi)
+        assert [r["ticker"] for r in rows] == ["GOOGL", "GOOGL", "META"]  # as before packet 22
+
+    def test_issuer_ticker_rows_not_looked_up(self, tmp_db, monkeypatch):
+        calls = []
+
+        def figi(cusips, cache=None):
+            calls.append(list(cusips))
+            return {}
+
+        monkeypatch.setattr(inst, "_cusip_to_tickers_openfigi", figi)
+        tmp_db.execute(
+            sa.text("INSERT INTO sp500_universe (ticker, company_name) VALUES ('AAPL', 'Apple')")
+        )
+        rows = inst._resolve_tickers(
+            [{"ticker": "AAPL", "cusip": "037833100", "name": "APPLE INC"}], tmp_db, {}
+        )
+        assert [r["ticker"] for r in rows] == ["AAPL"]
+        assert calls == []  # nothing to look up, so no OpenFIGI call
+
+    def test_failed_batch_falls_back_to_name(self, tmp_db, monkeypatch):
+        # Real lookup function with a failing OpenFIGI endpoint
+        monkeypatch.setenv("OPENFIGI_API_KEY", "k")
+        monkeypatch.setattr(inst.time, "sleep", lambda _s: None)
+        monkeypatch.setattr(inst.requests, "Session", lambda: _FigiSession({}, fail=True))
+        rows = self._resolve(tmp_db, monkeypatch, inst._cusip_to_tickers_openfigi)
+        assert [r["ticker"] for r in rows] == ["GOOGL", "GOOGL", "META"]
+
+    def test_empty_or_missing_cusip_uses_name(self, tmp_db, monkeypatch):
+        # Adversarial: "" and a missing key must not be sent or crash
+        sent = []
+
+        def figi(cusips, cache=None):
+            sent.extend(cusips)
+            return {}
+
+        monkeypatch.setattr(inst, "_cusip_to_tickers_openfigi", figi)
+        tmp_db.execute(
+            sa.text(
+                "INSERT INTO sp500_universe (ticker, company_name) VALUES ('META', 'Meta Platforms')"
+            )
+        )
+        rows = inst._resolve_tickers(
+            [
+                {"ticker": None, "cusip": "", "name": "META PLATFORMS INC"},
+                {"ticker": None, "name": "META PLATFORMS INC"},
+            ],
+            tmp_db,
+            {},
+        )
+        assert [r["ticker"] for r in rows] == ["META", "META"]
+        assert sent == []
+
+    def test_class_spelling_from_openfigi(self, tmp_db, monkeypatch):
+        # Adversarial: OpenFIGI's BRK/B must match the universe's BRK-B in this path too
+        monkeypatch.setattr(
+            inst, "_cusip_to_tickers_openfigi", lambda c, cache=None: {"084670702": "BRK/B"}
+        )
+        tmp_db.execute(
+            sa.text(
+                "INSERT INTO sp500_universe (ticker, company_name) VALUES ('BRK-B', 'Berkshire Hathaway')"
+            )
+        )
+        rows = inst._resolve_tickers(
+            [{"ticker": None, "cusip": "084670702", "name": "BERKSHIRE HATHAWAY INC DEL"}],
+            tmp_db,
+            {},
+        )
+        assert [r["ticker"] for r in rows] == ["BRK-B"]
 
 
 class TestShareClassTickers:
