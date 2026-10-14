@@ -154,7 +154,7 @@ packaging==26.2
     #   streamlit
     #   virtualenv
     #   wheel
-pandas==3.0.3
+pandas==3.0.6
     # via
     #   -r requirements.in
     #   alpaca-py
