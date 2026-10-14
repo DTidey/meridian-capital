@@ -356,7 +356,12 @@ def _seed_all(conn) -> None:
     )
     conn.execute(
         earnings_transcripts.insert().values(
-            ticker="AAPL", earnings_date="2026-07-30", quarter="Q2", year=2026, content="Rev $1B"
+            ticker="AAPL",
+            earnings_date="2026-07-30",
+            quarter="Q2",
+            year=2026,
+            content="Rev $1B",
+            source_accession_no="0000320193-26-000018",
         )
     )
     conn.execute(
@@ -447,7 +452,6 @@ class TestRenderSmoke:
             assert header in text
         labels = [e.label for e in at.expander]
         assert "Sub-factor scores" in labels
-        assert "Earnings release - Q2 2026 (2026-07-30)" in labels
         assert "Insider analysis — \\$5 sold" in labels
         assert "Risk analysis" in labels
         assert "Stored analysis could not be read." in text
@@ -467,3 +471,204 @@ class TestRenderSmoke:
 
         assert len(at.get("plotly_chart")) == 4  # price, factor bars, two AC8 trends
         assert "Insider cluster: 2026-09-30 to 2026-10-30, 3 insiders, 604 shares" in text
+
+
+# ---------------------------------------------------------------------------
+# Packet 20 — filing viewer (EDGAR fetch and LLM faked)
+# ---------------------------------------------------------------------------
+
+
+def _seed_viewer(conn) -> None:
+    _seed_universe(conn)
+    _seed_all(conn)
+
+
+class TestDocumentViewer:
+    @pytest.fixture
+    def app(self, tmp_path, monkeypatch):
+        import streamlit as st
+        from streamlit.testing.v1 import AppTest
+
+        import dashboard.ticker_documents as td
+        from analysis import doc_summary
+        from data import edgar_docs
+        from data.db import get_engine, initialise_schema
+
+        st.cache_data.clear()
+        self.fetched = []
+
+        def fake_fetch(url, accession, form_type):
+            self.fetched.append((url, accession, form_type))
+            return "" if accession == "FAIL" else "Revenue \\$1B\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+
+        self.stream_error = None
+
+        def fake_stream(cfg, form_type, text, on_usage):
+            self.prompt = (form_type, text)
+            if self.stream_error:
+                yield "partial "
+                raise self.stream_error
+            on_usage(type("U", (), {"prompt_tokens": 100, "completion_tokens": 10})())
+            yield "## Results\n"
+            yield "Revenue $1B and 999 units"
+
+        monkeypatch.setattr(edgar_docs, "fetch_filing_markdown", fake_fetch)
+        monkeypatch.setattr(doc_summary, "stream_summary", fake_stream)
+        monkeypatch.setattr(td, "get_api_key", lambda cfg: "key")
+
+        url = f"sqlite:///{tmp_path / 'app.db'}"
+        engine = get_engine(url)
+        initialise_schema(engine)
+        with engine.connect() as conn:
+            _seed_viewer(conn)
+            conn.commit()
+        self.engine = engine
+        at = AppTest.from_function(_ticker_app, args=(url,), default_timeout=30)
+        return at.run()
+
+    def _viewer(self, at):
+        return next(s for s in at.selectbox if s.label == "Read a filing")
+
+    def test_options_release_first_then_filings_no_form_4(self, app):
+        viewer = self._viewer(app)
+        assert viewer.options == [
+            "Earnings release - Q2 2026 (2026-07-30)",
+            "2026-10-01 10-K",
+            "2026-10-01 8-K",
+        ]
+        assert viewer.value is None
+        assert self.fetched == []  # nothing fetched until a filing is chosen
+
+    def test_release_uses_8k_folder_from_cik(self, app):
+        self._viewer(app).select_index(0).run()
+        assert not app.exception
+        assert self.fetched[0] == (
+            "https://www.sec.gov/Archives/edgar/data/320193/000032019326000018/",
+            "0000320193-26-000018",
+            "8-K",
+        )
+        assert [t.label for t in app.tabs] == ["AI summary", "Document"]
+        assert any("Revenue" in m.value for m in app.markdown)
+
+    def test_generate_summary_saves_and_flags_figures(self, app):
+        self._viewer(app).select_index(1).run()
+        app.button(key="summarise_ACC-10-K").click().run()
+        assert not app.exception
+        assert self.prompt[0] == "10-K"
+        assert any("Revenue \\$1B" in m.value for m in app.markdown)
+        captions = " ".join(c.value for c in app.caption)
+        assert "999" in captions  # not in the source, so flagged
+
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT analyzer, artifact_id, result_json, cost_usd FROM analysis_results "
+                    "WHERE analyzer='doc_summary'"
+                )
+            ).fetchone()
+        assert row[1] == "ACC-10-K"
+        assert '"unverified": ["999"]' in row[2]
+        assert row[3] > 0
+
+    def test_saved_summary_shown_without_button(self, app):
+        self._viewer(app).select_index(1).run()
+        app.button(key="summarise_ACC-10-K").click().run()
+        app.run()
+        assert not [b for b in app.button if b.key == "summarise_ACC-10-K"]
+        assert any("Results" in m.value for m in app.markdown)
+
+    def test_fetch_failure_falls_back_to_stored_text(self, app):
+        with self.engine.connect() as conn:
+            conn.execute(
+                sa.text(
+                    "UPDATE sec_filings SET accession_no='FAIL', content_text='stored words' "
+                    "WHERE form_type='8-K'"
+                )
+            )
+            conn.commit()
+        app.run()
+        self._viewer(app).select_index(2).run()
+        assert not app.exception
+        assert any(t.value == "stored words" for t in app.text_area)
+        assert "Couldn't fetch the original" in " ".join(c.value for c in app.caption)
+
+    def test_button_disabled_without_key(self, app, monkeypatch):
+        import dashboard.ticker_documents as td
+
+        monkeypatch.setattr(td, "get_api_key", lambda cfg: "")
+        self._viewer(app).select_index(1).run()
+        assert app.button(key="summarise_ACC-10-K").disabled
+
+    def test_llm_error_shows_caption_and_saves_nothing(self, app):
+        self.stream_error = RuntimeError("provider down")
+        self._viewer(app).select_index(1).run()
+        app.button(key="summarise_ACC-10-K").click().run()
+        assert not app.exception
+        assert "Summary failed: provider down" in " ".join(c.value for c in app.caption)
+        assert not any("partial" in m.value for m in app.markdown)
+        with self.engine.connect() as conn:
+            n = conn.execute(
+                sa.text("SELECT count(*) FROM analysis_results WHERE analyzer='doc_summary'")
+            ).scalar()
+        assert n == 0
+
+    def test_truncated_source_caption(self, app, monkeypatch):
+        from analysis import doc_summary
+
+        monkeypatch.setattr(doc_summary, "MAX_SOURCE_TOKENS", 2)
+        self._viewer(app).select_index(1).run()
+        app.button(key="summarise_ACC-10-K").click().run()
+        assert "covers its first part only" in " ".join(c.value for c in app.caption)
+
+    def test_saved_summary_provenance_caption(self, app):
+        self._viewer(app).select_index(1).run()
+        app.button(key="summarise_ACC-10-K").click().run()
+        app.run()
+        captions = " ".join(c.value for c in app.caption)
+        assert "gpt-4o-mini" in captions
+        assert "\\$0." in captions or "$0." in captions
+
+    def test_failed_fetch_not_cached(self, app):
+        with self.engine.connect() as conn:
+            conn.execute(
+                sa.text("UPDATE sec_filings SET accession_no='FAIL' WHERE form_type='8-K'")
+            )
+            conn.commit()
+        app.run()
+        self._viewer(app).select_index(2).run()
+        app.run()
+        assert [f for f in self.fetched if f[1] == "FAIL"].__len__() >= 2  # retried, not cached
+
+    def test_same_label_filings_both_selectable(self, app, monkeypatch):
+        # AppTest maps selections through labels, so drive the viewer directly
+        import dashboard.ticker_documents as td
+
+        with self.engine.connect() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO sec_filings (ticker, form_type, filed_date, accession_no, "
+                    "filing_url) VALUES ('AAPL', '8-K', '2026-10-01', 'ACC-8-K-2', "
+                    "'https://www.sec.gov/Archives/edgar/data/320193/y/')"
+                )
+            )
+            conn.commit()
+        options = td.viewer_options(self.engine, "AAPL")
+        dupes = [i for i, o in enumerate(options) if o["label"] == "2026-10-01 8-K"]
+        assert len(dupes) == 2
+
+        opened = []
+        monkeypatch.setattr(td, "_render_document", lambda engine, option: opened.append(option))
+        monkeypatch.setattr(td, "_render_summary", lambda *a: None)
+        monkeypatch.setattr(td.st, "tabs", lambda labels: [_NullCtx(), _NullCtx()])
+        for i in dupes:
+            monkeypatch.setattr(td.st, "selectbox", lambda *a, _i=i, **k: list(a[1])[_i])
+            td.render_document_viewer(self.engine, "AAPL", {})
+        assert {o["accession"] for o in opened} == {"ACC-8-K", "ACC-8-K-2"}
+
+
+class _NullCtx:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False

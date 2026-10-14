@@ -23,7 +23,9 @@ attrs==26.1.0
 bandit==1.9.4
     # via -r requirements-dev.in
 beautifulsoup4==4.15.0
-    # via yfinance
+    # via
+    #   -r requirements.in
+    #   yfinance
 boolean-py==5.0
     # via license-expression
 build==1.5.0

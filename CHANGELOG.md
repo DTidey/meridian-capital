@@ -11,6 +11,9 @@ Release policy:
 ## Unreleased
 
 ### Added
+- Ticker page filing viewer (packet `20-filing-viewer`): read any recent 10-K, 10-Q or 8-K,
+  converted from the EDGAR original with real paragraphs and tables, with an optional gpt-4o-mini
+  summary that is saved, costed and checked for figures not in the filing.
 - Seven-layer pipeline: data ingestion, factor scoring, AI analysis, portfolio
   construction, risk management, order execution, reporting and dashboard.
 - Initial spec-first workflow integration: specs `01`–`07` document all seven layers
