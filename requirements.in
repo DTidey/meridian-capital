@@ -1,6 +1,6 @@
 # Runtime dependencies — edit here, then run: make compile
 yfinance>=1.7.0
-sqlalchemy>=2.0
+sqlalchemy>=2.1.4
 psycopg2-binary>=2.9.12
 lxml>=5.0.0
 beautifulsoup4>=4.12.0

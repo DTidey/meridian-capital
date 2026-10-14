@@ -44,8 +44,6 @@ cycler==0.12.1
     # via matplotlib
 fonttools==4.63.0
     # via matplotlib
-greenlet==3.5.1
-    # via sqlalchemy
 h11==0.16.0
     # via
     #   httpcore2
@@ -194,7 +192,7 @@ sniffio==1.3.1
     # via openai
 soupsieve==2.9
     # via beautifulsoup4
-sqlalchemy==2.0.51
+sqlalchemy==2.1.4
     # via -r requirements.in
 sseclient-py==1.9.0
     # via alpaca-py
