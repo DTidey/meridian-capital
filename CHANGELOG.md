@@ -31,6 +31,9 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Growth factor revenue acceleration is now the trend of up to four YoY growth points (needs 4
+  to 8 stored quarters), and fundamentals refreshes no longer blank stored figures (packet
+  `26-acceleration-trend`).
 - `CLAUDE.md` imports `AGENTS.md` and `10Rules.md`; specs and test plans 09-12 brought up to the
   `.ai/templates` structure after a Reviewer pass (packet `13-agent-guidance-compliance`).
 - `10Rules.md` merged into `AGENTS.md` and deleted; `AGENTS.md` is now the single source of

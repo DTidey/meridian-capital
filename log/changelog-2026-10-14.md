@@ -116,3 +116,12 @@
   A missing period now gives a blank, which ranks as neutral, rather than a wrong comparison.
 - **Acceleration is effectively always neutral**, before and after: it needs 24 months of
   quarters and Yahoo supplies about 5-7. Left as a known limitation.
+
+# 2026-10-14: Acceleration trend and history preservation (packet 26)
+
+- **Slope of YoY points**, the user's 4-to-8-values idea. YoY rather than QoQ so seasonality
+  cancels; a per-quarter slope so tickers with 2, 3 or 4 points rank on one scale.
+- **History preserved in the upsert**, not a separate table, so every reader benefits. Ratios
+  only coalesce for a fully blank fetch; a partial fetch replaces them, so they never mix old
+  and new figures (Reviewer).
+- **Coverage 203 of 503 today**, rising each quarter as history accumulates.

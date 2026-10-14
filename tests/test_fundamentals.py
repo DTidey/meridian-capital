@@ -841,3 +841,94 @@ class TestGrowthRatiosAnnualAndLeap:
         )
         assert rows["2024-02-29"][1] == pytest.approx(120 / 100 - 1)
         assert rows["2023-02-28"] == (None, None, None)
+
+
+class TestUpsertKeepsHistory:
+    def _row(self, conn):
+        return conn.execute(
+            sa.select(
+                fundamentals_table.c.revenue,
+                fundamentals_table.c.net_income,
+                fundamentals_table.c.revenue_growth_yoy,
+                fundamentals_table.c.updated_at,
+            )
+        ).fetchone()
+
+    def test_fully_blank_fetch_keeps_everything(self, tmp_db):
+        # WMT 2025-01-31: Yahoo later lists the quarter with every figure blank
+        raw = _empty_raw() | {"revenue": 165e9, "net_income": 5e9}
+        ratios = _compute_ratios(raw, None, {"revenue": 150e9, "net_income": 4e9})
+        _upsert_period(tmp_db, "WMT", "quarterly", "2025-01-31", raw, ratios)
+        tmp_db.execute(sa.update(fundamentals_table).values(updated_at="2026-01-01T00:00:00"))
+        blank = _empty_raw()
+        _upsert_period(
+            tmp_db, "WMT", "quarterly", "2025-01-31", blank, _compute_ratios(blank, None, None)
+        )
+        tmp_db.commit()
+        revenue, net_income, growth, updated = self._row(tmp_db)
+        assert revenue == pytest.approx(165e9)
+        assert net_income == pytest.approx(5e9)
+        assert growth == pytest.approx(165 / 150 - 1)  # ratio kept with its figures
+        assert updated > "2026-01-01T00:00:00"
+
+    def test_partial_fetch_merges_figures_but_not_stale_ratios(self, tmp_db):
+        # Reviewer case: new net income, blank revenue -> old margin must not survive
+        raw = _empty_raw() | {"revenue": 100.0, "net_income": 10.0}
+        _upsert_period(
+            tmp_db, "X", "quarterly", "2025-03-31", raw, _compute_ratios(raw, None, None)
+        )
+        partial = _empty_raw() | {"net_income": 20.0}
+        _upsert_period(
+            tmp_db, "X", "quarterly", "2025-03-31", partial, _compute_ratios(partial, None, None)
+        )
+        tmp_db.commit()
+        revenue, net_margin = tmp_db.execute(
+            sa.select(fundamentals_table.c.revenue, fundamentals_table.c.net_margin)
+        ).fetchone()
+        assert revenue == pytest.approx(100.0)  # figure kept
+        assert net_margin is None  # not the stale 10% computed from the old net income
+
+    def test_blank_first_then_filled(self, tmp_db):
+        _upsert_period(
+            tmp_db,
+            "X",
+            "quarterly",
+            "2025-03-31",
+            _empty_raw(),
+            _compute_ratios(_empty_raw(), None, None),
+        )
+        raw = _empty_raw() | {"revenue": 7.0}
+        _upsert_period(
+            tmp_db, "X", "quarterly", "2025-03-31", raw, _compute_ratios(raw, None, None)
+        )
+        tmp_db.commit()
+        assert self._row(tmp_db)[0] == pytest.approx(7.0)
+
+    def test_nan_treated_as_blank(self, tmp_db):
+        raw = _empty_raw() | {"revenue": 10.0}
+        _upsert_period(
+            tmp_db, "X", "quarterly", "2025-03-31", raw, _compute_ratios(raw, None, None)
+        )
+        nan_raw = _empty_raw() | {"revenue": float("nan")}
+        _upsert_period(
+            tmp_db,
+            "X",
+            "quarterly",
+            "2025-03-31",
+            nan_raw,
+            _compute_ratios(_empty_raw(), None, None),
+        )
+        tmp_db.commit()
+        assert self._row(tmp_db)[0] == pytest.approx(10.0)
+
+    def test_restated_value_overwrites(self, tmp_db):
+        raw = _empty_raw() | {"revenue": 10.0}
+        _upsert_period(
+            tmp_db, "X", "quarterly", "2025-03-31", raw, _compute_ratios(raw, None, None)
+        )
+        raw2 = _empty_raw() | {"revenue": 12.0}
+        _upsert_period(
+            tmp_db, "X", "quarterly", "2025-03-31", raw2, _compute_ratios(raw2, None, None)
+        )
+        tmp_db.commit()
+        assert self._row(tmp_db)[0] == pytest.approx(12.0)
