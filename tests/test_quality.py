@@ -304,3 +304,29 @@ class TestCompute:
         assert not result.empty
         for col in COLS:
             assert result.loc["AAPL", col] == pytest.approx(50.0)
+
+
+class TestIncomeOnlyNewestQuarter:
+    def test_income_only_quarter_ignored(self):
+        # Packet 23: BAC/GS newest quarter can have income but no balance sheet yet
+        base = _fund_rows("BAC", n=8)
+        income_only = base.iloc[[-1]].copy()
+        income_only["period_end"] = base["period_end"].max() + pd.offsets.QuarterEnd(1)
+        for col in (
+            "total_assets",
+            "total_equity",
+            "total_debt",
+            "cfo",
+            "current_assets",
+            "current_liabilities",
+            "shares_outstanding",
+            "accruals_ratio",
+        ):
+            if col in income_only:
+                income_only[col] = np.nan
+        with_lag = pd.concat([base, income_only], ignore_index=True)
+
+        a = compute(_make_data(["BAC", "X"], {"BAC": base, "X": _fund_rows("X", n=8)}), _CONFIG)
+        b = compute(_make_data(["BAC", "X"], {"BAC": with_lag, "X": _fund_rows("X", n=8)}), _CONFIG)
+        assert b.loc["BAC", "qual_piotroski"] == pytest.approx(a.loc["BAC", "qual_piotroski"])
+        assert b.loc["BAC", "quality_score"] == pytest.approx(a.loc["BAC", "quality_score"])

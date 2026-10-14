@@ -44,7 +44,9 @@ def _ratio(numerator: float | None, denominator: float | None):
 
 def valuation(close: float | None, quarters: list[dict]) -> dict | None:
     """Valuation metrics; quarters newest first. None without a price and share count."""
-    latest = quarters[0] if quarters else {}
+    # Balance-sheet items from the latest quarter that has them (Yahoo can publish the income
+    # statement before the balance sheet, leaving the newest row's balance fields empty)
+    latest = next((q for q in quarters if _num(q.get("shares_outstanding"))), {})
     shares = _num(latest.get("shares_outstanding"))
     close = _num(close)
     if not close or not shares:
@@ -114,7 +116,7 @@ def render_valuation(engine, ticker: str) -> None:
                     (fundamentals.c.ticker == ticker) & (fundamentals.c.period_type == "quarterly")
                 )
                 .order_by(fundamentals.c.period_end.desc())
-                .limit(4)
+                .limit(6)
             )
         ]
     v = valuation(price.close if price else None, quarters)

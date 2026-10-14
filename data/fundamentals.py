@@ -72,7 +72,7 @@ def _extract_statement_data(
     cur_liab = g(balance, ["Current Liabilities", "Total Current Liabilities"])
     ar = g(balance, ["Accounts Receivable", "Net Receivables"])
     ret_earn = g(balance, ["Retained Earnings"])
-    shares = g(balance, ["Share Issued", "Common Stock Shares Outstanding"])
+    shares = _shares_outstanding(balance, col_idx)
     div_paid = g(cashflow, ["Cash Dividends Paid", "Common Stock Dividend Paid"])
 
     cfo = g(cashflow, ["Operating Cash Flow", "Total Cash From Operating Activities"])
@@ -109,6 +109,50 @@ def _extract_statement_data(
         "fcf": fcf,
         "buybacks": buybacks,
     }
+
+
+def _shares_outstanding(balance: pd.DataFrame | None, col_idx: int) -> float | None:
+    """Outstanding shares; "Share Issued" alone would include treasury stock."""
+    ordinary = _get_val(balance, ["Ordinary Shares Number"], col_idx)
+    if ordinary is not None:
+        return ordinary
+    issued = _get_val(balance, ["Share Issued"], col_idx)
+    treasury = _get_val(balance, ["Treasury Shares Number"], col_idx)
+    if issued is not None and treasury is not None:
+        return issued - treasury
+    if issued is not None:
+        return issued
+    return _get_val(balance, ["Common Stock Shares Outstanding"], col_idx)
+
+
+def month_end(date_str: str) -> str:
+    """Nearest calendar month-end: fiscal 52/53-week ends land within days of one."""
+    d = pd.Timestamp(str(date_str)[:10])
+    this_end = d + pd.offsets.MonthEnd(0)
+    prev_end = d - pd.offsets.MonthEnd(1) if d != this_end else this_end
+    nearest = prev_end if (d - prev_end) < (this_end - d) else this_end
+    return nearest.strftime("%Y-%m-%d")
+
+
+def _align(df: pd.DataFrame | None, columns) -> pd.DataFrame | None:
+    """Reorder a statement's columns to match the income statement's periods (by month-end).
+
+    Yahoo sometimes omits a period from one statement, so matching by position would pair
+    one quarter's income with another quarter's balance sheet.
+    """
+    if df is None or df.empty:
+        return df
+    # Newest first from Yahoo; reversed so the newest column wins a shared month-end
+    by_month = {month_end(str(c)): c for c in reversed(df.columns)}
+    picked = [by_month.get(month_end(str(c))) for c in columns]
+    aligned = pd.DataFrame(
+        {
+            i: (df[c] if c is not None else pd.Series(float("nan"), index=df.index))
+            for i, c in enumerate(picked)
+        }
+    )
+    aligned.columns = list(columns)
+    return aligned
 
 
 def _compute_ratios(d: dict, prev: dict | None, prev_yoy: dict | None) -> dict:
@@ -175,7 +219,7 @@ def _upsert_period(
         insert_or_replace(conn, fundamentals).values(
             ticker=ticker,
             period_type=period_type,
-            period_end=period_end,
+            period_end=month_end(period_end),
             updated_at=datetime.utcnow().isoformat(timespec="seconds"),
             **raw,
             **ratios,
@@ -193,6 +237,7 @@ def _process_ticker_yfinance(conn: sa.engine.Connection, ticker: str) -> int:
     ]:
         if inc_df is None or inc_df.empty:
             continue
+        bal_df, cf_df = _align(bal_df, inc_df.columns), _align(cf_df, inc_df.columns)
         n_periods = inc_df.shape[1]
         period_data: list[dict] = []
 
@@ -339,16 +384,60 @@ def _is_fresh(conn: sa.engine.Connection, ticker: str, max_age_days: int) -> boo
         return False
 
 
+def merge_period_duplicates(conn: sa.engine.Connection) -> int:
+    """Keep one row per ticker, type and month-end period (the newest); return rows deleted."""
+    rows = conn.execute(
+        sa.select(
+            fundamentals.c.ticker,
+            fundamentals.c.period_type,
+            fundamentals.c.period_end,
+            fundamentals.c.updated_at,
+        )
+    ).fetchall()
+    groups: dict[tuple[str, str, str], list] = {}
+    for r in rows:
+        groups.setdefault((r.ticker, r.period_type, month_end(r.period_end)), []).append(r)
+
+    deleted = 0
+    for (ticker, ptype, end), members in groups.items():
+        # Newest fetch wins; on a tie prefer the row already on the month-end
+        members.sort(key=lambda r: (r.updated_at or "", r.period_end == end), reverse=True)
+        keep, drop = members[0], members[1:]
+        for r in drop:
+            conn.execute(sa.delete(fundamentals).where(_row_key(ticker, ptype, r.period_end)))
+            deleted += 1
+        if keep.period_end != end:
+            conn.execute(
+                sa.update(fundamentals)
+                .where(_row_key(ticker, ptype, keep.period_end))
+                .values(period_end=end)
+            )
+    conn.commit()
+    if deleted:
+        logger.warning("Merged %d duplicate fundamentals rows (same month-end period)", deleted)
+    return deleted
+
+
+def _row_key(ticker: str, period_type: str, period_end: str):
+    return (
+        (fundamentals.c.ticker == ticker)
+        & (fundamentals.c.period_type == period_type)
+        & (fundamentals.c.period_end == period_end)
+    )
+
+
 def update_fundamentals(
     conn: sa.engine.Connection,
     tickers: list[str],
     config: dict,
     providers: Providers,
+    refresh: bool = False,
 ) -> dict[str, int]:
-    """Update fundamentals for all tickers. Returns {ticker: periods_stored}."""
+    """Update fundamentals for all tickers (all of them if refresh). Returns {ticker: periods}."""
+    merge_period_duplicates(conn)
     max_age_days = config.get("fundamentals", {}).get("refresh_days", 7)
 
-    stale = [t for t in tickers if not _is_fresh(conn, t, max_age_days)]
+    stale = [t for t in tickers if refresh or not _is_fresh(conn, t, max_age_days)]
     skipped = len(tickers) - len(stale)
     if skipped:
         logger.info("Skipping %d tickers with fundamentals < %d days old", skipped, max_age_days)

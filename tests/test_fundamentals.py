@@ -547,3 +547,247 @@ class TestUpdateFundamentalsSkip:
 
         mock_proc.assert_not_called()
         assert all(v == 0 for v in result.values())
+
+
+# ---------------------------------------------------------------------------
+# Packet 23 — shares, statement alignment, month-end periods, duplicate merge
+# ---------------------------------------------------------------------------
+
+import pandas as pd  # noqa: E402
+
+from data import fundamentals as fund_mod  # noqa: E402
+
+
+def _stmt(rows: dict[str, list], dates: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(rows, index=pd.to_datetime(dates)).T
+
+
+class TestSharesOutstanding:
+    def _shares(self, rows):
+        bal = _stmt(rows, ["2026-06-30"])
+        return fund_mod._extract_statement_data(None, bal, None, 0)["shares_outstanding"]
+
+    def test_ordinary_shares_preferred(self):
+        # JPM, 2026-10-14: issued 4.11B, outstanding 2.66B, treasury 1.45B
+        rows = {
+            "Share Issued": [4_105_308_672.0],
+            "Ordinary Shares Number": [2_658_186_195.0],
+            "Treasury Shares Number": [1_447_122_477.0],
+        }
+        assert self._shares(rows) == pytest.approx(2_658_186_195)
+
+    def test_issued_minus_treasury(self):
+        rows = {"Share Issued": [4_105_308_672.0], "Treasury Shares Number": [1_447_122_477.0]}
+        assert self._shares(rows) == pytest.approx(2_658_186_195)
+
+    def test_issued_alone(self):
+        assert self._shares({"Share Issued": [14_687_356_000.0]}) == pytest.approx(14_687_356_000)
+
+    def test_nan_ordinary_falls_through(self):
+        # Adversarial: a present-but-NaN row must not end the search
+        rows = {"Ordinary Shares Number": [float("nan")], "Share Issued": [500.0]}
+        assert self._shares(rows) == pytest.approx(500)
+
+    def test_treasury_without_issued_uses_last_key(self):
+        rows = {"Treasury Shares Number": [10.0], "Common Stock Shares Outstanding": [90.0]}
+        assert self._shares(rows) == pytest.approx(90)
+
+
+class TestAlignment:
+    def test_balance_missing_latest_quarter_not_shifted(self):
+        # BAC, 2026-10-14: income has 2026-06-30, balance sheet and cash flow start at 2026-03-31
+        inc = _stmt({"Net Income": [7.0, 6.0, 5.0]}, ["2026-06-30", "2026-03-31", "2025-12-31"])
+        bal = _stmt({"Total Debt": [60.0, 50.0]}, ["2026-03-31", "2025-12-31"])
+        cf = _stmt({"Operating Cash Flow": [600.0, 500.0]}, ["2026-03-31", "2025-12-31"])
+        cols = inc.columns
+        bal, cf = fund_mod._align(bal, cols), fund_mod._align(cf, cols)
+        rows = [fund_mod._extract_statement_data(inc, bal, cf, i) for i in range(3)]
+        assert [r["total_debt"] for r in rows] == [None, 60.0, 50.0]
+        assert [r["cfo"] for r in rows] == [None, 600.0, 500.0]
+
+    def test_income_gap_not_shifted(self):
+        # WMT: income skips 2025-04-30; balance sheet has it
+        inc = _stmt({"Net Income": [3.0, 2.0, 1.0]}, ["2025-10-31", "2025-07-31", "2025-01-31"])
+        bal = _stmt(
+            {"Total Debt": [40.0, 30.0, 20.0, 10.0]},
+            ["2025-10-31", "2025-07-31", "2025-04-30", "2025-01-31"],
+        )
+        bal = fund_mod._align(bal, inc.columns)
+        assert [
+            fund_mod._extract_statement_data(inc, bal, None, i)["total_debt"] for i in range(3)
+        ] == [
+            40.0,
+            30.0,
+            10.0,
+        ]
+
+    def test_dates_matched_by_month_end(self):
+        # Adversarial: 52/53-week date on one statement, month-end on another
+        inc = _stmt({"Net Income": [1.0]}, ["2025-09-27"])
+        bal = _stmt({"Total Debt": [9.0]}, ["2025-09-30"])
+        assert fund_mod._align(bal, inc.columns).iloc[0, 0] == pytest.approx(9.0)
+
+    def test_empty_statement(self):
+        inc = _stmt({"Net Income": [1.0]}, ["2025-09-30"])
+        assert fund_mod._align(pd.DataFrame(), inc.columns).empty
+
+
+class TestMonthEnd:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("2025-09-27", "2025-09-30"),
+            ("2025-09-30", "2025-09-30"),
+            ("2026-01-02", "2025-12-31"),
+            ("2024-02-26", "2024-02-29"),
+            ("2025-11-28", "2025-11-30"),
+            ("2025-11-28T00:00:00", "2025-11-30"),
+        ],
+    )
+    def test_nearest_month_end(self, raw, expected):
+        assert fund_mod.month_end(raw) == expected
+
+    def test_upsert_stores_month_end(self, tmp_db):
+        raw = _empty_raw()
+        _upsert_period(
+            tmp_db, "AAPL", "annual", "2025-09-27", raw, _compute_ratios(raw, None, None)
+        )
+        tmp_db.commit()
+        ends = tmp_db.execute(sa.select(fundamentals_table.c.period_end)).scalars().all()
+        assert ends == ["2025-09-30"]
+
+
+def _put(conn, ticker, ptype, end, updated, debt):
+    raw = _empty_raw()
+    raw["total_debt"] = debt
+    conn.execute(
+        insert_or_replace(conn, fundamentals_table).values(
+            ticker=ticker,
+            period_type=ptype,
+            period_end=end,
+            updated_at=updated,
+            **raw,
+            **_compute_ratios(raw, None, None),
+        )
+    )
+
+
+class TestMergePeriodDuplicates:
+    def test_newest_kept_and_redated(self, tmp_db, caplog):
+        # AAPL FY2025 as stored on 2026-10-14
+        _put(tmp_db, "AAPL", "annual", "2025-09-27", "2026-05-03T20:05:57", 112_377e6)
+        _put(tmp_db, "AAPL", "annual", "2025-09-30", "2026-10-14T09:58:06", 98_657e6)
+        _put(tmp_db, "AMD", "annual", "2024-12-28", "2026-05-03T20:04:40", 1.0)
+        _put(tmp_db, "AAPL", "quarterly", "2025-09-30", "2026-10-14T09:58:06", 5.0)
+        tmp_db.commit()
+
+        with caplog.at_level("WARNING", logger="data.fundamentals"):
+            assert fund_mod.merge_period_duplicates(tmp_db) == 1
+        rows = tmp_db.execute(
+            sa.select(
+                fundamentals_table.c.ticker,
+                fundamentals_table.c.period_type,
+                fundamentals_table.c.period_end,
+                fundamentals_table.c.total_debt,
+            ).order_by(fundamentals_table.c.ticker, fundamentals_table.c.period_type)
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [
+            ("AAPL", "annual", "2025-09-30", 98_657e6),
+            ("AAPL", "quarterly", "2025-09-30", 5.0),
+            ("AMD", "annual", "2024-12-31", 1.0),  # single row re-dated
+        ]
+        assert "Merged 1 duplicate fundamentals rows" in caplog.text
+
+    def test_newest_wins_even_if_older_date_is_newer_fetch(self, tmp_db):
+        # ADBE: the exact-date row is the newer fetch here
+        _put(tmp_db, "ADBE", "annual", "2025-11-30", "2026-05-03T20:04:37", 1.0)
+        _put(tmp_db, "ADBE", "annual", "2025-11-28", "2026-10-14T09:58:09", 2.0)
+        tmp_db.commit()
+        fund_mod.merge_period_duplicates(tmp_db)
+        rows = tmp_db.execute(
+            sa.select(fundamentals_table.c.period_end, fundamentals_table.c.total_debt)
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [("2025-11-30", 2.0)]
+
+    def test_idempotent(self, tmp_db):
+        _put(tmp_db, "AAPL", "annual", "2025-09-27", "2026-05-03T20:05:57", 1.0)
+        _put(tmp_db, "AAPL", "annual", "2025-09-30", "2026-10-14T09:58:06", 2.0)
+        tmp_db.commit()
+        fund_mod.merge_period_duplicates(tmp_db)
+        assert fund_mod.merge_period_duplicates(tmp_db) == 0
+
+    def test_update_runs_merge_first(self, tmp_db, config):
+        _put(tmp_db, "AAPL", "annual", "2025-09-27", "2026-05-03T20:05:57", 1.0)
+        _put(tmp_db, "AAPL", "annual", "2025-09-30", datetime.utcnow().isoformat(), 2.0)
+        tmp_db.commit()
+        update_fundamentals(
+            tmp_db, ["AAPL"], config, _make_providers(FundamentalsProvider.YFINANCE)
+        )
+        n = tmp_db.execute(sa.select(sa.func.count()).select_from(fundamentals_table)).scalar()
+        assert n == 1
+
+
+class TestRefresh:
+    def test_refresh_fetches_fresh_tickers(self, tmp_db, config):
+        raw = _empty_raw()
+        _upsert_period(
+            tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
+        )
+        tmp_db.commit()
+        config["fundamentals"]["refresh_days"] = 7
+        providers = _make_providers(FundamentalsProvider.YFINANCE)
+        with patch("data.fundamentals._process_ticker_yfinance", return_value=3) as mock_proc:
+            result = update_fundamentals(tmp_db, ["AAPL"], config, providers, refresh=True)
+        mock_proc.assert_called_once_with(tmp_db, "AAPL")
+        assert result["AAPL"] == 3
+
+    def test_cli_flag(self, monkeypatch):
+        import run_data
+
+        monkeypatch.setattr("sys.argv", ["run_data.py", "--refresh-fundamentals"])
+        assert run_data._parse_args().refresh_fundamentals is True
+        monkeypatch.setattr("sys.argv", ["run_data.py"])
+        assert run_data._parse_args().refresh_fundamentals is False
+
+
+class TestProcessTickerAlignment:
+    def test_bac_shaped_statements_stored_by_period(self, tmp_db):
+        # Wiring test: ingestion itself must use the aligned statements
+        dates = ["2026-06-30", "2026-03-31", "2025-12-31"]
+        inc = _stmt({"Net Income": [7.0, 6.0, 5.0], "Total Revenue": [70.0, 60.0, 50.0]}, dates)
+        bal = _stmt({"Total Debt": [60.0, 50.0], "Ordinary Shares Number": [2.0, 3.0]}, dates[1:])
+        cf = _stmt({"Operating Cash Flow": [600.0, 500.0]}, dates[1:])
+        empty = pd.DataFrame()
+
+        class FakeTicker:
+            quarterly_income_stmt, quarterly_balance_sheet, quarterly_cashflow = inc, bal, cf
+            income_stmt = balance_sheet = cashflow = empty
+
+        with patch("data.fundamentals.yf.Ticker", return_value=FakeTicker()):
+            assert fund_mod._process_ticker_yfinance(tmp_db, "BAC") == 3
+        rows = tmp_db.execute(
+            sa.select(
+                fundamentals_table.c.period_end,
+                fundamentals_table.c.total_debt,
+                fundamentals_table.c.cfo,
+                fundamentals_table.c.shares_outstanding,
+            ).order_by(fundamentals_table.c.period_end.desc())
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [
+            ("2026-06-30", None, None, None),
+            ("2026-03-31", 60.0, 600.0, 2.0),
+            ("2025-12-31", 50.0, 500.0, 3.0),
+        ]
+
+    def test_newest_column_wins_shared_month(self):
+        inc = _stmt({"Net Income": [1.0]}, ["2025-09-30"])
+        bal = _stmt({"Total Debt": [9.0, 8.0]}, ["2025-09-30", "2025-09-27"])
+        assert fund_mod._align(bal, inc.columns).iloc[0, 0] == pytest.approx(9.0)
+
+    def test_merge_tie_prefers_month_end_row(self, tmp_db):
+        _put(tmp_db, "AAPL", "annual", "2025-09-27", "2026-10-14T09:58:06", 1.0)
+        _put(tmp_db, "AAPL", "annual", "2025-09-30", "2026-10-14T09:58:06", 2.0)
+        tmp_db.commit()
+        fund_mod.merge_period_duplicates(tmp_db)
+        rows = tmp_db.execute(sa.select(fundamentals_table.c.total_debt)).scalars().all()
+        assert rows == [2.0]

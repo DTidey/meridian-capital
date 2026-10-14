@@ -83,6 +83,11 @@ def _parse_args() -> argparse.Namespace:
         help="Skip 13-F institutional holdings fetch — faster daily runs",
     )
     p.add_argument(
+        "--refresh-fundamentals",
+        action="store_true",
+        help="Re-fetch fundamentals for every ticker, ignoring refresh_days",
+    )
+    p.add_argument(
         "--refetch-13f",
         action="store_true",
         help="Re-fetch the recent 13-F filings already stored, replacing them (after resolution "
@@ -175,7 +180,9 @@ def main() -> None:
     # 3. Fundamentals  (equities only — ETFs/benchmarks have no fundamentals)
     # -----------------------------------------------------------------------
     logger.info("[3/8] Fundamentals")
-    fund_stats = update_fundamentals(conn, equity_tickers, config, providers)
+    fund_stats = update_fundamentals(
+        conn, equity_tickers, config, providers, refresh=args.refresh_fundamentals
+    )
     periods_added = sum(fund_stats.values())
 
     # -----------------------------------------------------------------------
