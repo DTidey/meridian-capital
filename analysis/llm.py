@@ -71,6 +71,34 @@ def resolve_model(config: dict | None, model: str) -> str:
     return model
 
 
+_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+
+
+def is_reasoning_model(config: dict | None, model: str) -> bool:
+    """True for reasoning models (no temperature; output limit shared with reasoning tokens)."""
+    prefixes = ((config or {}).get("llm") or {}).get("reasoning_model_prefixes")
+    if prefixes is None:
+        prefixes = _REASONING_PREFIXES
+    elif isinstance(prefixes, str):  # a single prefix written as a plain YAML string
+        prefixes = (prefixes,)
+    return model.removeprefix("openai/").startswith(tuple(prefixes))
+
+
+def completion_params(config: dict | None, model: str, max_tokens: int, temperature: float) -> dict:
+    """Output-limit and sampling parameters for a free-text completion.
+
+    Reasoning models reject temperature and count reasoning tokens against the limit, so they
+    get extra headroom on top of the visible-text limit and a configurable reasoning effort.
+    """
+    if not is_reasoning_model(config, model):
+        return {"max_tokens": max_tokens, "temperature": temperature}
+    llm = (config or {}).get("llm") or {}
+    return {
+        "max_completion_tokens": max_tokens + int(llm.get("reasoning_token_budget") or 4000),
+        "reasoning_effort": llm.get("reasoning_effort") or "low",
+    }
+
+
 def json_mode_extra_body(config: dict | None) -> dict | None:
     """Extra request body for JSON mode.
 

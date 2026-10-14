@@ -133,3 +133,13 @@
 - **ERD generated from the schema** so drift can be checked mechanically (5 tables and many
   columns had been missed by hand edits).
 - **Test counts removed** from docs; every hard-coded count had gone stale.
+
+# 2026-10-14: Reasoning model support (packet 28)
+
+- **Stage 1 of the GPT-6 move, no model switched.** The user is considering GPT-6 Luna; GPT-4o
+  remains available in the API (no retirement date found), so the move is staged: code ready
+  (this), low-risk uses next, scoring analyzers only after a shadow test.
+- **Prefix-based detection from config**, so the next reasoning family needs no code change.
+- **Reasoning headroom added on top of the visible limit**, not replacing it, so a 600-token
+  JARVIS reply isn't eaten by reasoning.
+- **Cache mismatch is a miss**, then overwritten on the same key: no schema or key migration.

@@ -151,3 +151,35 @@ class TestArtifactIds:
 
     def test_insider_artifact_id(self):
         assert AnalysisCache.artifact_id_insider("NVDA", "2024-06-01") == "NVDA_2024-06-01"
+
+
+class TestModelAwareGet:
+    def _store(self, db, model):
+        cache = AnalysisCache(db)
+        cache.set("filing", "AAPL", "AAPL_2026-06-30", model, {"score": 7}, _fake_usage(), 0.001)
+        return cache
+
+    def test_same_model_hit(self, tmp_db):
+        cache = self._store(tmp_db, "gpt-4o-mini")
+        assert cache.get("filing", "AAPL", "AAPL_2026-06-30", model="gpt-4o-mini") == {"score": 7}
+
+    def test_other_model_miss(self, tmp_db):
+        cache = self._store(tmp_db, "gpt-4o-mini")
+        assert cache.get("filing", "AAPL", "AAPL_2026-06-30", model="gpt-6-luna") is None
+
+    def test_openai_prefix_ignored(self, tmp_db):
+        cache = self._store(tmp_db, "openai/gpt-4o")
+        assert cache.get("filing", "AAPL", "AAPL_2026-06-30", model="gpt-4o") == {"score": 7}
+        cache2 = self._store(tmp_db, "gpt-4o")
+        assert cache2.get("filing", "AAPL", "AAPL_2026-06-30", model="openai/gpt-4o") == {
+            "score": 7
+        }
+
+    def test_without_model_unchanged(self, tmp_db):
+        cache = self._store(tmp_db, "gpt-4o-mini")
+        assert cache.get("filing", "AAPL", "AAPL_2026-06-30") == {"score": 7}
+
+    def test_missing_stored_model_is_miss(self, tmp_db):
+        # Adversarial: a row with no model can't be shown to match
+        cache = self._store(tmp_db, None)
+        assert cache.get("filing", "AAPL", "AAPL_2026-06-30", model="gpt-4o") is None

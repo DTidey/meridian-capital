@@ -16,7 +16,16 @@ _PRICING: dict[str, dict[str, float]] = {
         "output": 0.60,
         "cached_input": 0.075,  # 50% off
     },
+    # GPT-6 family: OpenRouter list prices on 2026-10-14; no cached-input discount assumed
+    "gpt-6-luna": {"input": 0.10, "output": 0.50, "cached_input": 0.10},
+    "gpt-6-sol": {"input": 2.00, "output": 10.00, "cached_input": 2.00},
+    "gpt-6.1-sol": {"input": 2.00, "output": 10.00, "cached_input": 2.00},
+    "gpt-6-astra": {"input": 10.00, "output": 50.00, "cached_input": 10.00},
 }
+# GPT-6 "-pro" variants are listed at their base model's rates (OpenRouter, 2026-10-14). Other
+# vendors' -pro models are often priced far higher, so this is explicit, not a general rule.
+for _base in ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"):
+    _PRICING[f"{_base}-pro"] = _PRICING[_base]
 
 # Fall back to gpt-4o pricing for unknown models
 _DEFAULT_PRICING = _PRICING["gpt-4o"]

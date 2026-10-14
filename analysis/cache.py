@@ -23,11 +23,17 @@ class AnalysisCache:
     # Public interface
     # ------------------------------------------------------------------
 
-    def get(self, analyzer: str, ticker: str, artifact_id: str) -> dict | None:
-        """Return cached result dict if present and not expired, else None."""
+    def get(
+        self, analyzer: str, ticker: str, artifact_id: str, model: str | None = None
+    ) -> dict | None:
+        """Return cached result dict if present and not expired, else None.
+
+        With `model`, a result produced by a different model counts as a miss (an
+        `openai/` prefix is ignored), so switching models doesn't serve old results.
+        """
         now = _utcnow_iso()
         row = self._conn.execute(
-            sa.select(analysis_results.c.result_json).where(
+            sa.select(analysis_results.c.result_json, analysis_results.c.model).where(
                 (analysis_results.c.analyzer == analyzer)
                 & (analysis_results.c.ticker == ticker)
                 & (analysis_results.c.artifact_id == artifact_id)
@@ -36,6 +42,8 @@ class AnalysisCache:
         ).fetchone()
 
         if row is None:
+            return None
+        if model is not None and _bare(row[1]) != _bare(model):
             return None
 
         try:
@@ -128,3 +136,7 @@ def _utcnow_iso() -> str:
 
 def _utcnow_plus(days: int) -> str:
     return (datetime.now(UTC) + timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def _bare(model: str | None) -> str | None:
+    return model.removeprefix("openai/") if model else None

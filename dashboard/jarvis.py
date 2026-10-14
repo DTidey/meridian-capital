@@ -226,12 +226,15 @@ def _fetch_snapshot(engine: sqlalchemy.engine.Engine) -> dict:
 
 def _stream_reply(cfg: dict, messages: list[dict]) -> Iterator[str]:
     """Yield JARVIS's reply as text deltas, skipping chunks without choices (e.g. usage)."""
-    from analysis.llm import make_client, resolve_model
+    from analysis.llm import completion_params, make_client, resolve_model
 
     client = make_client(cfg)
     model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
     stream = client.chat.completions.create(
-        model=model, messages=messages, stream=True, max_tokens=600, temperature=0.7
+        model=model,
+        messages=messages,
+        stream=True,
+        **completion_params(cfg, model, max_tokens=600, temperature=0.7),
     )
     for chunk in stream:
         if chunk.choices and chunk.choices[0].delta.content:

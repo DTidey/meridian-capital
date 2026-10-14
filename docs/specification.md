@@ -154,6 +154,9 @@ All runtime parameters live in `config.yaml`. The database connection URL is rea
 | `sec` | `cluster_buy_window_days` | 30 | Rolling window for cluster detection |
 | `sec` | `cluster_buy_min_insiders` | 3 | Minimum insiders to trigger a cluster flag |
 | `earnings_calendar` | `lookahead_days` | 90 | Upcoming earnings window |
+| `llm` | `reasoning_model_prefixes` | `o1, o3, o4, gpt-5, gpt-6` | Model-name prefixes treated as reasoning models (no temperature; extra output headroom). Matched after an `openai/` prefix; OpenRouter aliases such as `~openai/gpt-luna-latest` need their own entry |
+| `llm` | `reasoning_effort` | `low` | Reasoning effort for free-text calls (JARVIS, LP letter, commentary, filing summaries) |
+| `llm` | `reasoning_token_budget` | 4000 | Extra output tokens allowed for reasoning on those calls |
 
 ### 5.2 Environment variables
 

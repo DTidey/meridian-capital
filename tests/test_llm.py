@@ -176,3 +176,91 @@ class TestProviderValue:
     def test_unknown_config_value_names_config_key(self):
         with pytest.raises(ValueError, match="Unknown llm.provider 'bogus'"):
             provider_settings({"llm": {"provider": "Bogus"}})
+
+
+class TestCompletionParams:
+    def test_classic_model_unchanged(self):
+        from analysis.llm import completion_params
+
+        assert completion_params({}, "gpt-4o", 600, 0.7) == {"max_tokens": 600, "temperature": 0.7}
+        assert completion_params({}, "openai/gpt-4o-mini", 800, 0.2) == {
+            "max_tokens": 800,
+            "temperature": 0.2,
+        }
+
+    def test_reasoning_model_defaults(self):
+        from analysis.llm import completion_params
+
+        assert completion_params({}, "openai/gpt-6-luna", 600, 0.7) == {
+            "max_completion_tokens": 4600,
+            "reasoning_effort": "low",
+        }
+
+    def test_config_overrides(self):
+        from analysis.llm import completion_params
+
+        cfg = {
+            "llm": {
+                "reasoning_model_prefixes": ["mystery-"],
+                "reasoning_effort": "medium",
+                "reasoning_token_budget": 1000,
+            }
+        }
+        assert completion_params(cfg, "mystery-1", 500, 0.5) == {
+            "max_completion_tokens": 1500,
+            "reasoning_effort": "medium",
+        }
+        # gpt-6 isn't in this config's prefixes
+        assert "temperature" in completion_params(cfg, "gpt-6-luna", 500, 0.5)
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("gpt-6-sol", True),
+            ("openai/gpt-6.1-sol", True),
+            ("gpt-5.6-luna", True),
+            ("o3-mini", True),
+            ("o4", True),
+            ("gpt-4o", False),
+            ("gpt-4o-mini", False),
+            ("anthropic/claude-x", False),
+            ("omni-moderation", False),  # adversarial: starts with "o" but isn't o1/o3/o4
+        ],
+    )
+    def test_is_reasoning_model(self, model, expected):
+        from analysis.llm import is_reasoning_model
+
+        assert is_reasoning_model({}, model) is expected
+
+
+class TestReasoningConfigRobustness:
+    def test_single_string_prefix(self):
+        # Adversarial: "gpt-6" as a plain string must not become one-letter prefixes
+        from analysis.llm import is_reasoning_model
+
+        cfg = {"llm": {"reasoning_model_prefixes": "gpt-6"}}
+        assert is_reasoning_model(cfg, "gpt-6-luna") is True
+        assert is_reasoning_model(cfg, "gpt-4o") is False
+
+    def test_null_values_use_defaults(self):
+        from analysis.llm import completion_params
+
+        cfg = {
+            "llm": {
+                "reasoning_model_prefixes": None,
+                "reasoning_token_budget": None,
+                "reasoning_effort": None,
+            }
+        }
+        assert completion_params(cfg, "gpt-6-luna", 100, 0.5) == {
+            "max_completion_tokens": 4100,
+            "reasoning_effort": "low",
+        }
+
+    def test_openrouter_alias_not_detected(self):
+        # Documented limitation: aliases like ~openai/gpt-luna-latest need an explicit prefix
+        from analysis.llm import is_reasoning_model
+
+        assert is_reasoning_model({}, "~openai/gpt-luna-latest") is False
+        cfg = {"llm": {"reasoning_model_prefixes": ["gpt-6", "~openai/gpt-luna"]}}
+        assert is_reasoning_model(cfg, "~openai/gpt-luna-latest") is True

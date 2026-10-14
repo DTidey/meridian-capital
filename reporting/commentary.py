@@ -134,7 +134,7 @@ def _build_context(engine: sqlalchemy.engine.Engine) -> str:
 
 
 def _call_llm(context: str, cfg: dict) -> str:
-    from analysis.llm import make_client, resolve_model
+    from analysis.llm import completion_params, make_client, resolve_model
 
     model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
     client = make_client(cfg)
@@ -152,7 +152,6 @@ def _call_llm(context: str, cfg: dict) -> str:
                 ),
             },
         ],
-        max_tokens=800,
-        temperature=0.7,
+        **completion_params(cfg, model, max_tokens=800, temperature=0.7),
     )
     return resp.choices[0].message.content.strip()
