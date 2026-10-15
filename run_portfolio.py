@@ -10,7 +10,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -32,7 +31,7 @@ import analysis.db  # noqa: F401, E402
 import factors.db  # noqa: F401, E402
 import portfolio.db  # noqa: F401, E402
 from analysis.db import combined_scores as combined_scores_table  # noqa: E402
-from data.db import daily_prices, get_engine, initialise_schema  # noqa: E402
+from data.db import daily_prices, database_url, get_engine, initialise_schema  # noqa: E402
 from factors.db import factor_scores as factor_scores_table  # noqa: E402
 from portfolio import mvo_optimizer as mvo_opt  # noqa: E402
 from portfolio import optimizer as tilt_opt  # noqa: E402
@@ -225,9 +224,7 @@ def run(args) -> None:
     score_date = _resolve_score_date(config, args.date)
     _setup_logging(args.verbose)
 
-    db_url = os.environ.get(
-        "DATABASE_URL", config.get("database", {}).get("url", "sqlite:///meridian.db")
-    )
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
 

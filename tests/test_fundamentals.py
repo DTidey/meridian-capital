@@ -1,11 +1,12 @@
 """Fundamentals — ratio calculations, DB round-trips, FMP field mapping."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
 
+from data._utils import utc_now
 from data.db import fundamentals as fundamentals_table
 from data.db import insert_or_replace
 from data.fundamentals import (
@@ -434,7 +435,7 @@ class TestIsFresh:
         assert _is_fresh(tmp_db, "AAPL", 7)
 
     def test_stale_data_returns_false(self, tmp_db):
-        old_ts = (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")
+        old_ts = (utc_now() - timedelta(days=10)).isoformat(timespec="seconds")
         _insert_with_timestamp(tmp_db, "AAPL", old_ts)
         assert not _is_fresh(tmp_db, "AAPL", 7)
 
@@ -447,7 +448,7 @@ class TestIsFresh:
         assert _is_fresh(tmp_db, "AAPL", 1)
 
     def test_boundary_just_expired(self, tmp_db):
-        old_ts = (datetime.utcnow() - timedelta(days=8)).isoformat(timespec="seconds")
+        old_ts = (utc_now() - timedelta(days=8)).isoformat(timespec="seconds")
         _insert_with_timestamp(tmp_db, "AAPL", old_ts)
         assert not _is_fresh(tmp_db, "AAPL", 7)
 
@@ -483,7 +484,7 @@ class TestUpdateFundamentalsSkip:
         assert result["AAPL"] == 0
 
     def test_stale_ticker_fetched(self, tmp_db, config):
-        old_ts = (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")
+        old_ts = (utc_now() - timedelta(days=10)).isoformat(timespec="seconds")
         _insert_with_timestamp(tmp_db, "MSFT", old_ts)
         config["fundamentals"]["refresh_days"] = 7
         providers = _make_providers(FundamentalsProvider.YFINANCE)
@@ -509,7 +510,7 @@ class TestUpdateFundamentalsSkip:
         _upsert_period(
             tmp_db, "AAPL", "quarterly", "2024-09-30", raw, _compute_ratios(raw, None, None)
         )
-        old_ts = (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")
+        old_ts = (utc_now() - timedelta(days=10)).isoformat(timespec="seconds")
         _insert_with_timestamp(tmp_db, "MSFT", old_ts)
         tmp_db.commit()
         config["fundamentals"]["refresh_days"] = 7
@@ -718,7 +719,7 @@ class TestMergePeriodDuplicates:
 
     def test_update_runs_merge_first(self, tmp_db, config):
         _put(tmp_db, "AAPL", "annual", "2025-09-27", "2026-05-03T20:05:57", 1.0)
-        _put(tmp_db, "AAPL", "annual", "2025-09-30", datetime.utcnow().isoformat(), 2.0)
+        _put(tmp_db, "AAPL", "annual", "2025-09-30", utc_now().isoformat(), 2.0)
         tmp_db.commit()
         update_fundamentals(
             tmp_db, ["AAPL"], config, _make_providers(FundamentalsProvider.YFINANCE)

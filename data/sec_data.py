@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 import requests
 import sqlalchemy as sa
 
+from data._utils import utc_now
+
 from .db import (
     insert_or_ignore,
     insert_or_replace,
@@ -77,8 +79,8 @@ def _get_filings_efts(
     params = {
         "q": f'"{ticker}"',
         "dateRange": "custom",
-        "startdt": (datetime.utcnow() - timedelta(days=365 * 3)).strftime("%Y-%m-%d"),
-        "enddt": datetime.utcnow().strftime("%Y-%m-%d"),
+        "startdt": (utc_now() - timedelta(days=365 * 3)).strftime("%Y-%m-%d"),
+        "enddt": utc_now().strftime("%Y-%m-%d"),
         "forms": form_type,
         "_source": "file-index",
         "hits.hits._source": "period_of_report,file_date,period_of_report,accession_no,display_date_filed,file_num",
@@ -245,7 +247,7 @@ def _parse_form4_xml(xml_text: str) -> list[dict]:
 def _flag_cluster_buys(conn: sa.engine.Connection, ticker: str, config: dict) -> None:
     window_days = config["sec"]["cluster_buy_window_days"]
     min_insiders = config["sec"]["cluster_buy_min_insiders"]
-    cutoff = (datetime.utcnow() - timedelta(days=config["sec"]["insider_lookback_days"])).strftime(
+    cutoff = (utc_now() - timedelta(days=config["sec"]["insider_lookback_days"])).strftime(
         "%Y-%m-%d"
     )
 
@@ -330,12 +332,12 @@ def update_sec_data(
     form_cutoffs: dict[str, str] = {}
     for form in forms:
         days = lookback_cfg.get(form, default_lookback)
-        form_cutoffs[form] = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        form_cutoffs[form] = (utc_now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     # ------------------------------------------------------------------
     # Pre-load data to avoid per-ticker queries and redundant HTTP calls
     # ------------------------------------------------------------------
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_now().strftime("%Y-%m-%d")
 
     # 1. Extract CIKs from already-stored filing URLs (avoids HTTP lookup for known tickers)
     stored_ciks: dict[str, str] = {}
@@ -435,7 +437,7 @@ def update_sec_data(
 
                 content = xml_text
                 txns = _parse_form4_xml(xml_text) if xml_text else []
-                now_ts = datetime.utcnow().isoformat(timespec="seconds")
+                now_ts = utc_now().isoformat(timespec="seconds")
                 for txn in txns:
                     with contextlib.suppress(sa.exc.IntegrityError):
                         conn.execute(
@@ -464,14 +466,14 @@ def update_sec_data(
                     accession_no=acc,
                     filing_url=filing_url,
                     content_text=content or None,
-                    fetched_at=datetime.utcnow().isoformat(timespec="seconds"),
+                    fetched_at=utc_now().isoformat(timespec="seconds"),
                 )
             )
             stored += 1
             logger.debug("SEC %s %s %s stored", ticker, ft, fd)
 
         # Touch the most-recent filing row so subsequent same-day runs skip this ticker.
-        now_ts = datetime.utcnow().isoformat(timespec="seconds")
+        now_ts = utc_now().isoformat(timespec="seconds")
         conn.execute(
             sa.update(sec_filings)
             .where(

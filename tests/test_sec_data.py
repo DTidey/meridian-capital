@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
+from data._utils import utc_now
 from data.db import insider_transactions
 from data.sec_data import _flag_cluster_buys, _is_ceo_cfo, _parse_form4_xml
 
@@ -208,7 +209,7 @@ def _insert_purchase(conn, ticker, insider_name, date_str, shares=1000):
 
 class TestFlagClusterBuys:
     def test_three_insiders_within_window_flagged(self, tmp_db, config):
-        base = datetime.utcnow() - timedelta(days=10)
+        base = utc_now() - timedelta(days=10)
         for i, name in enumerate(["Alice", "Bob", "Charlie"]):
             _insert_purchase(tmp_db, "AAPL", name, (base + timedelta(days=i)).strftime("%Y-%m-%d"))
         tmp_db.commit()
@@ -254,7 +255,7 @@ class TestFlagClusterBuys:
 
     def test_purchases_outside_lookback_ignored(self, tmp_db, config):
         lookback = config["sec"]["insider_lookback_days"]
-        old_date = (datetime.utcnow() - timedelta(days=lookback + 10)).strftime("%Y-%m-%d")
+        old_date = (utc_now() - timedelta(days=lookback + 10)).strftime("%Y-%m-%d")
         for name in ["Alice", "Bob", "Charlie"]:
             _insert_purchase(tmp_db, "META", name, old_date)
         tmp_db.commit()
@@ -276,12 +277,11 @@ class TestFlagClusterBuys:
         ]
         # All within lookback
         _recent_dates = [
-            (datetime.utcnow() - timedelta(days=30 - i * 2)).strftime("%Y-%m-%d") for i in range(3)
+            (utc_now() - timedelta(days=30 - i * 2)).strftime("%Y-%m-%d") for i in range(3)
         ]
         # Use recent dates that ARE within lookback but spaced > window apart
         spaced_dates = [
-            (datetime.utcnow() - timedelta(days=i * (window + 5))).strftime("%Y-%m-%d")
-            for i in range(3)
+            (utc_now() - timedelta(days=i * (window + 5))).strftime("%Y-%m-%d") for i in range(3)
         ]
         # Only the most recent two will be within lookback
         for name, date in zip(["Alice", "Bob", "Charlie"], spaced_dates, strict=False):

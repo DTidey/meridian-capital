@@ -8,7 +8,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 import time
 from datetime import date
@@ -28,7 +27,13 @@ sys.path.insert(0, str(_ROOT))
 
 # Register Layer 2 tables on the shared metadata before calling initialise_schema
 import factors.db  # noqa: F401, E402
-from data.db import get_engine, initialise_schema, insert_or_replace  # noqa: E402
+from data.db import (  # noqa: E402
+    database_url,
+    get_engine,
+    initialise_schema,
+    insert_or_replace,
+    redacted_url,
+)
 from factors import (  # noqa: E402
     composite as composite_mod,
 )
@@ -211,11 +216,11 @@ def main() -> None:
     t_start = time.monotonic()
 
     # Database
-    db_url = os.getenv("DATABASE_URL") or config["database"]["url"]
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
     conn = engine.connect()
-    logger.info("Database: %s", db_url)
+    logger.info("Database: %s", redacted_url(db_url))
 
     # ---------------------------------------------------------------------------
     # 1. Load data from Layer 1

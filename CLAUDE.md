@@ -46,8 +46,9 @@ market, fundamental, and alternative data for the S&P 500 universe, scores secur
 dimensions, applies AI analysis, constructs a market-neutral portfolio, manages risk, and routes
 orders through Alpaca. A Streamlit dashboard provides daily reporting.
 
-The database is PostgreSQL, served via `docker-compose.yml`. All tables are defined in `data/db.py`
-and registered on a single SQLAlchemy `MetaData` object.
+The database is PostgreSQL on a separate server, reached through `DATABASE_URL` in `.env` (required;
+never put credentials in `config.yaml`). All tables are defined in `data/db.py` and registered on a
+single SQLAlchemy `MetaData` object.
 
 ### Seven-layer pipeline
 
@@ -134,7 +135,7 @@ runs Bandit across the source directories and pip-audit against both requirement
 ### Key environment variables
 
 ```
-DATABASE_URL          # PostgreSQL connection string
+DATABASE_URL          # PostgreSQL connection string (required; .env only)
 OPENAI_API_KEY        # OpenAI (Layer 3 AI analysis + JARVIS) when llm.provider is openai
 OPENROUTER_API_KEY    # OpenRouter, used instead when llm.provider is openrouter
 LLM_PROVIDER          # optional: overrides llm.provider in config.yaml (openai | openrouter)

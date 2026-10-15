@@ -51,20 +51,16 @@ Weights shift automatically based on the VIX regime (low vol / normal / high vol
 ## Prerequisites
 
 - Python 3.12
-- Docker (for PostgreSQL)
+- Access to the fund's PostgreSQL server (credentials from the fund's owner)
 - An [Alpaca](https://alpaca.markets/) account (paper or live)
 - An [OpenAI](https://platform.openai.com/) API key, or an [OpenRouter](https://openrouter.ai/) key with `llm.provider: openrouter` in `config.yaml`
 - Optional: [Financial Modeling Prep](https://financialmodelingprep.com/) key for earnings transcripts; [FRED](https://fred.stlouisfed.org/) key for macro tail-risk data
 
 ## Setup
 
-**1. Start the database**
+**1. Database access**
 
-```bash
-docker compose up -d
-```
-
-This starts PostgreSQL 16 on port 5432 with a persistent named volume (`meridian_postgres_data`). The schema is created automatically on first run.
+The database is PostgreSQL 16 on a separate server. You need its connection details for `DATABASE_URL` in the next step. The schema is created automatically on first run.
 
 **2. Configure environment**
 
@@ -75,7 +71,7 @@ cp .env.example .env
 Edit `.env` and fill in:
 
 ```
-DATABASE_URL=postgresql+psycopg2://meridian:meridian@localhost:5432/meridian
+DATABASE_URL=postgresql+psycopg2://<user>:<password>@<host>:5432/meridian
 OPENAI_API_KEY=sk-...            # or OPENROUTER_API_KEY when llm.provider is openrouter
 # LLM_PROVIDER=openrouter        # optional: overrides llm.provider in config.yaml
 ALPACA_API_KEY=...
@@ -91,7 +87,7 @@ POLYGON_API_KEY=...
 OPENFIGI_API_KEY=...             # CUSIP-to-ticker matching for 13-F holdings
 ```
 
-The database URL in `config.yaml` points at the fund's PostgreSQL server; `DATABASE_URL` overrides it (e.g. for a local container).
+`DATABASE_URL` is required: every entry point stops with an error if it is missing. Keep it in `.env` only (git-ignored); `config.yaml` is public and holds no credentials.
 
 **3. Create the Python environment**
 

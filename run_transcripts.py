@@ -11,7 +11,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -25,7 +24,7 @@ load_dotenv(_ROOT / ".env")
 sys.path.insert(0, str(_ROOT))
 
 import factors.db  # noqa: F401, E402
-from data.db import get_engine, initialise_schema  # noqa: E402
+from data.db import database_url, get_engine, initialise_schema  # noqa: E402
 from data.transcripts import update_transcripts  # noqa: E402
 from factors.db import factor_scores  # noqa: E402
 
@@ -70,7 +69,7 @@ def main() -> None:
     args = p.parse_args()
 
     config = _load_config(args.config)
-    db_url = os.getenv("DATABASE_URL") or config["database"]["url"]
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
 

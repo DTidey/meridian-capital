@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from datetime import date
 from pathlib import Path
 
 import sqlalchemy as sa
 import yaml
+from dotenv import load_dotenv
 
 # Ensure project root on path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -31,7 +31,7 @@ import execution.db  # noqa: F401 — register Layer 6 tables
 import factors.db  # noqa: F401 — register Layer 2 tables
 import portfolio.db  # noqa: F401 — register Layer 4 tables
 import risk.db  # noqa: F401 — register Layer 5 tables
-from data.db import get_engine, initialise_schema
+from data.db import database_url, get_engine, initialise_schema
 
 
 def _load_config(path: str = "config.yaml") -> dict:
@@ -49,14 +49,7 @@ def _setup_logging(verbose: bool) -> None:
 
 
 def _load_dotenv() -> None:
-    env_file = Path(".env")
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+    load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def _print_summary(results: list[dict]) -> None:
@@ -95,7 +88,7 @@ def main() -> int:
     cache_dir = Path("cache")
     cache_dir.mkdir(exist_ok=True)
 
-    db_url = os.environ.get("DATABASE_URL", config["database"]["url"])
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
 

@@ -1,11 +1,13 @@
 """Daily OHLCV price ingestion — incremental updates via yfinance or Polygon."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pandas as pd
 import sqlalchemy as sa
 import yfinance as yf
+
+from data._utils import utc_now
 
 from .db import daily_prices, insert_or_replace
 from .providers import PriceProvider, Providers
@@ -156,8 +158,8 @@ def update_prices(
 ) -> dict[str, int]:
     """Incrementally update daily prices. Returns {ticker: bars_added}."""
     lookback_years = config["market_data"]["lookback_years"]
-    cutoff = (datetime.utcnow() - timedelta(days=365 * lookback_years)).strftime("%Y-%m-%d")
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    cutoff = (utc_now() - timedelta(days=365 * lookback_years)).strftime("%Y-%m-%d")
+    today = utc_now().strftime("%Y-%m-%d")
 
     summary: dict[str, int] = {}
 

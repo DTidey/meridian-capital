@@ -1,10 +1,11 @@
 """Short interest snapshots via yfinance .info."""
 
 import logging
-from datetime import datetime
 
 import sqlalchemy as sa
 import yfinance as yf
+
+from data._utils import utc_now
 
 from .db import insert_or_replace, short_interest
 
@@ -34,8 +35,8 @@ def update_short_interest(
     tickers: list[str],
 ) -> dict[str, bool]:
     """Fetch today's short interest snapshot for all tickers."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    today = utc_now().strftime("%Y-%m-%d")
+    now = utc_now().isoformat(timespec="seconds")
     summary: dict[str, bool] = {}
 
     already = set(

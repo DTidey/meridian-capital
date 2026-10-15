@@ -4,7 +4,6 @@ Meridian Capital Partners — JARVIS Dashboard
 Run: streamlit run dashboard/app.py --server.port 8502
 """
 
-import os
 import sys
 import threading
 import time
@@ -27,7 +26,7 @@ import portfolio.db  # noqa: F401
 import reporting.db  # noqa: F401 — register tables
 import risk.db  # noqa: F401
 from dashboard.theme import inject_css  # noqa: E402
-from data.db import get_engine, initialise_schema  # noqa: E402
+from data.db import database_url, get_engine, initialise_schema  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config — must be first Streamlit call
@@ -47,10 +46,7 @@ inject_css()
 # ---------------------------------------------------------------------------
 @st.cache_resource
 def _engine():
-    with open(_ROOT / "config.yaml") as fh:
-        cfg = yaml.safe_load(fh)
-    url = os.environ.get("DATABASE_URL", cfg["database"]["url"])
-    eng = get_engine(url)
+    eng = get_engine(database_url())
     initialise_schema(eng)
     return eng
 

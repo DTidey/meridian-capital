@@ -34,6 +34,10 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Database credentials moved out of `config.yaml` into `.env`: `DATABASE_URL` is now required by
+  every entry point (no config or SQLite fallback), logged URLs mask the password,
+  `docker-compose.yml` is removed and the docs describe the remote server; deprecated
+  `datetime.utcnow()` replaced (packet `32-remote-db-housekeeping`).
 - AI risk score now comes from the average severity of the listed material risks instead of the
   single overall label (nearly always HIGH); no score when no risks are listed (packet
   `31-risk-score-severity-mix`).

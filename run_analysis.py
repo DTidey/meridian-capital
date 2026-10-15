@@ -9,7 +9,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import sys
 import time
 from datetime import date
@@ -45,7 +44,7 @@ from analysis.cost_tracker import CostTracker  # noqa: E402
 from analysis.llm import get_api_key, provider_settings  # noqa: E402
 from analysis.report_generator import generate_reports  # noqa: E402
 from analysis.sector_analysis import analyse_sectors  # noqa: E402
-from data.db import get_engine, initialise_schema  # noqa: E402
+from data.db import database_url, get_engine, initialise_schema  # noqa: E402
 from factors.db import factor_scores as factor_scores_table  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -129,9 +128,7 @@ def run(args) -> None:
 
     logger.info("=== Layer 3 Analysis — %s ===", score_date)
 
-    db_url = os.environ.get(
-        "DATABASE_URL", config.get("database", {}).get("url", "sqlite:///meridian.db")
-    )
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
 

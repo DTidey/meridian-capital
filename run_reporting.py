@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -30,7 +29,7 @@ import factors.db  # noqa: F401, E402
 import portfolio.db  # noqa: F401, E402
 import reporting.db  # noqa: F401, E402 — registers tables
 import risk.db  # noqa: F401, E402
-from data.db import get_engine, initialise_schema  # noqa: E402
+from data.db import database_url, get_engine, initialise_schema  # noqa: E402
 from reporting.commentary import generate_if_due  # noqa: E402
 from reporting.lp_letter import generate as generate_letter  # noqa: E402
 from reporting.nav_series import build_nav_series  # noqa: E402
@@ -65,7 +64,7 @@ def main() -> None:
     do_letter = args.letter or args.all
 
     cfg = _load_cfg(_ROOT)
-    db_url = os.environ.get("DATABASE_URL", cfg["database"]["url"])
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
 

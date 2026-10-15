@@ -1,10 +1,11 @@
 """Universe — cache freshness, Wikipedia parse, benchmark loading, deduplication."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import responses as rsps
 import sqlalchemy as sa
 
+from data._utils import utc_now
 from data.db import benchmark_tickers, insert_or_replace, sp500_universe
 from data.universe import _cache_is_fresh, fetch_sp500, get_all_tickers, load_benchmarks
 
@@ -45,7 +46,7 @@ _WIKI_HTML = """\
 
 def _seed_universe(conn, tickers):
     """Insert universe rows with an updated_at timestamp."""
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = utc_now().isoformat(timespec="seconds")
     conn.execute(
         insert_or_replace(conn, sp500_universe),
         [
@@ -70,7 +71,7 @@ class TestCacheIsFresh:
         assert _cache_is_fresh(tmp_db, 7) is True
 
     def test_old_record_is_stale(self, tmp_db):
-        stale = (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")
+        stale = (utc_now() - timedelta(days=10)).isoformat(timespec="seconds")
         tmp_db.execute(
             sa.insert(sp500_universe).values(
                 ticker="AAPL",
@@ -82,7 +83,7 @@ class TestCacheIsFresh:
         assert _cache_is_fresh(tmp_db, 7) is False
 
     def test_exactly_at_boundary_is_stale(self, tmp_db):
-        boundary = (datetime.utcnow() - timedelta(days=7, seconds=1)).isoformat(timespec="seconds")
+        boundary = (utc_now() - timedelta(days=7, seconds=1)).isoformat(timespec="seconds")
         tmp_db.execute(
             sa.insert(sp500_universe).values(
                 ticker="AAPL",
