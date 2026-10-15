@@ -5,6 +5,7 @@ import logging
 from collections import defaultdict
 
 from analysis.api_client import OpenAIClient
+from analysis.llm import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def analyse_sectors(
     Returns:
         Dict mapping sector name → sector analysis result dict.
     """
-    model = config.get("analysis", {}).get("openai_model", "gpt-4o")
+    model = config.get("analysis", {}).get("openai_model", DEFAULT_MODEL)
     by_sector = _group_by_sector(candidates)
 
     results = {}

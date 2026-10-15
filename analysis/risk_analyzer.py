@@ -7,6 +7,7 @@ import sqlalchemy as sa
 
 from analysis.api_client import OpenAIClient
 from analysis.cache import AnalysisCache
+from analysis.llm import DEFAULT_MODEL
 from data.db import sec_filings
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def analyse(
     model = (
         config.get("analysis", {})
         .get("analyzer_models", {})
-        .get("risk", config.get("analysis", {}).get("openai_model", "gpt-4o"))
+        .get("risk", config.get("analysis", {}).get("openai_model", DEFAULT_MODEL))
     )
     cached = cache.get("risk", ticker, artifact_id, model=model)
     if cached is not None:

@@ -67,3 +67,16 @@ def test_falls_back_to_default_model(module, name, helper, stub):
         module.analyse(MagicMock(), "AAPL", MagicMock(), cache, cfg, "2026-10-14")
     expected = "gpt-4o" if name in ("earnings", "risk") else "gpt-4o-mini"
     assert cache.get.call_args.kwargs["model"] == expected
+
+
+@pytest.mark.parametrize("module,name,helper,stub", _CASES, ids=[c[1] for c in _CASES])
+def test_no_model_config_uses_code_defaults(module, name, helper, stub):
+    # Packet 35: with no model keys at all, the code defaults (GPT-6) apply, not gpt-4o
+    from analysis.llm import DEFAULT_MODEL, DEFAULT_MODEL_CHEAP
+
+    cache = MagicMock()
+    cache.get.return_value = {"cached": True}
+    with patch.object(module, helper, return_value=stub):
+        module.analyse(MagicMock(), "AAPL", MagicMock(), cache, {}, "2026-10-14")
+    expected = DEFAULT_MODEL if name in ("earnings", "risk") else DEFAULT_MODEL_CHEAP
+    assert cache.get.call_args.kwargs["model"] == expected

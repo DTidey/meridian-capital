@@ -27,7 +27,8 @@ _PRICING: dict[str, dict[str, float]] = {
 for _base in ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"):
     _PRICING[f"{_base}-pro"] = _PRICING[_base]
 
-# Fall back to gpt-4o pricing for unknown models
+# Unknown models are priced as gpt-4o: dearer than Sol and Luna, so for those tiers the ceiling
+# errs high (a model priced like Astra would be underestimated; add it to the table)
 _DEFAULT_PRICING = _PRICING["gpt-4o"]
 
 
@@ -126,9 +127,9 @@ class CostTracker:
     def total_cached_tokens(self) -> int:
         return sum(c["cached_tokens"] for c in self._calls)
 
-    def would_exceed_ceiling(self, estimated_tokens: int = 0, model: str = "gpt-4o") -> bool:
+    def would_exceed_ceiling(self, estimated_tokens: int = 0, model: str | None = None) -> bool:
         """Return True if current spend (+ estimated next call) would exceed the ceiling."""
-        pricing = _pricing(model)
+        pricing = _pricing(model) if model else _DEFAULT_PRICING
         estimated_cost = estimated_tokens * pricing["input"] / 1_000_000
         return (self.total_cost_usd() + estimated_cost) >= self._ceiling
 

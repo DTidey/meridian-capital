@@ -7,6 +7,7 @@ import sqlalchemy as sa
 
 from analysis.api_client import OpenAIClient
 from analysis.cache import AnalysisCache
+from analysis.llm import DEFAULT_MODEL_CHEAP
 from data.db import insider_cluster_flags, insider_transactions
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ def analyse(
     model = (
         config.get("analysis", {})
         .get("analyzer_models", {})
-        .get("insider", config.get("analysis", {}).get("openai_model_cheap", "gpt-4o-mini"))
+        .get("insider", config.get("analysis", {}).get("openai_model_cheap", DEFAULT_MODEL_CHEAP))
     )
     cached = cache.get("insider", ticker, artifact_id, model=model)
     if cached is not None:

@@ -34,6 +34,8 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Code fallbacks for LLM models now default to GPT-6 via `analysis.llm.DEFAULT_MODEL` /
+  `DEFAULT_MODEL_CHEAP`, kept equal to `config.yaml` by a test (packet `35-model-defaults`).
 - Scoring analyzers moved to GPT-6 after a 50-ticker shadow test: earnings and risk on gpt-6-sol,
   filing and insider on gpt-6-luna (packet `34-gpt6-scoring-analyzers`).
 - Database credentials moved out of `config.yaml` into `.env`: `DATABASE_URL` is now required by
