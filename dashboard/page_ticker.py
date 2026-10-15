@@ -17,6 +17,7 @@ from dashboard.theme import (
     metric_card,
     section_header,
 )
+from dashboard.ticker_common import ai_score_colour, ai_score_text
 from dashboard.ticker_common import chart_layout as _chart_layout
 from dashboard.ticker_common import score_colour as _score_colour
 from dashboard.ticker_documents import render_document_viewer
@@ -302,7 +303,7 @@ def render(engine, cfg: dict) -> None:
         for col, label, key in ai_pairs:
             val = ai.get(key)
             with col:
-                metric_card(label, f"{val:.0f}" if val is not None else "—", _score_colour(val))
+                metric_card(label, ai_score_text(val), ai_score_colour(val))
 
     render_ai_analysis(engine, ticker)
 

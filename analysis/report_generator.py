@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from analysis.db import combined_scores as combined_scores_table
+from analysis.risk_analyzer import risk_score
 from data.db import earnings_calendar, sp500_universe
 
 logger = logging.getLogger(__name__)
@@ -265,7 +266,13 @@ def _filing_section(result: dict) -> list[str]:
 
 def _risk_section(result: dict) -> list[str]:
     lines = ["### Risk Factors (10-K)", ""]
-    lines.append(f"**Overall severity:** {result.get('risk_severity', 'N/A')}")
+    score = risk_score(result)
+    lines.append(
+        f"**Risk score:** {score:.1f} (average severity of the material risks; 10 = lowest risk)"
+        if score is not None
+        else "**Risk score:** none (no scorable material risks)"
+    )
+    lines.append(f"**Model's overall rating:** {result.get('risk_severity', 'N/A')} (not scored)")
     bp = result.get("boilerplate_percentage")
     if bp is not None:
         lines.append(f"**Boilerplate:** {bp}%")
