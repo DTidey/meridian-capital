@@ -35,3 +35,20 @@
   datetime comparisons are untouched; moving to aware timestamps is a data migration.
 - **Tests guard the docs.** Living docs are checked for Docker mentions and URLs with literal
   passwords, so the credentials can't quietly come back through a doc example.
+
+# 2026-10-15: Risk factors extraction and risk score display (packet 33)
+
+- **Measured on the whole universe, not just the three known failures.** Downloading every
+  latest 10-K and running old and new extractors side by side found 12 more misses than the
+  three in the backlog, and showed which heading forms matter (`Item 1.A`, `Item 1(a)`,
+  "Part I." prefix, bare "Risk Factors").
+- **Bare headings only as a fallback, and only with a real end.** A bare "Risk Factors" block is
+  often a running page header; requiring a later item's title as the end, and trying it only
+  when Item 1A fails, keeps all working filings' text the same.
+- **Three working filings changed by a page-header block** (MLM, RMD, STZ) because the "Part I"
+  prefix now matches a running header. Accepted: the risk text is identical.
+- **Cached results not cleared.** They are keyed by filing, so the 15 newly found tickers update
+  on expiry, a new 10-K, or the packet 34 model switch. Clearing them earlier is left to the
+  owner.
+- **AI card colours were always "short".** 1-10 scores were compared with the 0-100 thresholds;
+  fixed while changing the number format, since it is the same line.

@@ -58,6 +58,10 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Risk factors found in 15 more 10-Ks (`Item 1.A`, `Item 1(a)`, "Part I" prefixes and bare "Risk
+  Factors" headings); Ticker page AI scores shown to one decimal in the right colours; the report
+  shows the risk score and marks the model's overall label as not scored (packet
+  `33-risk-extraction-display`).
 - AI analyzer inputs (packet `30-analyzer-input-fixes`): filing analyzer columns were
   mislabelled; risk analyzer now reads the 10-K's Item 1A section; affected cached results
   recomputed.

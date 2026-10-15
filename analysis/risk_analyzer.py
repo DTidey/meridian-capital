@@ -156,8 +156,22 @@ def _fetch_prior_10k(conn, ticker: str, current_accession: str, score_date: str)
 
 
 _MIN_SECTION_CHARS = 2_000  # shorter means a contents entry was matched, not the section
-_ITEM_1A = re.compile(r"^item\s*1a\b", re.IGNORECASE)
-_SECTION_END = re.compile(r"^item\s*(1b|1c|2)\b", re.IGNORECASE)
+# "Item 1A", "Item 1.A", "Item 1(a)", optionally after "Part I."
+_ITEM = r"^(?:part\s*i\W*)?item\s*"
+_ITEM_1A = re.compile(_ITEM + r"1\.?\s*\(?a\b", re.IGNORECASE)
+_SECTION_END = re.compile(_ITEM + r"(1\.?\s*\(?[bc]\b|2\b)", re.IGNORECASE)
+# Titles of the 10-K items after 1A, for filings whose headings omit "Item 1A" (EIX, MS)
+_LATER_ITEM_TITLES = {
+    "unresolved staff comments",
+    "cybersecurity",
+    "properties",
+    "legal proceedings",
+    "mine safety disclosures",
+    "selected financial data",
+    "quantitative and qualitative disclosures about market risk",
+    "financial statements and supplementary data",
+}
+_MDA_TITLE = "management's discussion and analysis"
 _MD_ESCAPE = re.compile(r"\\([\\`*_\[\]#<>|$~])")
 
 
@@ -167,29 +181,61 @@ def _heading(block: str) -> str | None:
     return text if text and len(text) < 80 else None
 
 
+def _title(head: str) -> str:
+    """Heading reduced for title comparison: lower case, straight quotes, no end punctuation."""
+    return head.lower().replace("’", "'").rstrip(" .")
+
+
+def _is_item_1a(head: str) -> bool:
+    return bool(_ITEM_1A.match(head)) and "risk factor" in head.lower()
+
+
+def _is_bare_risk_factors(head: str) -> bool:
+    return _title(head) == "risk factors"
+
+
+def _is_item_end(head: str) -> bool:
+    return bool(_SECTION_END.match(head))
+
+
+def _is_later_item(head: str) -> bool:
+    title = _title(head)
+    return _is_item_end(head) or title in _LATER_ITEM_TITLES or title.startswith(_MDA_TITLE)
+
+
+def _longest_section(blocks, is_start, is_end, require_end: bool) -> str | None:
+    """Longest run of blocks from a heading matching is_start to the next matching is_end."""
+    best: tuple[int, int] | None = None
+    for i, block in enumerate(blocks):
+        head = _heading(block)
+        if not head or not is_start(head):
+            continue
+        end = next(
+            (j for j in range(i + 1, len(blocks)) if (h := _heading(blocks[j])) and is_end(h)),
+            None,
+        )
+        if end is None and require_end:
+            continue
+        end = len(blocks) if end is None else end
+        if best is None or sum(map(len, blocks[i:end])) > sum(map(len, blocks[best[0] : best[1]])):
+            best = (i, end)
+    return "\n\n".join(blocks[best[0] : best[1]]) if best else None
+
+
 def extract_risk_factors(markdown: str) -> str | None:
     """Item 1A section of a 10-K converted to markdown, from its heading to Item 1B/1C/2.
 
     Table-of-contents rows sit in long multi-row tables and cross-references are long
     sentences, so only short heading blocks count; the longest candidate section wins.
+    Filings whose heading is a bare "Risk Factors" are used only when no Item 1A section
+    is found, and only up to the title of a later item (a page header has no such end).
     """
     blocks = markdown.split("\n\n") if markdown else []
-    best: tuple[int, int] | None = None
-    for i, block in enumerate(blocks):
-        head = _heading(block)
-        if not head or not _ITEM_1A.match(head) or "risk factor" not in head.lower():
-            continue
-        end = next(
-            (
-                j
-                for j in range(i + 1, len(blocks))
-                if (h := _heading(blocks[j])) and _SECTION_END.match(h)
-            ),
-            len(blocks),
-        )
-        if best is None or sum(map(len, blocks[i:end])) > sum(map(len, blocks[best[0] : best[1]])):
-            best = (i, end)
-    return "\n\n".join(blocks[best[0] : best[1]]) if best else None
+    section = _longest_section(blocks, _is_item_1a, _is_item_end, require_end=False)
+    if section and len(section) >= _MIN_SECTION_CHARS:
+        return section
+    bare = _longest_section(blocks, _is_bare_risk_factors, _is_later_item, require_end=True)
+    return bare if bare and len(bare) >= _MIN_SECTION_CHARS else section
 
 
 def _risk_text(filing: dict, max_chars: int) -> tuple[str, str]:
