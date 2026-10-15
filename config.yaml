@@ -122,7 +122,7 @@ scoring:
 # LLM provider for Layer 3 analysis, LP letter, weekly commentary and JARVIS chat.
 #   openai:     direct OpenAI API, key in OPENAI_API_KEY
 #   openrouter: OpenRouter's OpenAI-compatible API, key in OPENROUTER_API_KEY.
-#               Bare model names below (gpt-4o) are sent as openai/gpt-4o; use a full
+#               Bare model names below (gpt-6-sol) are sent as openai/gpt-6-sol; use a full
 #               OpenRouter "vendor/model" ID to pick a non-OpenAI model.
 # The LLM_PROVIDER env var (e.g. in .env) overrides `provider` for a single machine.
 llm:
@@ -134,7 +134,8 @@ llm:
 analysis:
   # Non-trading uses (packet 29): JARVIS, LP letter, weekly commentary and sector reports use
   # openai_model; filing summaries use openai_model_cheap. The scoring analyzers are pinned
-  # separately in analyzer_models and move only after a shadow test (stage 3).
+  # separately in analyzer_models (GPT-6 since packet 34's shadow test); a test guards them, so
+  # change them only after a new shadow test.
   openai_model: gpt-6-sol
   openai_model_cheap: gpt-6-luna
   cost_ceiling_usd: 25.0
@@ -143,10 +144,10 @@ analysis:
   output_dir: output/reports
 
   analyzer_models:
-    earnings: gpt-4o
-    filing:   gpt-4o-mini
-    risk:     gpt-4o
-    insider:  gpt-4o-mini
+    earnings: gpt-6-sol
+    filing:   gpt-6-luna
+    risk:     gpt-6-sol
+    insider:  gpt-6-luna
 
   combined_score:
     quant_weight: 0.60

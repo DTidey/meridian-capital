@@ -34,6 +34,8 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Scoring analyzers moved to GPT-6 after a 50-ticker shadow test: earnings and risk on gpt-6-sol,
+  filing and insider on gpt-6-luna (packet `34-gpt6-scoring-analyzers`).
 - Database credentials moved out of `config.yaml` into `.env`: `DATABASE_URL` is now required by
   every entry point (no config or SQLite fallback), logged URLs mask the password,
   `docker-compose.yml` is removed and the docs describe the remote server; deprecated
