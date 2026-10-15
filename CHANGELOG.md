@@ -34,6 +34,9 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- AI risk score now comes from the average severity of the listed material risks instead of the
+  single overall label (nearly always HIGH); no score when no risks are listed (packet
+  `31-risk-score-severity-mix`).
 - JARVIS, LP letter, weekly commentary and sector reports use gpt-6-sol; filing summaries use
   gpt-6-luna. Scoring analyzers unchanged (packet `29-gpt6-non-trading`).
 - Reference docs, README and `.env.example` brought up to date; `docs/README.md` separates
