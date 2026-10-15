@@ -68,4 +68,4 @@ During market hours (9:30–16:00 ET, weekdays) the dashboard refreshes automati
 
 - To populate data, run the pipeline first: see [run_all.md](run_all.md).
 - The LLM provider comes from `llm.provider` in `config.yaml` (`LLM_PROVIDER` in `.env` overrides
-  it). Models: per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-4o, filing and insider on gpt-4o-mini by default); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries.
+  it). Models: per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-6-sol, filing and insider on gpt-6-luna); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries.

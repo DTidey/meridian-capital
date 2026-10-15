@@ -142,7 +142,7 @@ Open `http://localhost:8502`. The dashboard auto-refreshes every 5 minutes durin
 | Polygon.io | Price data alternative (optional; falls back to yfinance) |
 | FRED | Macro indicators for tail-risk monitoring (optional) |
 | Alpaca | Order execution and shortability checks |
-| OpenAI / OpenRouter | LLM analysis, JARVIS, LP letter and filing summaries. Provider set by `llm.provider`; per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-4o, filing and insider on gpt-4o-mini by default); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries (all in `config.yaml`) |
+| OpenAI / OpenRouter | LLM analysis, JARVIS, LP letter and filing summaries. Provider set by `llm.provider`; per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-6-sol, filing and insider on gpt-6-luna); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries (all in `config.yaml`) |
 | OpenFIGI | CUSIP-to-ticker resolution for 13-F holdings (optional) |
 
 ## Development

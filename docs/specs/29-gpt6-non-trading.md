@@ -34,6 +34,7 @@ Out of scope / non-goals:
 ## Acceptance criteria
 - AC1: `analysis.openai_model` is `gpt-6-sol` and `analysis.openai_model_cheap` is `gpt-6-luna`.
 - AC2: `analysis.analyzer_models` is unchanged (earnings/risk gpt-4o, filing/insider gpt-4o-mini).
+  (Superseded by packet 34, `docs/specs/34-gpt6-scoring-analyzers.md`: the analyzers moved to GPT-6.)
 - AC3: Both new models are treated as reasoning models and have prices in the cost table.
 
 ## Security considerations

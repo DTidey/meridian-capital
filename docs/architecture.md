@@ -49,7 +49,7 @@ ls_equity_fund/
 | 13-F ticker resolution | OpenFIGI API (optional, CUSIP to ticker) |
 | HTML parsing | BeautifulSoup + lxml (EDGAR filing index and documents) |
 | Regulatory filings | SEC EDGAR REST API (public) |
-| AI analysis | OpenAI models via the OpenAI API or OpenRouter (`llm.provider`); per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-4o, filing and insider on gpt-4o-mini by default); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries |
+| AI analysis | OpenAI models via the OpenAI API or OpenRouter (`llm.provider`); per-analyzer models in `analysis.analyzer_models` (earnings and risk on gpt-6-sol, filing and insider on gpt-6-luna); `analysis.openai_model` for JARVIS, the LP letter and commentary; `analysis.openai_model_cheap` for filing summaries |
 | Token counting | tiktoken |
 | Portfolio optimisation | scipy (SLSQP via `scipy.optimize.minimize`) |
 | Parquet I/O | pyarrow (predicted covariance cache) |

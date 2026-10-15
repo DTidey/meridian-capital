@@ -52,3 +52,18 @@
   owner.
 - **AI card colours were always "short".** 1-10 scores were compared with the 0-100 thresholds;
   fixed while changing the number format, since it is the same line.
+
+# 2026-10-15: GPT-6 for the scoring analyzers (packet 34)
+
+- **Shadow test on final inputs.** Run after packets 30, 31 and 33 fixed the analyzer inputs and
+  the risk score, so the comparison reflects the models, not input bugs. Production analyzer
+  code with a stand-in cache: both model sets ran fresh, nothing was written.
+- **Insider decided it.** gpt-4o-mini called most selling STRONG_SELL (score 1); Luna separates
+  routine from meaningful selling, as the prompt asks. Earnings on Sol is more spread out;
+  filing is similar.
+- **Risk switched too, despite poor agreement.** Owner's call after seeing the numbers; Sol's
+  risk score is the only one leaning the right way against realised volatility, on a small
+  sample.
+- **No cost-ceiling change.** About +10% per ticker; a full run is estimated at $12-13 of $25.
+- **First run after merge is slow** (about twice as long; every analysis recomputed). `run_all.py`
+  has no timeout, so the nightly job just takes longer once.
