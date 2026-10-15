@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator
 
-from analysis.llm import completion_params, make_client, resolve_model
+from analysis.llm import DEFAULT_MODEL_CHEAP, completion_params, make_client, resolve_model
 
-MAX_SOURCE_TOKENS = 100_000  # gpt-4o-mini context is 128k
+MAX_SOURCE_TOKENS = 100_000  # set for gpt-4o-mini (128k context); gpt-6-luna allows 1.05M
 MAX_OUTPUT_TOKENS = 1_500
 
 _RULES = (
@@ -41,7 +41,7 @@ def summary_messages(form_type: str, text: str) -> list[dict]:
 
 
 def truncate_tokens(text: str, max_tokens: int) -> tuple[str, bool]:
-    """Cut text to max_tokens (gpt-4o tokenizer); True if it was cut."""
+    """Cut text to max_tokens (o200k_base, approximate for GPT-6); True if it was cut."""
     import tiktoken
 
     enc = tiktoken.get_encoding("o200k_base")
@@ -72,7 +72,9 @@ def stream_summary(
 
 
 def summary_model(cfg: dict) -> str:
-    return resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model_cheap", "gpt-4o-mini"))
+    return resolve_model(
+        cfg, (cfg.get("analysis") or {}).get("openai_model_cheap", DEFAULT_MODEL_CHEAP)
+    )
 
 
 def unverified_figures(summary: str, source: str) -> list[str]:

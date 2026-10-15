@@ -67,3 +67,14 @@
 - **No cost-ceiling change.** About +10% per ticker; a full run is estimated at $12-13 of $25.
 - **First run after merge is slow** (about twice as long; every analysis recomputed). `run_all.py`
   has no timeout, so the nightly job just takes longer once.
+
+# 2026-10-15: Model defaults in code (packet 35)
+
+- **One pair of named defaults instead of ten literals.** A test ties them to `config.yaml`, so
+  the next model change can't leave gpt-4o-style stragglers; another test fails on any new
+  gpt-4o literal in source.
+- **Lazy imports kept.** Three modules import `analysis.llm` inside functions to avoid loading
+  the OpenAI library at import; the constant joined those imports. `cost_tracker` got a `None`
+  default rather than a new import.
+- **Unknown-model pricing stays gpt-4o** on purpose: its input price is above Sol's, so the cost
+  ceiling errs high. The 100k summary cap also stays, although Luna allows 1.05M tokens.

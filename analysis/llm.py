@@ -4,6 +4,11 @@ import os
 
 import openai
 
+# Used only when config.yaml has no analysis.openai_model / openai_model_cheap; keep them equal
+# to the configured models (a test checks this).
+DEFAULT_MODEL = "gpt-6-sol"
+DEFAULT_MODEL_CHEAP = "gpt-6-luna"
+
 _PROVIDERS: dict[str, dict] = {
     "openai": {"base_url": None, "api_key_env": "OPENAI_API_KEY"},
     "openrouter": {

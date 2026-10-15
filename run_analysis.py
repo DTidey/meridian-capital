@@ -41,7 +41,7 @@ from analysis.combined_score import (  # noqa: E402
     compute_combined_scores,
 )
 from analysis.cost_tracker import CostTracker  # noqa: E402
-from analysis.llm import get_api_key, provider_settings  # noqa: E402
+from analysis.llm import DEFAULT_MODEL, get_api_key, provider_settings  # noqa: E402
 from analysis.report_generator import generate_reports  # noqa: E402
 from analysis.sector_analysis import analyse_sectors  # noqa: E402
 from data.db import database_url, get_engine, initialise_schema  # noqa: E402
@@ -142,7 +142,7 @@ def run(args) -> None:
     analysis_cfg = config.get("analysis", {})
     cost_ceiling = analysis_cfg.get("cost_ceiling_usd", 25.0)
     cache_ttl = analysis_cfg.get("cache_ttl_days", 30)
-    default_model = analysis_cfg.get("openai_model", "gpt-4o")
+    default_model = analysis_cfg.get("openai_model", DEFAULT_MODEL)
 
     tracker = CostTracker(ceiling_usd=cost_ceiling)
     client = OpenAIClient(api_key=api_key, model=default_model, cost_tracker=tracker, config=config)

@@ -134,9 +134,9 @@ def _build_context(engine: sqlalchemy.engine.Engine) -> str:
 
 
 def _call_llm(context: str, cfg: dict) -> str:
-    from analysis.llm import completion_params, make_client, resolve_model
+    from analysis.llm import DEFAULT_MODEL, completion_params, make_client, resolve_model
 
-    model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", "gpt-4o"))
+    model = resolve_model(cfg, (cfg.get("analysis") or {}).get("openai_model", DEFAULT_MODEL))
     client = make_client(cfg)
     resp = client.chat.completions.create(
         model=model,
