@@ -12,9 +12,6 @@ from data.db import sec_filings
 logger = logging.getLogger(__name__)
 
 _SEVERITY_MAP = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
-_SEVERITY_SCORE = {
-    k: 10 - v * 2 for k, v in _SEVERITY_MAP.items()
-}  # LOW→10, MEDIUM→8, HIGH→6, CRITICAL→4
 
 _SYSTEM_PROMPT = """\
 You are a risk analyst specialising in SEC 10-K filings.
@@ -94,12 +91,22 @@ def analyse(
     return result
 
 
-def risk_score(result: dict) -> float | None:
-    """Map risk_severity to a 1–10 score (lower risk → higher score)."""
+def risk_score(result: dict | None) -> float | None:
+    """4-10 score from the mean severity of the material risks (lower risk -> higher score).
+
+    The overall risk_severity label is not used: with the real Item 1A section nearly every
+    company is HIGH. No listed risks means the model saw no usable section, so no score.
+    """
     if result is None:
         return None
-    severity = result.get("risk_severity", "MEDIUM")
-    return float(_SEVERITY_SCORE.get(severity, 8))
+    risks = result.get("material_risks")
+    if not isinstance(risks, list):
+        return None
+    severities = [r.get("severity") for r in risks if isinstance(r, dict)]
+    values = [_SEVERITY_MAP[s] for s in severities if isinstance(s, str) and s in _SEVERITY_MAP]
+    if not values:
+        return None
+    return 10.0 - 2.0 * sum(values) / len(values)
 
 
 def _fetch_10k(conn, ticker: str, score_date: str) -> dict | None:

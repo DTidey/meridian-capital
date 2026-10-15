@@ -15,7 +15,7 @@ Layer 3 reads LONG and SHORT candidates produced by Layer 2 and enriches each wi
 - AC3: The cost tracker checks `cost_tracker.would_exceed_ceiling()` before each API call and raises `CostCeilingExceeded` (skipping remaining analyses with a logged warning) if the cumulative spend would exceed `cost_ceiling_usd` (default $25.00).
 - AC4: The analysis cache reads and writes the `analysis_results` table keyed by `(analyzer, ticker, artifact_id)`; a cached result within its TTL is returned without an API call, and `evict_expired()` removes stale rows at startup.
 - AC5: The earnings analyzer returns None when no transcript exists for the ticker; otherwise it scores 6 categories (1-10) and stores the mean as `earnings_score` in `ai_scores`.
-- AC6: The risk analyzer strips HTML tags from 10-K `content_text`, truncates to `filing_risk_max_chars`, returns None when no 10-K is cached, and maps `risk_severity` (LOW/MEDIUM/HIGH/CRITICAL) to `risk_score` values of 10, 8, 6, 4.
+- AC6: The risk analyzer strips HTML tags from 10-K `content_text`, truncates to `filing_risk_max_chars`, returns None when no 10-K is cached, and maps `risk_severity` (LOW/MEDIUM/HIGH/CRITICAL) to `risk_score` values of 10, 8, 6, 4. (Scoring superseded by packet 31: `docs/specs/31-risk-score-severity-mix.md`.)
 - AC7: The insider analyzer returns None when no open-market transactions (`is_open_market = 1`) exist in the 90-day window; otherwise it maps `signal_strength` (STRONG_BUY/MODERATE_BUY/NEUTRAL/MODERATE_SELL/STRONG_SELL) to `insider_ai_score` values of 10, 7.5, 5, 2.5, 1.
 - AC8: The combined score blends Layer 2 `quant_composite` (0-100) and AI `ai_composite` (normalised from 1-10 to 0-100) at 60%/40%; tickers with `analyzers_used == 0` use 100% quant weighting; the combined score is re-ranked within GICS sector and LONG/SHORT labels are re-applied using the same thresholds as Layer 2.
 - AC9: The report generator writes one markdown file per LONG/SHORT candidate to `output/reports_{YYYYMMDD}/`, covering quantitative scores, all four analyzer outputs (gracefully omitting any that returned None), upcoming catalysts from `earnings_calendar`, and sector context.
@@ -360,7 +360,7 @@ class AnalysisCache:
 ```
 
 `risk_severity`: `LOW` / `MEDIUM` / `HIGH` / `CRITICAL`  
-`risk_score` for blending = `10 − (severity_map[risk_severity] * 2)` where `severity_map = {LOW:0, MEDIUM:1, HIGH:2, CRITICAL:3}` → scores of 10, 8, 6, 4.
+`risk_score` for blending = `10 − (severity_map[risk_severity] * 2)` where `severity_map = {LOW:0, MEDIUM:1, HIGH:2, CRITICAL:3}` → scores of 10, 8, 6, 4. Superseded by packet 31: the score is now `10 − 2 × mean` of the per-risk severities in `material_risks`, or None when none are listed.
 
 **Detecting new risks:** Pass the prior 10-K accession number (from `sec_filings` ordered by `filed_date`) as context in the user prompt if available. Ask the model to flag risks that appear new compared to a prior filing.
 

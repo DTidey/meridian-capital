@@ -68,7 +68,7 @@ class TestComputeAiComposite:
             "capital_allocation": {"score": 8},
         }
         filing = {"earnings_quality_score": 8.0, "balance_sheet_score": 8.0}
-        risk = {"risk_severity": "LOW"}  # maps to 10
+        risk = {"material_risks": [{"risk": "a", "severity": "LOW"}]}  # maps to 10
         insider = {"signal_strength": "STRONG_BUY"}  # maps to 10
 
         result = compute_ai_composite(tmp_db, "AAPL", "2024-06-30", earnings, filing, risk, insider)
@@ -81,7 +81,7 @@ class TestComputeAiComposite:
         assert result["ai_composite"] is None
 
     def test_partial_analyzers(self, tmp_db):
-        risk = {"risk_severity": "MEDIUM"}  # maps to 8
+        risk = {"material_risks": [{"risk": "a", "severity": "MEDIUM"}]}  # maps to 8
         result = compute_ai_composite(tmp_db, "GOOG", "2024-06-30", None, None, risk, None)
         assert result["analyzers_used"] == 1
         assert result["ai_composite"] == pytest.approx(8.0)
