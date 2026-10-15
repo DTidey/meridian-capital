@@ -5,12 +5,8 @@ shows the fund across seven pages.
 
 ## Prerequisites
 
-1. **Database reachable.** `config.yaml` (`database.url`) points at the fund's PostgreSQL server;
-   set `DATABASE_URL` in `.env` to use another one, e.g. a local container started with:
-
-   ```bash
-   docker compose up -d
-   ```
+1. **Database reachable.** `DATABASE_URL` in `.env` must point at the fund's PostgreSQL server;
+   the dashboard stops with an error if it is missing.
 
 2. **Environment variables.** A `.env` file must exist at `ls_equity_fund/.env`:
 

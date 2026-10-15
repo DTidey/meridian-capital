@@ -1,11 +1,12 @@
 """Earnings calendar — today-skip logic and DB round-trips."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
 
+from data._utils import utc_now
 from data.db import earnings_calendar as ec_table
 from data.earnings_calendar import update_earnings_calendar
 
@@ -13,11 +14,11 @@ _CONFIG = {"earnings_calendar": {"lookahead_days": 30}}
 
 
 def _today() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return utc_now().strftime("%Y-%m-%d")
 
 
 def _future(days: int) -> str:
-    return (datetime.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d")
+    return (utc_now() + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
 def _insert_fetched(conn, ticker, earnings_date, fetched_at):
@@ -57,7 +58,7 @@ class TestTodaySkip:
         assert result["MSFT"] == 1
 
     def test_ticker_fetched_yesterday_is_refetched(self, tmp_db):
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d") + "T12:00:00"
+        yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d") + "T12:00:00"
         _insert_fetched(tmp_db, "GOOG", _future(15), yesterday)
 
         with patch("data.earnings_calendar._fetch_earnings_date") as mock_fetch:
@@ -96,7 +97,7 @@ class TestTodaySkip:
 
 class TestDateWindowFiltering:
     def test_past_date_not_stored(self, tmp_db):
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
         with patch("data.earnings_calendar._fetch_earnings_date") as mock_fetch:
             mock_fetch.return_value = [{"earnings_date": yesterday, "eps_estimate": None}]
             result = update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)

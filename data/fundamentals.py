@@ -9,6 +9,8 @@ import requests
 import sqlalchemy as sa
 import yfinance as yf
 
+from data._utils import utc_now
+
 from .db import _dialect_insert, fundamentals
 from .providers import FundamentalsProvider, Providers
 
@@ -234,7 +236,7 @@ def _upsert_period(
         ticker=ticker,
         period_type=period_type,
         period_end=month_end(period_end),
-        updated_at=datetime.utcnow().isoformat(timespec="seconds"),
+        updated_at=utc_now().isoformat(timespec="seconds"),
         **raw_vals,
         **ratio_vals,
     )
@@ -411,7 +413,7 @@ def _is_fresh(conn: sa.engine.Connection, ticker: str, max_age_days: int) -> boo
     if result is None:
         return False
     try:
-        return (datetime.utcnow() - datetime.fromisoformat(result)) < timedelta(days=max_age_days)
+        return (utc_now() - datetime.fromisoformat(result)) < timedelta(days=max_age_days)
     except (ValueError, TypeError):
         return False
 

@@ -2,11 +2,13 @@
 
 import contextlib
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pandas as pd
 import sqlalchemy as sa
 import yfinance as yf
+
+from data._utils import utc_now
 
 from .db import earnings_calendar, insert_or_replace
 
@@ -73,9 +75,9 @@ def update_earnings_calendar(
 ) -> dict[str, int]:
     """Refresh upcoming earnings dates for all universe tickers."""
     lookahead = config["earnings_calendar"]["lookahead_days"]
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    cutoff = (datetime.utcnow() + timedelta(days=lookahead)).strftime("%Y-%m-%d")
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    today = utc_now().strftime("%Y-%m-%d")
+    cutoff = (utc_now() + timedelta(days=lookahead)).strftime("%Y-%m-%d")
+    now = utc_now().isoformat(timespec="seconds")
 
     already = set(
         conn.execute(

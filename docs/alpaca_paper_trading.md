@@ -88,8 +88,10 @@ python run_execution.py --sync        # reconcile DB positions against Alpaca
 To clear all execution and portfolio state (e.g. before a fresh start):
 
 ```python
+import os
+
 import sqlalchemy as sa
-engine = sa.create_engine("postgresql+psycopg2://meridian:meridian@localhost:5432/meridian")
+engine = sa.create_engine(os.environ["DATABASE_URL"])  # from .env
 tables = [
     "position_approvals", "execution_orders", "position_trades",
     "portfolio_history", "portfolio_nav", "pnl_attribution",

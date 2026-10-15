@@ -140,13 +140,12 @@ See `docs/run_all.md` for common invocation patterns including `--whatif`, `--dr
 
 ## 5. Configuration
 
-All runtime parameters live in `config.yaml`. The database connection URL is read from the `DATABASE_URL` environment variable if set, otherwise from `config.yaml`. API keys are read exclusively from environment variables (via `.env` or shell environment).
+All runtime parameters live in `config.yaml`. The database connection URL is read only from the `DATABASE_URL` environment variable; runs stop with an error if it is missing. API keys are read exclusively from environment variables (via `.env` or shell environment).
 
 ### 5.1 Key configuration parameters
 
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
-| `database` | `url` | The fund's PostgreSQL server | SQLAlchemy connection URL (overridden by `DATABASE_URL`) |
 | `universe` | `cache_refresh_days` | 7 | How often to re-scrape Wikipedia |
 | `market_data` | `lookback_years` | 3 | Historical price depth |
 | `sec` | `rate_limit_per_sec` | 8 | EDGAR request rate cap |
@@ -162,8 +161,7 @@ All runtime parameters live in `config.yaml`. The database connection URL is rea
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | No | Overrides `config.yaml` database URL |
-| `POSTGRES_PASSWORD` | No | Used by Docker Compose; defaults to `meridian` |
+| `DATABASE_URL` | Yes | SQLAlchemy URL of the fund's PostgreSQL server, credentials included |
 | `SEC_USER_EMAIL` | Yes (SEC) | Contact email for SEC EDGAR fair-use header |
 | `SEC_USER_AGENT` | Yes (SEC) | User-agent string for SEC requests |
 | `POLYGON_API_KEY` | No | Enables licensed Polygon price data |

@@ -7,6 +7,8 @@ import pandas as pd
 import requests
 import sqlalchemy as sa
 
+from data._utils import utc_now
+
 from .db import benchmark_tickers, insert_or_replace, sp500_universe
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ def _cache_is_fresh(conn: sa.engine.Connection, refresh_days: int) -> bool:
     if not row:
         return False
     last = datetime.fromisoformat(row)
-    return datetime.utcnow() - last < timedelta(days=refresh_days)
+    return utc_now() - last < timedelta(days=refresh_days)
 
 
 def fetch_sp500(conn: sa.engine.Connection, config: dict, force: bool = False) -> list[str]:
@@ -62,7 +64,7 @@ def fetch_sp500(conn: sa.engine.Connection, config: dict, force: bool = False) -
     df["ticker"] = df["ticker"].str.replace(".", "-", regex=False)
     df = df[["ticker", "company_name", "gics_sector", "gics_sub_industry"]].copy()
 
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = utc_now().isoformat(timespec="seconds")
     df["updated_at"] = now
 
     conn.execute(

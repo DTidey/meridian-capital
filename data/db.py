@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import os
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -222,6 +223,19 @@ def _configure_sqlite(dbapi_conn, _record) -> None:
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
+
+
+def database_url() -> str:
+    """DATABASE_URL from the environment (.env). Credentials never live in config.yaml."""
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set: add it to .env (see .env.example)")
+    return url
+
+
+def redacted_url(url: str) -> str:
+    """The URL with any password masked, for logging."""
+    return make_url(url).render_as_string(hide_password=True)
 
 
 def get_engine(url: str) -> sa.engine.Engine:

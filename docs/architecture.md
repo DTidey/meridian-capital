@@ -6,7 +6,6 @@ The application is a Python monorepo at `ls_equity_fund/`. It is structured as s
 
 ```
 ls_equity_fund/
-    ├── docker-compose.yml      # PostgreSQL service definition
     ├── run_data.py             # Layer 1: data ingestion entry point
     ├── run_scoring.py          # Layer 2: factor scoring entry point
     ├── run_transcripts.py      # Earnings transcript ingestion (between Layers 2 and 3)
@@ -38,7 +37,7 @@ ls_equity_fund/
 | Concern | Choice |
 |---------|--------|
 | Language | Python 3.12 |
-| Database | PostgreSQL 16 (via Docker) |
+| Database | PostgreSQL 16 (separate server) |
 | ORM / query layer | SQLAlchemy 2.0 (Core, not ORM) |
 | DB adapter | psycopg2-binary 2.9 |
 | Data manipulation | pandas 3.x |
@@ -59,7 +58,6 @@ ls_equity_fund/
 | Linting | ruff |
 | Testing | pytest, pytest-mock, responses |
 | Config | PyYAML + python-dotenv |
-| Infrastructure | Docker Compose |
 
 ---
 
@@ -67,25 +65,11 @@ ls_equity_fund/
 
 ### 3.1 Database
 
-PostgreSQL 16 runs in Docker. The service is defined in `ls_equity_fund/docker-compose.yml`.
+PostgreSQL 16 runs on a separate server (database `meridian`, port 5432), not on the development machine.
 
-```
-docker compose up -d
-```
+The connection URL, credentials included, comes only from the `DATABASE_URL` environment variable, set in the git-ignored `.env`. `data.db.database_url()` reads it for every entry point and raises a `RuntimeError` if it is missing; there is no fallback. Entry points that log the URL mask the password with `data.db.redacted_url()`.
 
-| Parameter | Value |
-|-----------|-------|
-| Container name | `meridian_db` |
-| Database | `meridian` |
-| User | `meridian` |
-| Password | `$POSTGRES_PASSWORD` (default: `meridian`) |
-| Port | 5432 |
-| Data volume | `postgres_data` (named `meridian_postgres_data`, persisted across restarts) |
-| Health check | `pg_isready -U meridian -d meridian` every 10s |
-
-The connection URL is configured in `config.yaml` and can be overridden by the `DATABASE_URL` environment variable, which takes precedence. This allows the same codebase to connect to a remote or containerised database without modifying the config file.
-
-### 3.2 Local development without Docker
+### 3.2 SQLite (tests)
 
 The engine factory (`get_engine`) supports any SQLAlchemy URL. Passing a `sqlite:///path/to/file.db` URL is valid and is used by the test suite. The factory applies SQLite-specific PRAGMAs (`journal_mode=WAL`, `foreign_keys=ON`) automatically when a SQLite dialect is detected; these are skipped for PostgreSQL.
 
@@ -371,4 +355,4 @@ Reads APPROVED rows from `position_approvals`; submits day-limit orders via the 
 
 `config.yaml` holds all non-secret runtime parameters. Secrets (API keys, database credentials) are read exclusively from environment variables, loaded from `.env` via `python-dotenv` at process startup. The `.env` file is gitignored. `.env.example` documents every expected variable without values.
 
-The `DATABASE_URL` environment variable takes precedence over `config.yaml`'s `database.url`, enabling the same codebase to connect to different databases (local Docker, staging, production) without modifying any file.
+The database URL is the one exception to `config.yaml`: it is read only from `DATABASE_URL`, so credentials never enter the repository.

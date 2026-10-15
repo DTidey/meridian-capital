@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 import requests
 import sqlalchemy as sa
 
+from data._utils import utc_now
+
 from .db import _dialect_insert, earnings_transcripts, sec_filings
 
 logger = logging.getLogger(__name__)
@@ -306,14 +308,14 @@ def update_transcripts(
     """
     fmp_key = os.getenv("FMP_API_KEY", "").strip()
     base_url = config["transcripts"]["fmp_base_url"]
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = utc_now().isoformat(timespec="seconds")
     summary: dict[str, int] = {}
 
     fmp_active = bool(fmp_key)
     if not fmp_active:
         logger.info("Transcripts: no FMP_API_KEY — using 8-K exhibit fallback")
 
-    one_year_ago = (datetime.utcnow() - timedelta(days=365)).strftime("%Y-%m-%d")
+    one_year_ago = (utc_now() - timedelta(days=365)).strftime("%Y-%m-%d")
 
     # Tickers that file 8-Ks far more often than quarterly (> 20/year) are not
     # earnings-reporting via 8-K (e.g. daily ASX buy-back filings). Bulk-mark all
@@ -379,7 +381,7 @@ def update_transcripts(
     )
 
     # Tickers whose transcripts were already fetched today need no external call.
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = utc_now().strftime("%Y-%m-%d")
     fetched_today: set[str] = set(
         conn.execute(
             sa.select(earnings_transcripts.c.ticker)

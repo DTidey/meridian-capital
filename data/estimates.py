@@ -1,10 +1,11 @@
 """Analyst estimates snapshots — forward EPS + price targets via yfinance."""
 
 import logging
-from datetime import datetime
 
 import sqlalchemy as sa
 import yfinance as yf
+
+from data._utils import utc_now
 
 from .db import analyst_estimates, insert_or_replace
 
@@ -38,8 +39,8 @@ def update_estimates(
     tickers: list[str],
 ) -> dict[str, bool]:
     """Snapshot today's analyst estimates for all tickers."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    today = utc_now().strftime("%Y-%m-%d")
+    now = utc_now().isoformat(timespec="seconds")
     summary: dict[str, bool] = {}
 
     already = set(

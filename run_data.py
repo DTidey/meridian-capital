@@ -25,7 +25,14 @@ load_dotenv(_ROOT / ".env")
 
 sys.path.insert(0, str(_ROOT))
 
-from data.db import get_engine, initialise_schema, insider_transactions, sp500_universe
+from data.db import (
+    database_url,
+    get_engine,
+    initialise_schema,
+    insider_transactions,
+    redacted_url,
+    sp500_universe,
+)
 from data.earnings_calendar import update_earnings_calendar
 from data.estimates import update_estimates
 from data.fundamentals import update_fundamentals
@@ -138,16 +145,13 @@ def main() -> None:
 
     t_start = time.monotonic()
 
-    # Database — DATABASE_URL env var overrides config (useful in containers)
-    import os
-
     import sqlalchemy as sa
 
-    db_url = os.getenv("DATABASE_URL") or config["database"]["url"]
+    db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
     conn = engine.connect()
-    logger.info("Database: %s", db_url)
+    logger.info("Database: %s", redacted_url(db_url))
 
     # Providers
     providers = Providers()

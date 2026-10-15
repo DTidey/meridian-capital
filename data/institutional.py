@@ -6,10 +6,11 @@ import re
 import time
 import xml.etree.ElementTree as ET  # nosec B405
 from collections import Counter
-from datetime import datetime
 
 import requests
 import sqlalchemy as sa
+
+from data._utils import utc_now
 
 from .db import (
     insert_or_ignore,
@@ -464,7 +465,7 @@ def _store_holdings(
     report_date: str,
     filed_date: str,
 ) -> None:
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = utc_now().isoformat(timespec="seconds")
     for h in holdings:
         try:
             conn.execute(

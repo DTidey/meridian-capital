@@ -49,7 +49,8 @@ Layer 1 is the data foundation for the entire system. It populates a PostgreSQL 
 
 **Date:** 2026-05-06  
 **Status:** Complete  
-**Depends on:** PostgreSQL 16 (Docker) — `docker-compose.yml` at project root
+**Depends on:** PostgreSQL 16 (Docker) — `docker-compose.yml` at project root  
+**Superseded by packet 32** (`docs/specs/32-remote-db-housekeeping.md`): the database is a remote server, `DATABASE_URL` in `.env` is required, and `docker-compose.yml` is removed.
 
 ---
 
