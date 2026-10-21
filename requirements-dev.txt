@@ -283,7 +283,7 @@ sortedcontainers==2.4.0
     # via cyclonedx-python-lib
 soupsieve==2.9
     # via beautifulsoup4
-sqlalchemy==2.1.4
+sqlalchemy==2.1.5
     # via -r requirements.in
 sseclient-py==1.9.0
     # via alpaca-py
