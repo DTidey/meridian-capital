@@ -26,6 +26,8 @@ _EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
 _EDGAR_DATA = "https://data.sec.gov"  # JSON APIs (submissions, company facts)
 _EDGAR_ARCH = "https://www.sec.gov"  # actual filing documents / archives
 _SUBMISSIONS = "https://data.sec.gov/submissions"
+_COMPANY_TICKERS = "https://www.sec.gov/files/company_tickers.json"
+_CIK_RE = re.compile(r"[0-9]{1,10}")  # ASCII digits only: a CIK goes into URL paths
 
 # SEC fair-use: 10 req/s max; we stay at 8
 _MIN_INTERVAL = 1.0 / 8
@@ -51,24 +53,37 @@ def _make_session(config: dict) -> requests.Session:
     return s
 
 
-def _ticker_to_cik(
-    session: requests.Session, ticker: str, limiter: _RateLimiter, cache: dict
-) -> str | None:
-    if ticker in cache:
-        return cache[ticker]
+def _clean_cik(value) -> str | None:
+    """A CIK as digits without leading zeros, or None when it is not a plain CIK."""
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        return None
+    text = str(value).strip()
+    if not _CIK_RE.fullmatch(text):
+        return None
+    return text.lstrip("0") or None
+
+
+def _load_cik_map(session: requests.Session, limiter: _RateLimiter) -> dict[str, str]:
+    """Ticker -> CIK (no leading zeros) from SEC's company_tickers.json.
+
+    Raises on a network failure or a response that is not the expected JSON.
+    """
     limiter.wait()
-    url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&ticker={ticker}&type=&dateb=&owner=include&count=1&output=atom"
-    try:
-        resp = session.get(url, timeout=15)
-        resp.raise_for_status()
-        match = re.search(r"CIK=(\d+)", resp.text)
-        if match:
-            cik = match.group(1).lstrip("0")
-            cache[ticker] = cik
-            return cik
-    except Exception as exc:
-        logger.debug("CIK lookup failed for %s: %s", ticker, exc)
-    return None
+    resp = session.get(_COMPANY_TICKERS, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or not data:
+        raise ValueError("company_tickers.json: expected a non-empty JSON object")
+    cik_map: dict[str, str] = {}
+    for entry in data.values():
+        if not isinstance(entry, dict):
+            raise ValueError(f"company_tickers.json: unexpected entry {entry!r:.80}")
+        ticker = entry.get("ticker")
+        cik = _clean_cik(entry.get("cik_str"))
+        if not isinstance(ticker, str) or not ticker or cik is None:
+            raise ValueError(f"company_tickers.json: unexpected entry {entry!r:.80}")
+        cik_map.setdefault(ticker, cik)
+    return cik_map
 
 
 def _get_filings_efts(
@@ -182,20 +197,24 @@ def _is_ceo_cfo(title: str) -> bool:
     return any(k in t for k in _CEO_CFO_TITLES)
 
 
-def _parse_form4_xml(xml_text: str) -> list[dict]:
-    """Parse Form 4 XML into list of transaction dicts."""
+def _parse_form4_xml(xml_text: str) -> tuple[str | None, list[dict]]:
+    """Parse Form 4 XML into (issuer CIK or None, transaction dicts).
+
+    Each transaction's txn_index is its 0-based position among nonDerivativeTransaction elements.
+    """
     import xml.etree.ElementTree as ET  # nosec B405
 
     transactions = []
     try:
         root = ET.fromstring(xml_text)  # nosec B314
     except Exception:
-        return transactions
+        return None, transactions
 
+    issuer_cik = _clean_cik(root.findtext(".//issuerCik"))
     insider_name = (root.findtext(".//rptOwnerName") or "").strip()
     insider_title = (root.findtext(".//officerTitle") or "").strip()
 
-    for txn in root.findall(".//nonDerivativeTransaction"):
+    for txn_index, txn in enumerate(root.findall(".//nonDerivativeTransaction")):
         code_el = txn.find(".//transactionCode")
         code = (code_el.text or "").strip() if code_el is not None else ""
         shares_el = txn.find(".//transactionShares/value")
@@ -238,13 +257,42 @@ def _parse_form4_xml(xml_text: str) -> list[dict]:
                 "ownership_type": own_type,
                 "is_open_market": is_open,
                 "is_ceo_cfo": int(_is_ceo_cfo(insider_title)),
+                "txn_index": txn_index,
             }
         )
 
-    return transactions
+    return issuer_cik, transactions
+
+
+_TXN_FIELDS = (
+    "insider_name",
+    "insider_title",
+    "transaction_type",
+    "transaction_code",
+    "shares",
+    "price",
+    "date",
+    "ownership_type",
+    "is_open_market",
+    "is_ceo_cfo",
+    "txn_index",
+)
+
+
+def _txn_values(ticker: str, accession_no: str, txn: dict, fetched_at: str) -> dict:
+    """insider_transactions column values for one parsed transaction."""
+    values = {k: txn[k] for k in _TXN_FIELDS}
+    values.update(ticker=ticker, accession_no=accession_no, fetched_at=fetched_at)
+    return values
 
 
 def _flag_cluster_buys(conn: sa.engine.Connection, ticker: str, config: dict) -> None:
+    _write_cluster_flags(conn, ticker, config)
+    conn.commit()
+
+
+def _write_cluster_flags(conn: sa.engine.Connection, ticker: str, config: dict) -> None:
+    """Upsert the ticker's cluster-buy flags without committing (the rebuild is one transaction)."""
     window_days = config["sec"]["cluster_buy_window_days"]
     min_insiders = config["sec"]["cluster_buy_min_insiders"]
     cutoff = (utc_now() - timedelta(days=config["sec"]["insider_lookback_days"])).strftime(
@@ -296,7 +344,68 @@ def _flag_cluster_buys(conn: sa.engine.Connection, ticker: str, config: dict) ->
                     total_shares=total_shares,
                 )
             )
-    conn.commit()
+
+
+def _fetch_form4_xml(
+    session: requests.Session, cik: str, accession_no: str, limiter: _RateLimiter
+) -> str:
+    """The ownershipDocument XML of a Form 4, or "" when it cannot be fetched."""
+    limiter.wait()
+    # primaryDocument for Form 4 is always the HTML renderer, not XML.
+    # The ownershipDocument XML is embedded in the full SGML .txt file.
+    acc_norm = accession_no.replace("-", "")
+    txt_url = f"{_EDGAR_ARCH}/Archives/edgar/data/{cik.lstrip('0')}/{acc_norm}/{accession_no}.txt"
+    try:
+        r = session.get(txt_url, timeout=30)
+        return _extract_form4_xml(r.text) if r.ok else ""
+    except Exception:
+        return ""
+
+
+def _store_form4_transactions(
+    conn: sa.engine.Connection, ticker: str, cik: str, accession_no: str, xml_text: str
+) -> bool:
+    """Insert the Form 4's transactions if its issuer is the ticker's company.
+
+    Returns False when the filing names another issuer (or none), so nothing was stored.
+    """
+    if not xml_text:
+        return True
+    issuer_cik, txns = _parse_form4_xml(xml_text)
+    if issuer_cik != cik:
+        logger.debug(
+            "SEC %s Form 4 %s: issuer CIK %s is not %s — transactions not stored",
+            ticker,
+            accession_no,
+            issuer_cik,
+            cik,
+        )
+        return False
+    now_ts = utc_now().isoformat(timespec="seconds")
+    for txn in txns:
+        with contextlib.suppress(sa.exc.IntegrityError):
+            conn.execute(
+                insert_or_ignore(conn, insider_transactions).values(
+                    **_txn_values(ticker, accession_no, txn, now_ts)
+                )
+            )
+    return True
+
+
+def _stored_url_ciks(conn: sa.engine.Connection, tickers: list[str]) -> dict[str, str]:
+    """Ticker -> CIK in the URL of its most recently filed stored filing."""
+    stored_ciks: dict[str, str] = {}
+    for ticker, url in conn.execute(
+        sa.select(sec_filings.c.ticker, sec_filings.c.filing_url)
+        .where(sec_filings.c.ticker.in_(tickers))
+        .where(sec_filings.c.filing_url.isnot(None))
+        .order_by(sec_filings.c.filed_date.desc().nulls_last())
+    ).fetchall():
+        if ticker not in stored_ciks:
+            m = re.search(r"/edgar/data/(\d+)/", url or "")
+            if m:
+                stored_ciks[ticker] = m.group(1).lstrip("0")
+    return stored_ciks
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +423,15 @@ def update_sec_data(
     if forms is None:
         forms = config["sec"]["forms"]
 
+    session = _make_session(config)
+    limiter = _RateLimiter(_MIN_INTERVAL)
+    try:
+        cik_map = _load_cik_map(session, limiter)
+    except Exception as exc:
+        # No fallback to stored CIKs: those are the stale ones this map replaces.
+        logger.error("SEC CIK map (company_tickers.json) failed — nothing stored this run: %s", exc)
+        return dict.fromkeys(tickers, 0)
+
     # One-time backfill: rows written before fetched_at was tracked get filed_date.
     conn.execute(
         sa.update(sec_filings)
@@ -322,10 +440,8 @@ def update_sec_data(
     )
     conn.commit()
 
-    session = _make_session(config)
-    limiter = _RateLimiter(_MIN_INTERVAL)
-    cik_cache: dict[str, str] = {}
     summary: dict[str, int] = {}
+    issuer_skipped = 0
 
     lookback_cfg = config["sec"].get("form_lookback_days", {})
     default_lookback = config["sec"].get("insider_lookback_days", 180)
@@ -339,17 +455,8 @@ def update_sec_data(
     # ------------------------------------------------------------------
     today = utc_now().strftime("%Y-%m-%d")
 
-    # 1. Extract CIKs from already-stored filing URLs (avoids HTTP lookup for known tickers)
-    stored_ciks: dict[str, str] = {}
-    for row in conn.execute(
-        sa.select(sec_filings.c.ticker, sec_filings.c.filing_url)
-        .where(sec_filings.c.ticker.in_(tickers))
-        .where(sec_filings.c.filing_url.isnot(None))
-    ).fetchall():
-        if row[0] not in stored_ciks:
-            m = re.search(r"/edgar/data/(\d+)/", row[1] or "")
-            if m:
-                stored_ciks[row[0]] = m.group(1)
+    # 1. CIKs in stored filing URLs, only to warn when a ticker's CIK has changed
+    stored_ciks = _stored_url_ciks(conn, tickers)
 
     # 2. Bulk-load all existing accession numbers (one query instead of one per ticker)
     existing_accs: dict[str, set[str]] = {}
@@ -387,14 +494,19 @@ def update_sec_data(
 
         stored = 0
 
-        # Use CIK from stored URLs first; only hit EDGAR if unknown
-        cik = stored_ciks.get(ticker) or cik_cache.get(ticker)
+        cik = cik_map.get(ticker)
         if not cik:
-            cik = _ticker_to_cik(session, ticker, limiter, cik_cache)
-        if not cik:
-            logger.debug("No CIK found for %s — skipping", ticker)
+            logger.warning("No CIK for %s in company_tickers.json — skipping", ticker)
             summary[ticker] = 0
             continue
+        old_cik = stored_ciks.get(ticker)
+        if old_cik and old_cik != cik:
+            logger.warning(
+                "SEC CIK for %s changed: stored filings use %s, company_tickers.json maps %s",
+                ticker,
+                old_cik,
+                cik,
+            )
 
         subs = _get_submissions(session, cik, limiter)
         recent = subs.get("filings", {}).get("recent", {})
@@ -423,40 +535,9 @@ def update_sec_data(
             if ft in ("10-K", "10-Q", "8-K"):
                 content = _fetch_filing_text(session, cik, acc, pdoc or "", limiter)
             elif ft == "4":
-                limiter.wait()
-                # primaryDocument for Form 4 is always the HTML renderer, not XML.
-                # The ownershipDocument XML is embedded in the full SGML .txt file.
-                txt_url = (
-                    f"{_EDGAR_ARCH}/Archives/edgar/data/{cik.lstrip('0')}/{acc_norm}/{acc}.txt"
-                )
-                try:
-                    r = session.get(txt_url, timeout=30)
-                    xml_text = _extract_form4_xml(r.text) if r.ok else ""
-                except Exception:
-                    xml_text = ""
-
-                content = xml_text
-                txns = _parse_form4_xml(xml_text) if xml_text else []
-                now_ts = utc_now().isoformat(timespec="seconds")
-                for txn in txns:
-                    with contextlib.suppress(sa.exc.IntegrityError):
-                        conn.execute(
-                            insert_or_ignore(conn, insider_transactions).values(
-                                ticker=ticker,
-                                insider_name=txn["insider_name"],
-                                insider_title=txn["insider_title"],
-                                transaction_type=txn["transaction_type"],
-                                transaction_code=txn["transaction_code"],
-                                shares=txn["shares"],
-                                price=txn["price"],
-                                date=txn["date"],
-                                ownership_type=txn["ownership_type"],
-                                is_open_market=txn["is_open_market"],
-                                is_ceo_cfo=txn["is_ceo_cfo"],
-                                accession_no=acc,
-                                fetched_at=now_ts,
-                            )
-                        )
+                content = _fetch_form4_xml(session, cik, acc, limiter)
+                if not _store_form4_transactions(conn, ticker, cik, acc, content):
+                    issuer_skipped += 1
 
             conn.execute(
                 insert_or_ignore(conn, sec_filings).values(
@@ -497,4 +578,111 @@ def update_sec_data(
         total,
         len([v for v in summary.values() if v > 0]),
     )
+    logger.info(
+        "Form 4 issuer check: %d filings name another issuer; their transactions not stored",
+        issuer_skipped,
+    )
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Rebuild from stored Form 4 XML
+# ---------------------------------------------------------------------------
+
+_REBUILD_PAGE = 500
+_REBUILD_BATCH = 2000
+
+
+def _stored_form4s(conn: sa.engine.Connection):
+    """Yield (accession_no, xml) for every stored Form 4, one page of rows at a time."""
+    last_id = 0
+    while True:
+        rows = conn.execute(
+            sa.select(sec_filings.c.id, sec_filings.c.accession_no, sec_filings.c.content_text)
+            .where(sec_filings.c.form_type == "4")
+            .where(sec_filings.c.content_text.isnot(None))
+            .where(sec_filings.c.content_text != "")
+            .where(sec_filings.c.id > last_id)
+            .order_by(sec_filings.c.id)
+            .limit(_REBUILD_PAGE)
+        ).fetchall()
+        if not rows:
+            return
+        yield from ((r.accession_no, r.content_text) for r in rows)
+        last_id = rows[-1].id
+
+
+def _reinsert_transactions(
+    conn: sa.engine.Connection, tickers_by_cik: dict[str, list[str]]
+) -> tuple[int, int]:
+    """Delete all insider rows and flags, then insert every stored Form 4 under each universe
+    ticker of its issuer. Returns (filings parsed, filings with no universe issuer)."""
+    conn.execute(sa.delete(insider_transactions))
+    conn.execute(sa.delete(insider_cluster_flags))
+    now_ts = utc_now().isoformat(timespec="seconds")
+    parsed = skipped = 0
+    batch: list[dict] = []
+    for acc, xml_text in _stored_form4s(conn):
+        parsed += 1
+        issuer_cik, txns = _parse_form4_xml(xml_text)
+        owners = tickers_by_cik.get(issuer_cik or "", [])
+        if not owners:
+            skipped += 1
+            continue
+        batch.extend(_txn_values(t, acc, txn, now_ts) for t in owners for txn in txns)
+        if len(batch) >= _REBUILD_BATCH:
+            conn.execute(insert_or_ignore(conn, insider_transactions), batch)
+            batch = []
+    if batch:
+        conn.execute(insert_or_ignore(conn, insider_transactions), batch)
+    return parsed, skipped
+
+
+def rebuild_insider_transactions(
+    conn: sa.engine.Connection, tickers: list[str], config: dict
+) -> dict[str, int]:
+    """Re-create insider_transactions and insider_cluster_flags from stored Form 4 XML.
+
+    One transaction: any failure rolls back and leaves the old rows in place.
+    Returns {ticker: rows inserted} for every universe ticker.
+    """
+    cik_map = _load_cik_map(_make_session(config), _RateLimiter(_MIN_INTERVAL))
+    tickers_by_cik: dict[str, list[str]] = {}
+    for ticker in tickers:
+        if ticker not in cik_map:
+            logger.warning("No CIK for %s in company_tickers.json — no insider rows", ticker)
+            continue
+        tickers_by_cik.setdefault(cik_map[ticker], []).append(ticker)
+    for ticker, ciks in config["sec"].get("predecessor_ciks", {}).items():
+        if ticker in tickers:
+            for cik in ciks:
+                tickers_by_cik.setdefault(_clean_cik(cik) or "", []).append(ticker)
+
+    try:
+        parsed, skipped = _reinsert_transactions(conn, tickers_by_cik)
+        for ticker in tickers:
+            _write_cluster_flags(conn, ticker, config)
+        counts = dict.fromkeys(tickers, 0)
+        counts.update(
+            conn.execute(
+                sa.select(insider_transactions.c.ticker, sa.func.count()).group_by(
+                    insider_transactions.c.ticker
+                )
+            ).fetchall()
+        )
+        flags = conn.execute(sa.select(sa.func.count()).select_from(insider_cluster_flags)).scalar()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    logger.info(
+        "Insider rebuild: %d Form 4 filings parsed, %d with no universe issuer skipped, "
+        "%d rows inserted for %d tickers, %d cluster flags",
+        parsed,
+        skipped,
+        sum(counts.values()),
+        sum(1 for n in counts.values() if n),
+        flags,
+    )
+    return counts

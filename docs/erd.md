@@ -133,18 +133,19 @@ erDiagram
     insider_transactions {
         integer id                     PK
         string  ticker                 UK
-        string  insider_name           UK
+        string  insider_name
         string  insider_title
         string  transaction_type
         string  transaction_code
-        float   shares                 UK
+        float   shares
         float   price
-        string  date                   UK
+        string  date
         string  ownership_type
         integer is_open_market
         integer is_ceo_cfo
         string  accession_no           UK
         string  fetched_at
+        integer txn_index              UK
     }
 
     insider_cluster_flags {

@@ -44,3 +44,40 @@
 - **Delete and insert committed together, rollback on error, then re-raise.** `_upsert_prices`
   commits per call, so the replace path does its own single commit; a failure is not swallowed.
 
+# 2026-10-21: Insider issuer integrity (packet 39)
+
+- **Old unique key found by columns, not by name.** Postgres generated the 5-column key's name
+  and cut it to 63 characters: `insider_transactions_ticker_accession_no_insider_name_date__key`
+  (column part loses `shares`, keeps a trailing underscore). `DROP CONSTRAINT IF EXISTS` with
+  the spelled-out 69-character name would itself be cut to `..._date_shar` and silently miss,
+  so the migration looks the key up in `pg_constraint` by its column set. The new key is named
+  explicitly (`insider_transactions_ticker_accession_no_txn_index_key`, Postgres's own style,
+  under 63) so create_all and the migration agree.
+- **SQLite does not migrate the old key.** SQLite cannot drop a constraint in place; it is only
+  used in tests, where tables are created fresh with the new key. Production is PostgreSQL.
+- **Old rows with NULL txn_index can coexist with the new key.** NULLs are distinct in a unique
+  key, so adding the constraint cannot fail on existing data; the rebuild then removes them.
+- **Cluster flags split from their commit.** `_flag_cluster_buys` committed inside, which would
+  have committed the rebuild's delete halfway. `_write_cluster_flags` does the work without
+  committing; `_flag_cluster_buys` calls it and commits, so the nightly path is unchanged.
+- **CIK-change warning compares with the newest stored filing.** Stored URLs keep the old CIK
+  forever, so comparing with any stored URL would warn every night. Comparing with the most
+  recently filed one warns until a filing under the new CIK is stored, then stops.
+- **CIK map loaded before anything is written.** On failure `update_sec_data` returns before
+  even the `fetched_at` backfill, so "store nothing" is literal.
+- **Rebuild reads stored XML in pages by id and inserts in batches.** About 32,000 Form 4 XML
+  documents would not fit comfortably in memory at once, and one insert per row would be slow
+  against the remote server. Pages are fully fetched before inserts, so no cursor is open while
+  writing.
+- **`--rebuild-insider` refuses `--tickers`.** The rebuild deletes every insider row; with a
+  ticker subset it would re-insert only those, wiping the rest. Failing fast is safer than
+  silently ignoring `--tickers`.
+- **Fetch failures are not counted as issuer mismatches.** A Form 4 whose XML could not be
+  downloaded has no issuer to compare, so the INFO total counts only parsed filings that name
+  another issuer.
+- Packet 39 review: a read-only production dry run showed the issuer-CIK-only rebuild
+  would erase XOM's insider history (its stored Form 4s name predecessor CIK 34088; SEC now
+  maps XOM to 2115436). A heuristic (issuer equals the feed CIK and the trading symbol equals
+  the ticker) was rejected because a BlackRock municipal fund files as "BNY". Predecessor
+  CIKs are listed explicitly in `sec.predecessor_ciks`; the CIK-change WARNING prompts new
+  entries.

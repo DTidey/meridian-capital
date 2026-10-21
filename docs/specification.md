@@ -128,6 +128,7 @@ Each layer has its own entry point script. A unified orchestrator (`run_all.py`)
 python run_data.py [--no-filings] [--no-13f] [--refresh-prices] [--refresh-fundamentals]
                    [--refetch-13f]
                    [--forms FORM ...] [--force-universe] [--tickers TICKER ...]
+                   [--rebuild-insider]
 ```
 
 | Flag | Effect |
@@ -140,6 +141,7 @@ python run_data.py [--no-filings] [--no-13f] [--refresh-prices] [--refresh-funda
 | `--forms FORM [FORM ...]` | Fetch only the specified SEC form types |
 | `--force-universe` | Refresh the S&P 500 universe from Wikipedia even if the cache is fresh |
 | `--tickers TICKER [...]` | Restrict the run to specific tickers (for testing or targeted updates) |
+| `--rebuild-insider` | Load the universe, then only rebuild `insider_transactions` and `insider_cluster_flags` from the Form 4 XML stored in `sec_filings` (one transaction; no other step runs; not combinable with `--tickers`) |
 
 The script logs to both stdout and `output/run.log`, and prints a summary table of counts on completion.
 

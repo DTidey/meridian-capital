@@ -4,7 +4,7 @@ Meridian Capital Partners — Layer 1 Data Ingestion Entry Point
 
 Usage:
     python run_data.py [--no-filings] [--no-13f] [--refetch-13f] [--forms 10-K 10-Q]
-                       [--force-universe] [--refresh-prices]
+                       [--force-universe] [--refresh-prices] [--rebuild-insider]
 """
 
 import argparse
@@ -39,7 +39,7 @@ from data.fundamentals import update_fundamentals
 from data.institutional import update_institutional
 from data.market_data import update_prices
 from data.providers import Providers
-from data.sec_data import update_sec_data
+from data.sec_data import rebuild_insider_transactions, update_sec_data
 from data.short_interest import update_short_interest
 from data.transcripts import update_transcripts
 from data.universe import fetch_sp500, get_all_tickers
@@ -120,7 +120,16 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Run only for specific tickers (useful for testing)",
     )
-    return p.parse_args()
+    p.add_argument(
+        "--rebuild-insider",
+        action="store_true",
+        help="Only rebuild insider transactions and cluster flags from stored Form 4 XML",
+    )
+    args = p.parse_args()
+    if args.rebuild_insider and args.tickers:
+        # The rebuild deletes every insider row, so it must re-insert the whole universe.
+        p.error("--rebuild-insider rebuilds the whole universe; it cannot take --tickers")
+    return args
 
 
 def _print_summary(stats: dict) -> None:
@@ -132,6 +141,21 @@ def _print_summary(stats: dict) -> None:
     for key, val in stats.items():
         logger.info("  %-35s %s", key, val)
     logger.info(sep)
+
+
+def _rebuild_insider(conn, tickers: list[str], config: dict, t_start: float) -> None:
+    logging.getLogger("run_data").info(
+        "Insider rebuild from stored Form 4 XML — all other ingestion steps skipped"
+    )
+    rows = rebuild_insider_transactions(conn, tickers, config)
+    _print_summary(
+        {
+            "Universe tickers": len(tickers),
+            "Insider transactions": sum(rows.values()),
+            "Tickers with insider rows": sum(1 for n in rows.values() if n),
+            "Elapsed": f"{time.monotonic() - t_start:.1f}s",
+        }
+    )
 
 
 def main() -> None:
@@ -173,6 +197,12 @@ def main() -> None:
         # Full run: benchmarks get prices only; equity steps use S&P 500 tickers
         price_tickers = all_tickers
         equity_tickers = fetch_sp500(conn, config)  # already cached from above
+
+    if args.rebuild_insider:
+        _rebuild_insider(conn, equity_tickers, config, t_start)
+        conn.close()
+        engine.dispose()
+        return
 
     # -----------------------------------------------------------------------
     # 2. Prices  (universe + benchmarks)
