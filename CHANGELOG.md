@@ -58,6 +58,9 @@ Release policy:
   agent rules (packet `14-merge-10rules-into-agents`).
 
 ### Security
+- certifi raised to 2026.10.19; eight pillow 12.3.0 advisories ignored by name in
+  `make security` until streamlit allows pillow 13 (none reachable: no code opens images), with
+  a test that forces their removal then (packet `36-pillow-certifi-advisories`).
 - Raised indirect-dependency pins (anyio, gitpython, msgpack, pillow, soupsieve, urllib3,
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 

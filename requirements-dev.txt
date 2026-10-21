@@ -34,7 +34,7 @@ cachecontrol[filecache]==0.14.4
     # via
     #   cachecontrol
     #   pip-audit
-certifi==2026.6.17
+certifi==2026.10.19
     # via
     #   curl-cffi
     #   requests
