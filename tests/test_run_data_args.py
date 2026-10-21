@@ -1,8 +1,11 @@
-"""run_data.py flags: --refresh-prices (packet 38) and --rebuild-insider (packet 39, AC10)."""
+"""run_data.py: --refresh-prices (packet 38), --rebuild-insider (packet 39), shared .info (40)."""
 
 import pytest
+import sqlalchemy as sa
 
 import run_data
+from data.db import analyst_estimates, short_interest
+from tests.yahoo_fake import INFO, FakeYahoo
 
 
 def test_refresh_prices_flag(monkeypatch):
@@ -77,3 +80,52 @@ def test_rebuild_with_tickers_rejected(stubbed_run_data, monkeypatch):
     with pytest.raises(SystemExit):
         run_data.main()
     assert stubbed_run_data == []
+
+
+# ---------------------------------------------------------------------------
+# Packet 40 (AC2, AC6): short interest and estimates share one .info per ticker
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def snapshot_run(tmp_path, monkeypatch):
+    """run_data.main with real short interest and estimates steps, Yahoo faked."""
+    monkeypatch.setattr(run_data, "database_url", lambda: f"sqlite:///{tmp_path / 'run.db'}")
+    monkeypatch.setattr(run_data, "_setup_logging", lambda config: None)
+    monkeypatch.setattr(run_data, "Providers", lambda: object())
+    monkeypatch.setattr(run_data, "get_all_tickers", lambda conn, config, force: ["AAPL", "SPY"])
+    monkeypatch.setattr(run_data, "fetch_sp500", lambda conn, config: ["AAPL", "MSFT"])
+    monkeypatch.setattr(run_data, "update_prices", lambda *a, **k: {})
+    monkeypatch.setattr(run_data, "update_fundamentals", lambda *a, **k: {})
+    monkeypatch.setattr(run_data, "update_earnings_calendar", lambda *a, **k: {})
+    monkeypatch.setattr("data.yahoo_info.time.sleep", lambda s: None)
+    monkeypatch.setattr("sys.argv", ["run_data.py", "--no-filings", "--no-13f"])
+
+    def install(fake):
+        monkeypatch.setattr("yfinance.Ticker", fake)
+        return fake
+
+    return install
+
+
+def test_one_info_fetch_per_ticker(snapshot_run, tmp_path):
+    fake = snapshot_run(FakeYahoo(default_info=INFO))
+    run_data.main()
+    assert fake.calls["info"] == {"AAPL": 1, "MSFT": 1}
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'run.db'}")
+    with engine.connect() as conn:
+        for table in (short_interest, analyst_estimates):
+            assert conn.execute(sa.select(sa.func.count()).select_from(table)).scalar() == 2
+    engine.dispose()
+
+
+def test_low_coverage_run_continues(snapshot_run, caplog):
+    snapshot_run(FakeYahoo(info={"AAPL": [RuntimeError("429")], "MSFT": [RuntimeError("429")]}))
+    with caplog.at_level("INFO"):
+        run_data.main()
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert errors == [
+        "Short interest: 0/2 tickers fetched after retries (below 95%)",
+        "Analyst estimates: 0/2 tickers fetched after retries (below 95%)",
+    ]
+    assert "Layer 1 ingestion complete" in caplog.text

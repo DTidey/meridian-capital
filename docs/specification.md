@@ -50,6 +50,7 @@ The system is organised into seven sequential layers, each building on the outpu
 
 - Daily snapshot of shares short, short ratio, and short percent of float per ticker, sourced from yfinance `.info`.
 - One snapshot per ticker per calendar day; existing records for today are skipped.
+- Short interest and analyst estimates share one `.info` response per ticker per run.
 
 ### 2.5 Analyst Estimates
 
@@ -60,6 +61,16 @@ The system is organised into seven sequential layers, each building on the outpu
 
 - Upcoming earnings dates fetched via yfinance `.calendar` for a configurable lookahead window (default: 90 days).
 - EPS estimate stored where available.
+- A successful fetch with dates in the window removes the ticker's other future dates
+  (superseded); past dates and tickers whose fetch failed or returned no dates are untouched.
+
+### 2.6a Snapshot reliability (short interest, estimates, earnings calendar)
+
+- Each Yahoo request is tried up to 3 times, waiting 5 s and then 15 s after a failure
+  (throttling included).
+- Tickers still failing get a second pass after a 60-second pause.
+- Each step logs `<step>: N/M tickers fetched` (M = tickers attempted, excluding those already
+  snapshotted today), and an ERROR when under 95%; the run continues.
 
 ### 2.7 Earnings Transcripts
 

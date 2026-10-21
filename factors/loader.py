@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _PRICE_LOOKBACK_DAYS = 800  # ~3 years of trading days with buffer
 _FUND_QUARTERS = 12
 _SI_LOOKBACK_DAYS = 90
-_EST_LOOKBACK_DAYS = 90
+_EST_LOOKBACK_DAYS = 105  # longest revision window (90) plus a margin for the prior snapshot
 _INSIDER_DAYS = 90
 
 

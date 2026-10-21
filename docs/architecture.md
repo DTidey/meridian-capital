@@ -89,6 +89,7 @@ data/
 ├── short_interest.py   # Short interest snapshots
 ├── estimates.py        # Analyst EPS and price target snapshots
 ├── earnings_calendar.py# Upcoming earnings dates
+├── yahoo_info.py       # Yahoo retry/backoff, shared .info per run, second pass, coverage log
 ├── transcripts.py      # Earnings call transcripts (FMP) or 8-K earnings releases
 ├── edgar_docs.py       # On-demand EDGAR filing fetch and HTML-to-markdown (dashboard viewer)
 ├── institutional.py    # 13-F holdings: filing selection, parsing, CUSIP/name resolution, summary
@@ -100,6 +101,10 @@ data/
 The script runs nine ingestion steps in sequence against a single open database connection. SEC filings and transcripts (`--no-filings`) and 13-F holdings (`--no-13f`) can be skipped for faster daily runs; `--refresh-prices`, `--refresh-fundamentals` and `--refetch-13f` force a full re-fetch of those datasets. Prices also re-download a single ticker's full history on their own when a split or dividend has re-adjusted it or it has a missing date. `--rebuild-insider` runs only the universe step and then rebuilds insider transactions and cluster flags from stored Form 4 XML. A summary table is printed at the end.
 
 SEC CIKs come from SEC's `company_tickers.json`, loaded once per run; if it fails to load, no SEC data is stored that run. Form 4 transactions are stored only when the filing's issuer CIK is the ticker's CIK.
+
+Steps 4-6 fetch from Yahoo with retry and backoff and a second pass over failed tickers
+(`data/yahoo_info.py`). Steps 4 and 5 share one `YahooInfo`, so each ticker's `.info` is requested
+at most once per run. Each step logs its coverage and an ERROR below 95%, without stopping the run.
 
 Execution sequence:
 
@@ -226,7 +231,9 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 | `test_fundamentals.py` | Statement parsing, ratio derivation, FMP vs yfinance paths |
 | `test_sec_data.py` | Form 4 XML parsing, CIK map, issuer check, insider rebuild, cluster-buy detection, lookback filtering |
 | `test_institutional.py` | 13-F filing selection, parsing, OpenFIGI/name resolution, summary rebuild, point-in-time loader |
-| `test_earnings_calendar.py` | Earnings date ingestion |
+| `test_earnings_calendar.py` | Earnings date ingestion, failed vs empty fetch, superseded dates |
+| `test_yahoo_info.py` | Yahoo retry/backoff, shared `.info` per run |
+| `test_snapshot_coverage.py` | Snapshot second pass and coverage ERROR |
 | `test_edgar_docs.py` | EDGAR index parsing, HTML-to-markdown table conversion |
 | `test_providers.py` | Provider selection based on env var presence |
 
@@ -238,7 +245,7 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 | `test_value.py` | Forward yield, FCF yield, EV/EBITDA, shareholder yield sub-factors |
 | `test_quality.py` | ROE stability, Piotroski F-Score, Altman Z-Score, accruals |
 | `test_growth.py` | Revenue/earnings YoY, FCF growth, R&D intensity |
-| `test_revisions.py` | 30/60/90-day EPS estimate change sub-factors |
+| `test_revisions.py` | 30/60/90-day EPS estimate change sub-factors, Friday window, prior-snapshot tolerance |
 | `test_short_interest.py` | Short % float, days-to-cover, 30-day change |
 | `test_insider.py` | Net dollar flow, CEO/CFO weighting, cluster flag ranking |
 | `test_factor_institutional.py` | Fund count, net share change, simultaneous new positions |

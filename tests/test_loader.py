@@ -247,3 +247,19 @@ class TestLoadVix:
     def test_vix_empty_when_no_data(self, tmp_db):
         data = load_scoring_data(tmp_db, {}, SCORE_DATE)
         assert len(data["vix"]) == 0
+
+
+class TestLoadEstimates:
+    def _insert(self, conn, d):
+        from data.db import analyst_estimates
+
+        conn.execute(analyst_estimates.insert().values(ticker="AAPL", date=d, eps_estimate_fwd=1.0))
+        conn.commit()
+
+    def test_lookback_at_least_105_days(self, tmp_db):
+        # SCORE_DATE 2024-06-01: 105 days back is 2024-02-17, 106 days back is 2024-02-16.
+        for d in ("2024-02-16", "2024-02-17", "2024-06-01"):
+            self._insert(tmp_db, d)
+        data = load_scoring_data(tmp_db, {}, SCORE_DATE)
+        dates = data["estimates"]["date"].dt.strftime("%Y-%m-%d").tolist()
+        assert dates == ["2024-02-17", "2024-06-01"]
