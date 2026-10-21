@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import analysis.db  # noqa: F401
+from analysis.cache import AnalysisCache
 from analysis.insider_analyzer import _format_transactions, _validate, analyse, insider_score
 from data.db import get_engine, initialise_schema, insider_cluster_flags, insider_transactions
 
@@ -189,6 +190,153 @@ class TestApiCall:
             "CLUSTER FLAG" in kwargs.get("user_prompt", "")
             or "CLUSTER FLAG" in client.chat.call_args[0][1]
         )
+
+
+_NEUTRAL = {
+    "signal_strength": "NEUTRAL",
+    "confidence": "LOW",
+    "key_transactions": [],
+    "reasoning": "r",
+    "one_line_summary": "s",
+}
+
+
+def _insert_cluster(conn, ticker, window_start, window_end):
+    conn.execute(
+        insider_cluster_flags.insert().values(
+            ticker=ticker,
+            window_start=window_start,
+            window_end=window_end,
+            insider_count=3,
+            total_shares=1500.0,
+            flagged_at=window_end,
+        )
+    )
+    conn.commit()
+
+
+def _prompt(client) -> str:
+    return client.chat.call_args[0][1]
+
+
+class TestCacheKey:
+    """Packet 37: the key follows the transactions, not the score date."""
+
+    def test_unchanged_inputs_hit_cache_next_day(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0, is_ceo_cfo=1)
+        cache = AnalysisCache(tmp_db)
+        first = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", first, cache, {}, "2024-06-28")
+        second = _fake_client(dict(_NEUTRAL))
+        result = analyse(tmp_db, "AAPL", second, cache, {}, "2024-07-01")
+        first.chat.assert_called_once()
+        second.chat.assert_not_called()
+        assert result["signal_strength"] == "NEUTRAL"
+
+    def test_new_transaction_calls_api(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0)
+        cache = AnalysisCache(tmp_db)
+        analyse(tmp_db, "AAPL", _fake_client(dict(_NEUTRAL)), cache, {}, "2024-06-28")
+        _insert_txn(tmp_db, "AAPL", "2024-06-30", 500, 185.0)
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, cache, {}, "2024-07-01")
+        client.chat.assert_called_once()
+
+    def test_transaction_leaving_window_calls_api(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-04-01", 1000, 170.0)
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 500, 180.0)
+        cache = AnalysisCache(tmp_db)
+        analyse(tmp_db, "AAPL", _fake_client(dict(_NEUTRAL)), cache, {}, "2024-06-28")
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, cache, {}, "2024-07-15")  # 2024-04-01 now > 90 days old
+        client.chat.assert_called_once()
+        assert "2024-04-01" not in _prompt(client)
+
+    def test_cluster_flag_appearing_calls_api(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0)
+        cache = AnalysisCache(tmp_db)
+        analyse(tmp_db, "AAPL", _fake_client(dict(_NEUTRAL)), cache, {}, "2024-06-28")
+        _insert_cluster(tmp_db, "AAPL", "2024-06-01", "2024-06-30")
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, cache, {}, "2024-07-01")
+        client.chat.assert_called_once()
+
+    def test_cache_set_uses_key_from_prompt_text(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0)
+        cache = _fake_cache()
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, cache, {}, "2024-06-28")
+        txn_text = _format_transactions(
+            [
+                {
+                    "name": "John Smith",
+                    "title": "Director",
+                    "type": "P",
+                    "shares": 1000,
+                    "price": 180.0,
+                    "date": "2024-06-01",
+                    "is_ceo_cfo": False,
+                }
+            ],
+            None,
+        )
+        expected = AnalysisCache.artifact_id_insider("AAPL", txn_text)
+        assert cache.get.call_args[0][2] == expected
+        assert cache.set.call_args[0][2] == expected
+        assert txn_text in _prompt(client)
+
+    def test_prompt_has_no_score_date(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0)
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, _fake_cache(), {}, "2024-06-28")
+        prompt = _prompt(client)
+        assert "2024-06-28" not in prompt
+        assert "2024-03-30" not in prompt  # window start
+        assert "Analysis window: 90 days of open-market transactions" in prompt
+
+    def test_same_date_order_is_fixed(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 111, 180.0)
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 222, 180.0)
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, _fake_cache(), {}, "2024-06-28")
+        prompt = _prompt(client)
+        # SQLite returns ties in id order; Postgres may not, which the id tiebreak guards against
+        assert prompt.index("222 shares") < prompt.index("111 shares")  # newer id first
+
+    def test_other_ticker_result_not_reused(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0)
+        tmp_db.execute(
+            insider_transactions.insert().values(
+                ticker="MSFT",
+                insider_name="John Smith",
+                insider_title="Director",
+                transaction_type="P",
+                transaction_code="P",
+                shares=1000,
+                price=180.0,
+                date="2024-06-01",
+                is_open_market=1,
+                is_ceo_cfo=0,
+                accession_no="0009999-msft",
+                fetched_at="2024-01-01",
+            )
+        )
+        tmp_db.commit()
+        cache = AnalysisCache(tmp_db)
+        analyse(tmp_db, "AAPL", _fake_client(dict(_NEUTRAL)), cache, {}, "2024-06-28")
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "MSFT", client, cache, {}, "2024-06-28")
+        client.chat.assert_called_once()
+
+    def test_model_change_still_misses(self, tmp_db):
+        _insert_txn(tmp_db, "AAPL", "2024-06-01", 1000, 180.0)
+        cache = AnalysisCache(tmp_db)
+        cfg_a = {"analysis": {"analyzer_models": {"insider": "gpt-6-luna"}}}
+        cfg_b = {"analysis": {"analyzer_models": {"insider": "gpt-6-sol"}}}
+        analyse(tmp_db, "AAPL", _fake_client(dict(_NEUTRAL)), cache, cfg_a, "2024-06-28")
+        client = _fake_client(dict(_NEUTRAL))
+        analyse(tmp_db, "AAPL", client, cache, cfg_b, "2024-07-01")
+        client.chat.assert_called_once()
 
 
 class TestInsiderScore:

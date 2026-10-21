@@ -1,5 +1,6 @@
 """Tests for analysis/cache.py."""
 
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -149,8 +150,36 @@ class TestArtifactIds:
             == "GOOG_0001234567-24-000001_v2"
         )
 
-    def test_insider_artifact_id(self):
-        assert AnalysisCache.artifact_id_insider("NVDA", "2024-06-01") == "NVDA_2024-06-01"
+    def test_insider_artifact_id_format(self):
+        aid = AnalysisCache.artifact_id_insider("NVDA", "  2024-06-01  CEO  P  100 shares")
+        assert re.fullmatch(r"NVDA_[0-9a-f]{16}_v2", aid)
+
+    def test_insider_artifact_id_exact_value(self):
+        # Pinned: a silent hashing change would invalidate every cached insider result
+        aid = AnalysisCache.artifact_id_insider("NVDA", "  2024-06-01  P  100 shares")
+        assert aid == "NVDA_db7c677c13db70ae_v2"
+
+    def test_insider_artifact_id_stable_for_same_text(self):
+        text = "  2024-06-01  Jane (CEO)  P  100 shares @ $10.00"
+        assert AnalysisCache.artifact_id_insider("NVDA", text) == (
+            AnalysisCache.artifact_id_insider("NVDA", text)
+        )
+
+    def test_insider_artifact_id_differs_for_different_text(self):
+        a = AnalysisCache.artifact_id_insider("NVDA", "  2024-06-01  P  100 shares")
+        b = AnalysisCache.artifact_id_insider("NVDA", "  2024-06-01  P  101 shares")
+        assert a != b
+
+    def test_insider_artifact_id_differs_by_ticker(self):
+        text = "  2024-06-01  P  100 shares"
+        assert AnalysisCache.artifact_id_insider("NVDA", text) != (
+            AnalysisCache.artifact_id_insider("AMD", text)
+        )
+
+    def test_insider_artifact_id_is_not_a_date_key(self):
+        # Old keys were {ticker}_{score_date}; new ones must never collide with them
+        aid = AnalysisCache.artifact_id_insider("NVDA", "2024-06-01")
+        assert aid != "NVDA_2024-06-01"
 
 
 class TestModelAwareGet:

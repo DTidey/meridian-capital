@@ -12,3 +12,17 @@
   if a PIL import appears.
 - **Time box is a test, not a reminder.** Once pillow 13 is pinned, a test fails until the
   ignores are removed, so they cannot outlive the cap.
+
+# 2026-10-21: Insider analysis cache key (packet 37)
+
+- **Insider re-ran nightly.** Its cache key was `{ticker}_{score_date}`, so it never hit on a
+  new day: ~137 calls a night, ~90% for the same tickers as the night before. Filing, risk and
+  earnings are keyed on their source document and were fine.
+- **Key is a hash of the model's input.** The formatted transaction and cluster text is exactly
+  what the model sees per ticker, so any change that matters changes the key, and nothing else
+  does. Listing transaction ids would miss the cluster flag.
+- **Window dates dropped from the prompt.** They changed daily for no informational gain; each
+  transaction line keeps its date, and the 30-day cache TTL bounds reuse of one result.
+- **Same-date ties ordered by id.** Without a tiebreak the database may return ties in any
+  order, which would flip the hash.
+- **Sector analysis left uncached** (owner's call): its inputs change with daily scores.

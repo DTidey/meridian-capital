@@ -65,6 +65,8 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Insider analysis no longer re-runs nightly for unchanged Form 4 activity: cached on a hash
+  of its transaction input instead of the score date (packet `37-insider-cache-key`).
 - Risk factors found in 15 more 10-Ks (`Item 1.A`, `Item 1(a)`, "Part I" prefixes and bare "Risk
   Factors" headings); Ticker page AI scores shown to one decimal in the right colours; the report
   shows the risk score and marks the model's overall label as not scored (packet
