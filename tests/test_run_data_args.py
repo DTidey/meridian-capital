@@ -125,7 +125,8 @@ def test_one_info_fetch_per_ticker(snapshot_run, tmp_path):
 
 
 def test_low_coverage_run_continues(snapshot_run, caplog):
-    snapshot_run(FakeYahoo(info={"AAPL": [RuntimeError("429")], "MSFT": [RuntimeError("429")]}))
+    failing = {"AAPL": [RuntimeError("429")], "MSFT": [RuntimeError("429")]}
+    snapshot_run(FakeYahoo(info=failing, default_trend=PGR_TREND))
     with caplog.at_level("INFO"):
         run_data.main()
     errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]

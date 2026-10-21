@@ -128,3 +128,34 @@ class TestTrendRows:
         assert len(rows) == 2
         count = tmp_db.execute(sa.select(sa.func.count()).select_from(analyst_estimates)).scalar()
         assert count == 1
+
+
+def _errors(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+
+
+class TestTrendRowCoverage:
+    """AC10: empty earningsTrend responses (yfinance hides some HTTP errors) are caught."""
+
+    def test_empty_trends_raise_error(self, tmp_db, fake, sleeps, caplog):
+        fake(default_info=INFO, default_trend={})
+        update_estimates(tmp_db, [f"T{i}" for i in range(20)])
+        assert any("0/20 tickers have a +1y consensus" in e for e in _errors(caplog))
+
+    def test_full_trends_no_error(self, tmp_db, fake, sleeps, caplog):
+        fake(default_info=INFO, default_trend=PGR_TREND)
+        update_estimates(tmp_db, [f"T{i}" for i in range(20)])
+        assert not any("+1y consensus" in e for e in _errors(caplog))
+
+    # Adversarial: a 0y row alone does not count as +1y coverage.
+    def test_0y_only_counts_as_missing(self, tmp_db, fake, sleeps, caplog):
+        fake(default_info=INFO, default_trend={"0y": trend(3.0, d7=3.0)})
+        update_estimates(tmp_db, ["A", "B"])
+        assert any("0/2 tickers have a +1y consensus" in e for e in _errors(caplog))
+
+    # Adversarial: one ticker in twenty without coverage (95%) is not an ERROR.
+    def test_one_in_twenty_missing_is_fine(self, tmp_db, fake, sleeps, caplog):
+        tickers = [f"T{i}" for i in range(20)]
+        fake(default_info=INFO, default_trend=PGR_TREND, trend={"T0": [{}]})
+        update_estimates(tmp_db, tickers)
+        assert not any("+1y consensus" in e for e in _errors(caplog))

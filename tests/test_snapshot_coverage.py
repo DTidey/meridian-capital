@@ -11,7 +11,7 @@ from data.db import analyst_estimates, earnings_calendar, short_interest
 from data.earnings_calendar import update_earnings_calendar
 from data.estimates import update_estimates
 from data.short_interest import update_short_interest
-from tests.yahoo_fake import INFO, FakeYahoo
+from tests.yahoo_fake import INFO, PGR_TREND, FakeYahoo
 
 _CONFIG = {"earnings_calendar": {"lookahead_days": 30}}
 _BOOM = RuntimeError("Too Many Requests")
@@ -109,7 +109,7 @@ class TestCoverageError:
         ],
     )
     def test_below_95_logs_error_and_continues(self, tmp_db, fake, sleeps, caplog, step, label):
-        fake(info={"AAPL": [_BOOM]}, default_info=_calendar_info())
+        fake(info={"AAPL": [_BOOM]}, default_info=_calendar_info(), default_trend=PGR_TREND)
         with caplog.at_level("INFO"):
             summary = _run_info_step(step, tmp_db, ["AAPL", "MSFT"])
         assert summary["MSFT"]
@@ -149,7 +149,7 @@ class TestCoverageError:
             analyst_estimates.insert().values(ticker="AAPL", date=today, eps_estimate_fwd=1.0)
         )
         tmp_db.commit()
-        fake(default_info=INFO)
+        fake(default_info=INFO, default_trend=PGR_TREND)
         with caplog.at_level("INFO"):
             update_estimates(tmp_db, ["AAPL"])
         assert "Analyst estimates: 0/0 tickers fetched" in caplog.text

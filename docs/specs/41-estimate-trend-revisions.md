@@ -167,6 +167,10 @@ INFO  Earnings calendar: 503/503 tickers fetched, 498 upcoming events stored, 3 
 - AC8: The schema creates `estimate_trends` on a fresh database and on the existing PostgreSQL
   database (`create_all`, idempotent).
 - AC9: `make lint`, `make test` and `make security` pass.
+- AC10: When fewer than 95% of the tickers whose trend fetch succeeded get a `+1y` row stored,
+  the estimates step logs an ERROR naming the count. An empty trend response counts as missing,
+  even though it is not a failed fetch. Failed fetches are reported by the fetch coverage
+  ERROR only, so one cause gives one ERROR.
 
 ## Security considerations
 - Auth/authz impact: none.
@@ -207,6 +211,7 @@ INFO  Earnings calendar: 503/503 tickers fetched, 498 upcoming events stored, 3 
 - AC7 -> `tests/test_value.py::TestFwdYieldFromTrend`.
 - AC8 -> `tests/test_db.py` (table present).
 - AC9 -> `make lint`; `make test`; `make security`.
+- AC10 -> `tests/test_estimates.py::TestTrendRowCoverage`.
 
 ## Decision log
 - 2026-10-21: Use Yahoo's `earningsTrend` instead of our own `forwardEps` snapshots (owner's
@@ -215,6 +220,11 @@ INFO  Earnings calendar: 503/503 tickers fetched, 498 upcoming events stored, 3 
   about 400 tickers every January and February.
 - 2026-10-21: Replace `.calendar` with `.info` dates plus the `earningsTrend` `0q` average. Both
   matched `.calendar` exactly, and the swap keeps requests at about 1,006 a night.
+- 2026-10-21: A second coverage check counts stored `+1y` rows, added in review. yfinance hides
+  non-throttling HTTP errors on `earningsTrend` as an empty table. Without this check, a broad
+  outage of that kind would store nothing and leave every revision score neutral without an
+  ERROR. Empty responses are not retried, because a ticker with no analyst coverage also
+  returns one.
 - 2026-10-21: Guard against glitches with Yahoo's own 7-days-ago value for the same period,
   with no history of our own. PGR's glitch was absent from Yahoo's trend history.
 - 2026-10-21: Percent changes with a $0.10 denominator floor, replacing dollar differences.

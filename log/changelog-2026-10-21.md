@@ -154,3 +154,9 @@
   non-throttling HTTP error on `earningsTrend` becomes an empty frame. We read that as "no
   coverage" (success, no rows), not as a failure to retry. `YFRateLimitError` still raises and is
   retried. Watch the `trends T/M` count: a sudden drop with no ERROR points here.
+- **+1y row coverage ERROR added in review (AC10).** yfinance's default `hide_exceptions`
+  turns non-throttling HTTP errors on `earningsTrend` into an empty table, which counted as a
+  successful fetch. A broad outage of that kind would have stored no trends and left every
+  revision neutral with no ERROR. The check is measured against successfully fetched tickers
+  so a failed fetch is reported once, by the fetch coverage ERROR. Empty responses are not
+  retried, because a ticker without analyst coverage also returns one.

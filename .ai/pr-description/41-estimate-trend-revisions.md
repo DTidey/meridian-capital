@@ -79,6 +79,8 @@ INFO  Earnings calendar: 503/503 tickers fetched, 498 upcoming events stored, 3 
 - [x] AC8: The schema creates `estimate_trends` on a fresh database and on an existing one
   (`create_all`, idempotent).
 - [x] AC9: `make lint`, `make test` and `make security` pass.
+- [x] AC10: Fewer than 95% of fetched tickers with a stored `+1y` row logs an ERROR (empty
+  trend responses count as missing; failed fetches only raise the fetch ERROR).
 
 ## Behaviour change
 
@@ -113,7 +115,7 @@ INFO  Earnings calendar: 503/503 tickers fetched, 498 upcoming events stored, 3 
     `test_db.py`.
 - `make lint`: pass
 - `make security`: pass
-- `make test`: 1274 passed (1225 on main)
+- `make test`: 1278 passed (1225 on main)
 - Nothing was run against Yahoo or the production database. yfinance is faked in all tests
   (`tests/yahoo_fake.py` now scripts `earningsTrend`).
 
@@ -140,9 +142,10 @@ INFO  Earnings calendar: 503/503 tickers fetched, 498 upcoming events stored, 3 
   revisions and the forward yield are neutral for the affected tickers until the next
   successful night. Each later night has up to 5 days of fallback.
 - **yfinance hides some errors.** With yfinance's default `hide_exceptions`, a non-throttling
-  HTTP error on `earningsTrend` returns an empty frame. That counts as "no coverage" (success,
-  no rows), not a failure. `YFRateLimitError` still raises and is retried. A sudden drop in
-  `trends T/M` with no ERROR points here.
+  HTTP error on `earningsTrend` returns an empty frame, which is not retried. AC10 (added in
+  review) makes it visible: below 95% of fetched tickers with a `+1y` row, the step logs an
+  ERROR. Revisions for the affected tickers are neutral that night; the next good night
+  restores them.
 - **The estimates step can take longer in an outage.** The trend pass has its own second pass
   and breaker, so the worst case is about 8 more minutes.
 - **Calendar dates depend on `.info`.** `earningsTimestampStart` matched `.calendar` for 7 of 7

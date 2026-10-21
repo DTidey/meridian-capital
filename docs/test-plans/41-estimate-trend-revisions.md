@@ -107,6 +107,11 @@ Path: `docs/test-plans/41-estimate-trend-revisions.md`
   - `test_estimate_trends_added_to_existing_database`: a database built without the table
     gets it from `initialise_schema`, twice, with primary key `(ticker, date, period)`.
 - AC9: `make lint`, `make test`, `make security`.
+- AC10: `tests/test_estimates.py::TestTrendRowCoverage`: `test_empty_trends_raise_error`,
+  `test_full_trends_no_error`, `test_0y_only_counts_as_missing` (adversarial),
+  `test_one_in_twenty_missing_is_fine` (adversarial). Fakes in
+  `test_run_data_args.py::test_low_coverage_run_continues` and two `TestCoverageError` tests
+  now supply trend data, so they test only the `.info` failure they are about.
 
 ## Edge cases
 - From spec:
@@ -165,7 +170,7 @@ Path: `docs/test-plans/41-estimate-trend-revisions.md`
     `estimate_trends` were missing).
   - 25 tests failed in `test_value.py`, `test_snapshot_coverage.py`, `test_loader.py` and
     `test_db.py`.
-- Suite: 1225 tests before, 1274 after.
+- Suite: 1225 tests before, 1278 after.
 
 ## Commands
 ```bash

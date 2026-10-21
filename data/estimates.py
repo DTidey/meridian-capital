@@ -9,6 +9,7 @@ from data._utils import utc_now
 
 from .db import analyst_estimates, estimate_trends, insert_or_replace
 from .yahoo_info import (
+    COVERAGE_MIN,
     TREND_COLUMNS,
     YahooInfo,
     YahooTrend,
@@ -61,9 +62,13 @@ def _store(conn: sa.engine.Connection, ticker: str, today: str, now: str, data: 
         return False
 
 
-def _store_trend(conn: sa.engine.Connection, ticker: str, stamp: tuple[str, str], trend: dict):
-    """Upsert the ticker's 0y and +1y rows; a period without a current consensus is skipped."""
+def _store_trend(
+    conn: sa.engine.Connection, ticker: str, stamp: tuple[str, str], trend: dict
+) -> bool:
+    """Upsert the ticker's 0y and +1y rows (a period without a current consensus is skipped);
+    return True when a +1y row was stored."""
     today, now = stamp
+    stored_plus_1y = False
     for period in TREND_PERIODS:
         values = trend.get(period) or {}
         if values.get("current") is None:
@@ -78,21 +83,42 @@ def _store_trend(conn: sa.engine.Connection, ticker: str, stamp: tuple[str, str]
                     **{col: values.get(col) for col in TREND_COLUMNS.values()},
                 )
             )
+            stored_plus_1y = stored_plus_1y or period == "+1y"
         except Exception as exc:
             logger.debug("Estimate trend insert error %s %s: %s", ticker, period, exc)
+    return stored_plus_1y
 
 
-def _update_trends(conn, tickers: list[str], trend: YahooTrend, stamp: tuple[str, str]) -> int:
-    """Snapshot every ticker's trend (re-runs the same day overwrite); return the number fetched."""
+def _update_trends(
+    conn, tickers: list[str], trend: YahooTrend, stamp: tuple[str, str]
+) -> tuple[int, int]:
+    """Snapshot every ticker's trend (re-runs the same day overwrite).
+
+    Returns (tickers fetched, tickers with a +1y row stored).
+    """
+    with_plus_1y: set[str] = set()
 
     def fetch_one(ticker: str) -> bool:
         got = trend.get(ticker)
         if got is None:
             return False
-        _store_trend(conn, ticker, stamp, got)
+        if _store_trend(conn, ticker, stamp, got):
+            with_plus_1y.add(ticker)
         return True
 
-    return fetch_in_two_passes(tickers, fetch_one, "Analyst estimate trends")
+    fetched = fetch_in_two_passes(tickers, fetch_one, "Analyst estimate trends")
+    return fetched, len(with_plus_1y)
+
+
+def _log_low_plus_1y(stored: int, fetched: int) -> None:
+    """ERROR when too few tickers got a +1y consensus: yfinance hides some HTTP errors as an
+    empty earningsTrend, which the fetch coverage cannot see."""
+    if fetched and stored / fetched < COVERAGE_MIN:
+        logger.error(
+            "Analyst estimate trends: %d/%d tickers have a +1y consensus (below 95%%)",
+            stored,
+            fetched,
+        )
 
 
 def update_estimates(
@@ -135,11 +161,12 @@ def update_estimates(
 
     summary.update(dict.fromkeys(to_fetch, False))  # tickers a tripped breaker skips stay False
     fetched = fetch_in_two_passes(to_fetch, fetch_one, "Analyst estimates")
-    trends = _update_trends(conn, tickers, trend, (today, now))
+    trends, plus_1y = _update_trends(conn, tickers, trend, (today, now))
     conn.commit()
     detail = f" ({len(shared)} from the shared .info); trends {trends}/{len(tickers)}"
     log_coverage("Analyst estimates", fetched, len(to_fetch), detail)
     log_low_coverage("Analyst estimate trends", trends, len(tickers))
+    _log_low_plus_1y(plus_1y, trends)
     updated = sum(1 for v in summary.values() if v)
     logger.info("Estimates complete — %d/%d tickers updated", updated, len(to_fetch))
     return summary
