@@ -8,7 +8,8 @@ import sqlalchemy as sa
 
 from data._utils import utc_now
 from data.db import earnings_calendar as ec_table
-from data.earnings_calendar import update_earnings_calendar
+from data.earnings_calendar import _fetch_earnings_date, update_earnings_calendar
+from tests.yahoo_fake import FakeYahoo
 
 _CONFIG = {"earnings_calendar": {"lookahead_days": 30}}
 
@@ -130,3 +131,131 @@ class TestDateWindowFiltering:
             result = update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
 
         assert result["AAPL"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Packet 40: failed fetch vs empty result (AC4), superseded dates (AC5)
+# ---------------------------------------------------------------------------
+
+_BOOM = RuntimeError("Too Many Requests")
+
+
+@pytest.fixture
+def no_waits(monkeypatch):
+    monkeypatch.setattr("data.yahoo_info.RETRY_DELAYS", (0, 0))
+    monkeypatch.setattr("data.yahoo_info.SECOND_PASS_PAUSE", 0)
+
+
+def _yahoo(monkeypatch, **kwargs):
+    fake = FakeYahoo(**kwargs)
+    monkeypatch.setattr("yfinance.Ticker", fake)
+    return fake
+
+
+def _dates(conn, ticker):
+    rows = conn.execute(
+        sa.select(ec_table.c.earnings_date)
+        .where(ec_table.c.ticker == ticker)
+        .order_by(ec_table.c.earnings_date)
+    )
+    return list(rows.scalars())
+
+
+def _yesterday_ts() -> str:
+    return (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d") + "T12:00:00"
+
+
+class TestFetchResult:
+    def test_failed_request_returns_none(self, monkeypatch, no_waits):
+        fake = _yahoo(monkeypatch, calendar={"AAPL": [_BOOM]})
+        assert _fetch_earnings_date("AAPL") is None
+        assert fake.calls["calendar"]["AAPL"] == 3
+
+    def test_empty_success_returns_empty_list(self, monkeypatch, no_waits):
+        _yahoo(monkeypatch, calendar={"AAPL": [{}], "MSFT": [None]})
+        assert _fetch_earnings_date("AAPL") == []
+        assert _fetch_earnings_date("MSFT") == []
+
+    def test_dates_returned(self, monkeypatch, no_waits):
+        cal = {"Earnings Date": [_future(10)], "Earnings Average": [1.5]}
+        _yahoo(monkeypatch, calendar={"AAPL": [_BOOM, cal]})
+        assert _fetch_earnings_date("AAPL") == [{"earnings_date": _future(10), "eps_estimate": 1.5}]
+
+    def test_empty_counts_as_fetched_no_second_pass(self, tmp_db, no_waits, caplog):
+        with (
+            patch("data.earnings_calendar._fetch_earnings_date", return_value=[]) as mock_fetch,
+            caplog.at_level("INFO"),
+        ):
+            update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
+        mock_fetch.assert_called_once_with("AAPL")
+        assert "Earnings calendar: 1/1 tickers fetched" in caplog.text
+        assert "ERROR" not in [r.levelname for r in caplog.records]
+
+    def test_none_counts_against_coverage_and_retries(self, tmp_db, no_waits, caplog):
+        with (
+            patch("data.earnings_calendar._fetch_earnings_date", return_value=None) as mock_fetch,
+            caplog.at_level("INFO"),
+        ):
+            result = update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
+        assert mock_fetch.call_count == 2
+        assert result["AAPL"] == 0
+        assert "Earnings calendar: 0/1 tickers fetched after retries (below 95%)" in caplog.text
+
+
+class TestSupersededDates:
+    def _seed(self, conn):
+        past = (utc_now() - timedelta(days=20)).strftime("%Y-%m-%d")
+        for ticker, ed in [
+            ("AAPL", past),
+            ("AAPL", _future(8)),
+            ("AAPL", _future(12)),
+            ("MSFT", _future(9)),
+        ]:
+            _insert_fetched(conn, ticker, ed, _yesterday_ts())
+        return past
+
+    def test_success_with_dates_deletes_other_future_rows(self, tmp_db, no_waits, caplog):
+        past = self._seed(tmp_db)
+        entries = {"AAPL": [{"earnings_date": _future(12), "eps_estimate": 1.0}], "MSFT": None}
+        with (
+            patch("data.earnings_calendar._fetch_earnings_date", side_effect=entries.get),
+            caplog.at_level("INFO"),
+        ):
+            update_earnings_calendar(tmp_db, ["AAPL", "MSFT"], _CONFIG)
+        assert _dates(tmp_db, "AAPL") == [past, _future(12)]
+        assert _dates(tmp_db, "MSFT") == [_future(9)]
+        assert "1 upcoming events stored, 1 superseded removed" in caplog.text
+
+    @pytest.mark.parametrize("fetched", [None, []])
+    def test_failed_or_empty_fetch_keeps_rows(self, tmp_db, no_waits, fetched):
+        past = self._seed(tmp_db)
+        with patch("data.earnings_calendar._fetch_earnings_date", return_value=fetched):
+            update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
+        assert _dates(tmp_db, "AAPL") == [past, _future(8), _future(12)]
+
+    def test_only_out_of_window_dates_keeps_rows(self, tmp_db, no_waits):
+        past = self._seed(tmp_db)
+        entries = [{"earnings_date": _future(60), "eps_estimate": None}]
+        with patch("data.earnings_calendar._fetch_earnings_date", return_value=entries):
+            update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
+        assert _dates(tmp_db, "AAPL") == [past, _future(8), _future(12)]
+
+    # Adversarial: a stored future date beyond the lookahead window is also superseded.
+    def test_beyond_window_future_row_superseded(self, tmp_db, no_waits):
+        _insert_fetched(tmp_db, "AAPL", _future(45), _yesterday_ts())
+        entries = [{"earnings_date": _future(10), "eps_estimate": None}]
+        with patch("data.earnings_calendar._fetch_earnings_date", return_value=entries):
+            update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
+        assert _dates(tmp_db, "AAPL") == [_future(10)]
+
+    # Adversarial: today's date counts as future; it is kept when re-confirmed.
+    def test_two_dates_kept_when_both_returned(self, tmp_db, no_waits):
+        _insert_fetched(tmp_db, "AAPL", _today(), _yesterday_ts())
+        _insert_fetched(tmp_db, "AAPL", _future(5), _yesterday_ts())
+        entries = [
+            {"earnings_date": _today(), "eps_estimate": None},
+            {"earnings_date": _future(5), "eps_estimate": None},
+        ]
+        with patch("data.earnings_calendar._fetch_earnings_date", return_value=entries):
+            update_earnings_calendar(tmp_db, ["AAPL"], _CONFIG)
+        assert _dates(tmp_db, "AAPL") == [_today(), _future(5)]

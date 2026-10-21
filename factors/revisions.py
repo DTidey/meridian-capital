@@ -17,6 +17,7 @@ COLS = ["rev_30d", "rev_60d", "rev_90d"]
 
 _WINDOWS = {"rev_30d": 30, "rev_60d": 60, "rev_90d": 90}
 _DEGENERATE_THRESHOLD = 30  # days of history required before factor is live
+_PRIOR_TOLERANCE_DAYS = 7  # prior snapshot may predate the cutoff by at most this much
 
 
 def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
@@ -64,7 +65,8 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         computed_any = False
         for col, window in _WINDOWS.items():
             cutoff = ref_date - timedelta(days=window)
-            past = te[te["date"] <= cutoff]
+            earliest = cutoff - timedelta(days=_PRIOR_TOLERANCE_DAYS)
+            past = te[(te["date"] <= cutoff) & (te["date"] >= earliest)]
             if past.empty:
                 raw.loc[ticker, col] = np.nan
             else:
