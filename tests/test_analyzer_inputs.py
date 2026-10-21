@@ -215,9 +215,8 @@ class TestArtifactVersions:
             == "GOOG_0001234567-24-000001_v2"
         )
 
-    def test_earnings_and_insider_unchanged(self):
+    def test_earnings_unchanged(self):
         assert AnalysisCache.artifact_id_earnings("AAPL", "2024-03-31") == "AAPL_2024-03-31"
-        assert AnalysisCache.artifact_id_insider("AAPL", "2026-10-13") == "AAPL_2026-10-13"
 
 
 class TestReviewerEdgeCases:

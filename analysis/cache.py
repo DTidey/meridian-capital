@@ -1,5 +1,6 @@
 """PostgreSQL-backed analysis result cache with TTL eviction."""
 
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -123,8 +124,10 @@ class AnalysisCache:
         return f"{ticker}_{accession_no}_v2"
 
     @staticmethod
-    def artifact_id_insider(ticker: str, score_date: str) -> str:
-        return f"{ticker}_{score_date}"
+    def artifact_id_insider(ticker: str, transactions_text: str) -> str:
+        # Keyed on the model's input, so unchanged Form 4 activity is not re-analysed nightly
+        digest = hashlib.sha256(transactions_text.encode("utf-8")).hexdigest()[:16]
+        return f"{ticker}_{digest}_v2"
 
 
 # ---------------------------------------------------------------------------

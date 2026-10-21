@@ -20,6 +20,24 @@ _CFG = {
     }
 }
 
+_INSIDER_TXN = {
+    "name": "Jane Doe",
+    "title": "CEO",
+    "type": "P",
+    "shares": 1,
+    "price": 10.0,
+    "date": "2026-10-01",
+    "is_ceo_cfo": True,
+}
+
+
+@pytest.fixture(autouse=True)
+def _no_insider_cluster():
+    # Packet 37: insider formats its input (including the cluster) before the cache lookup
+    with patch.object(insider_analyzer, "_fetch_cluster", return_value=None):
+        yield
+
+
 # (module, analyzer name, fetch helper to stub, stub return value)
 _CASES = [
     (
@@ -34,7 +52,7 @@ _CASES = [
         "_fetch_10k",
         {"accession_no": "0000320193-25-000079", "content_text": "x"},
     ),
-    (insider_analyzer, "insider", "_fetch_transactions", [{"shares": 1}]),
+    (insider_analyzer, "insider", "_fetch_transactions", [_INSIDER_TXN]),
     (
         filing_analyzer,
         "filing",

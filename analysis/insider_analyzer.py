@@ -53,7 +53,9 @@ def analyse(
         logger.debug("Insider: no open-market transactions for %s", ticker)
         return None
 
-    artifact_id = AnalysisCache.artifact_id_insider(ticker, score_date)
+    cluster = _fetch_cluster(conn, ticker, window_start, score_date)
+    txn_text = _format_transactions(txns, cluster)
+    artifact_id = AnalysisCache.artifact_id_insider(ticker, txn_text)
     model = (
         config.get("analysis", {})
         .get("analyzer_models", {})
@@ -64,12 +66,9 @@ def analyse(
         logger.debug("Insider: cache hit for %s", ticker)
         return cached
 
-    cluster = _fetch_cluster(conn, ticker, window_start, score_date)
-    txn_text = _format_transactions(txns, cluster)
-
     user_prompt = (
         f"Company: {ticker}\n"
-        f"Analysis window: {window_start} to {score_date}\n\n"
+        f"Analysis window: {_LOOKBACK_DAYS} days of open-market transactions\n\n"
         f"INSIDER TRANSACTIONS (open-market only):\n{txn_text}\n\n"
         f"Return your assessment as JSON matching this schema:\n{_RESPONSE_SCHEMA}"
     )
@@ -112,7 +111,7 @@ def _fetch_transactions(conn, ticker: str, window_start: str, score_date: str) -
             & (insider_transactions.c.date >= window_start)
             & (insider_transactions.c.date <= score_date)
         )
-        .order_by(insider_transactions.c.date.desc())
+        .order_by(insider_transactions.c.date.desc(), insider_transactions.c.id.desc())
         .limit(50)
     ).fetchall()
 
