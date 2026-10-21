@@ -105,6 +105,9 @@ sec_filings = sa.Table(
     sa.Column("transcript_checked", sa.Boolean, default=False),
 )
 
+INSIDER_KEY_NAME = "insider_transactions_ticker_accession_no_txn_index_key"
+_OLD_INSIDER_KEY = ["accession_no", "date", "insider_name", "shares", "ticker"]
+
 insider_transactions = sa.Table(
     "insider_transactions",
     metadata,
@@ -122,7 +125,8 @@ insider_transactions = sa.Table(
     sa.Column("is_ceo_cfo", sa.Integer, default=0),
     sa.Column("accession_no", sa.String),
     sa.Column("fetched_at", sa.String),
-    sa.UniqueConstraint("ticker", "accession_no", "insider_name", "date", "shares"),
+    sa.Column("txn_index", sa.Integer),  # 0-based position among nonDerivativeTransactions
+    sa.UniqueConstraint("ticker", "accession_no", "txn_index", name=INSIDER_KEY_NAME),
 )
 
 insider_cluster_flags = sa.Table(
@@ -257,6 +261,7 @@ def initialise_schema(engine: sa.engine.Engine) -> None:
         _add_column_if_missing(conn, "sec_filings", "transcript_checked", "BOOLEAN DEFAULT FALSE")
         _add_column_if_missing(conn, "institutional_holdings", "filed_date", "TEXT")
         _widen_volume_column(conn)
+        _migrate_insider_unique_key(conn)
     logger.debug("Schema initialised")
 
 
@@ -273,6 +278,45 @@ def _widen_volume_column(conn) -> None:
     if data_type == "integer":
         conn.execute(sa.text("ALTER TABLE daily_prices ALTER COLUMN volume TYPE BIGINT"))
         logger.info("daily_prices.volume widened to BIGINT")
+
+
+def _migrate_insider_unique_key(conn) -> None:
+    """Replace the 5-column insider key with (ticker, accession_no, txn_index); idempotent.
+
+    SQLite (tests only) gets the new key from create_all on a fresh table; an existing SQLite
+    table keeps its old constraint, since SQLite cannot drop one in place.
+    """
+    _add_column_if_missing(conn, "insider_transactions", "txn_index", "INTEGER")
+    if conn.dialect.name != "postgresql":
+        return
+    # Found by columns, not name: Postgres cut the generated name to 63 characters.
+    old_names = conn.execute(
+        sa.text(
+            "SELECT con.conname FROM pg_constraint con "
+            "WHERE con.conrelid = 'insider_transactions'::regclass AND con.contype = 'u' "
+            "AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text) "
+            "FROM pg_attribute a WHERE a.attrelid = con.conrelid "
+            "AND a.attnum = ANY(con.conkey)) = CAST(:cols AS text[])"
+        ),
+        {"cols": _OLD_INSIDER_KEY},
+    )
+    for name in old_names.scalars().all():
+        quoted = name.replace('"', '""')
+        conn.execute(sa.text(f'ALTER TABLE insider_transactions DROP CONSTRAINT "{quoted}"'))
+    exists = conn.execute(
+        sa.text(
+            "SELECT 1 FROM pg_constraint "
+            "WHERE conrelid = 'insider_transactions'::regclass AND conname = :name"
+        ),
+        {"name": INSIDER_KEY_NAME},
+    ).first()
+    if exists is None:
+        conn.execute(
+            sa.text(
+                f"ALTER TABLE insider_transactions ADD CONSTRAINT {INSIDER_KEY_NAME} "
+                "UNIQUE (ticker, accession_no, txn_index)"
+            )
+        )
 
 
 def _add_column_if_missing(conn, table: str, column: str, col_type: str) -> None:

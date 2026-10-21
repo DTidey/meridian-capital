@@ -1,10 +1,13 @@
 """Schema creation and connection tests."""
 
 import os
+import re
+from types import SimpleNamespace
 
 import sqlalchemy as sa
 
 from data.db import (
+    _migrate_insider_unique_key,
     _widen_volume_column,
     daily_prices,
     get_engine,
@@ -109,8 +112,9 @@ def test_daily_prices_primary_key(tmp_db):
 
 
 def test_insider_transactions_unique_constraint(tmp_db):
-    """Duplicate (ticker, accession_no, insider_name, date, shares) is silently ignored."""
+    """Duplicate (ticker, accession_no, txn_index) is silently ignored."""
     row = {
+        "txn_index": 0,
         "ticker": "AAPL",
         "insider_name": "Alice",
         "insider_title": "CEO",
@@ -160,3 +164,151 @@ def test_volume_migration_noop_on_sqlite(tmp_db):
     _widen_volume_column(tmp_db)  # no information_schema on SQLite: must not raise
     tmp_db.execute(sa.insert(daily_prices).values(ticker="A", date="2024-01-01", volume=2**40))
     assert tmp_db.execute(sa.select(daily_prices.c.volume)).scalar() == 2**40
+
+
+# ---------------------------------------------------------------------------
+# AC7 (packet 39): insider unique key (ticker, accession_no, txn_index)
+# ---------------------------------------------------------------------------
+
+NEW_KEY = ["ticker", "accession_no", "txn_index"]
+OLD_KEY = ["ticker", "accession_no", "insider_name", "date", "shares"]
+# Postgres's own name for the old key: identifiers are cut to 63 characters, so the column
+# part loses "shares" and keeps its trailing underscore.
+OLD_PG_NAME = "insider_transactions_ticker_accession_no_insider_name_date__key"
+
+
+def _insider_row(**kw):
+    row = {
+        "ticker": "TT",
+        "insider_name": "Alice",
+        "transaction_code": "M",
+        "shares": 43778.0,
+        "date": "2026-10-01",
+        "accession_no": "acc-1",
+        "txn_index": 0,
+    }
+    row.update(kw)
+    return row
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _FakePgConn:
+    """Enough of a PostgreSQL catalog to exercise the migration's DDL path."""
+
+    dialect = SimpleNamespace(name="postgresql")
+
+    def __init__(self, constraints: dict[str, list[str]], columns: set[str]):
+        self.constraints = dict(constraints)
+        self.columns = set(columns)
+        self.ddl: list[str] = []
+
+    def execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        if sql.startswith("ALTER TABLE"):
+            return self._alter(sql)
+        if "conkey" in sql:
+            want = sorted(params["cols"])
+            return _Result([n for n, c in self.constraints.items() if sorted(c) == want])
+        if "conname" in sql:
+            return _Result([1] if params["name"] in self.constraints else [])
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    def _alter(self, sql):
+        if "ADD COLUMN IF NOT EXISTS" in sql:
+            col = sql.split("IF NOT EXISTS ")[1].split()[0]
+            if col in self.columns:
+                return _Result([])
+            self.columns.add(col)
+        elif "DROP CONSTRAINT" in sql:
+            del self.constraints[re.search(r'DROP CONSTRAINT "([^"]+)"', sql).group(1)]
+        elif "ADD CONSTRAINT" in sql:
+            m = re.search(r"ADD CONSTRAINT (\S+) UNIQUE \(([^)]+)\)", sql)
+            self.constraints[m.group(1)] = [c.strip() for c in m.group(2).split(",")]
+        self.ddl.append(sql)
+        return _Result([])
+
+
+class TestInsiderUniqueMigration:
+    def _unique_keys(self, engine):
+        return [
+            uc["column_names"]
+            for uc in sa.inspect(engine).get_unique_constraints("insider_transactions")
+        ]
+
+    def test_fresh_schema_has_new_key(self, tmp_engine):
+        assert self._unique_keys(tmp_engine) == [NEW_KEY]
+
+    def test_same_shares_different_index_both_stored(self, tmp_db):
+        tmp_db.execute(insert_or_ignore(tmp_db, insider_transactions).values(**_insider_row()))
+        tmp_db.execute(
+            insert_or_ignore(tmp_db, insider_transactions).values(
+                **_insider_row(txn_index=1, transaction_code="S")
+            )
+        )
+        tmp_db.commit()
+        count = tmp_db.execute(
+            sa.select(sa.func.count()).select_from(insider_transactions)
+        ).scalar()
+        assert count == 2
+
+    def test_rerun_succeeds_and_changes_nothing(self, tmp_engine):
+        with tmp_engine.begin() as conn:
+            conn.execute(sa.insert(insider_transactions).values(**_insider_row()))
+        initialise_schema(tmp_engine)
+        initialise_schema(tmp_engine)
+        assert self._unique_keys(tmp_engine) == [NEW_KEY]
+        with tmp_engine.connect() as conn:
+            rows = conn.execute(sa.select(insider_transactions.c.txn_index)).fetchall()
+        assert rows == [(0,)]
+
+    def test_pg_replaces_old_key(self):
+        conn = _FakePgConn({OLD_PG_NAME: OLD_KEY}, {"ticker", "accession_no"})
+        _migrate_insider_unique_key(conn)
+        assert conn.constraints == {
+            "insider_transactions_ticker_accession_no_txn_index_key": NEW_KEY
+        }
+        assert "txn_index" in conn.columns
+        assert any(f'DROP CONSTRAINT "{OLD_PG_NAME}"' in d for d in conn.ddl)
+
+    def test_pg_second_run_changes_nothing(self):
+        conn = _FakePgConn({OLD_PG_NAME: OLD_KEY}, {"ticker", "accession_no"})
+        _migrate_insider_unique_key(conn)
+        after_first = dict(conn.constraints)
+        conn.ddl.clear()
+        _migrate_insider_unique_key(conn)
+        assert conn.constraints == after_first
+        assert not any("CONSTRAINT" in d for d in conn.ddl)
+
+    # Adversarial: the old key under a different (e.g. hand-made) name is still found by columns.
+    def test_pg_old_key_found_by_columns_not_name(self):
+        conn = _FakePgConn({"legacy_uq": list(reversed(OLD_KEY))}, {"ticker"})
+        _migrate_insider_unique_key(conn)
+        assert "legacy_uq" not in conn.constraints
+
+    # Adversarial: unrelated unique keys on the table are left alone.
+    def test_pg_other_keys_untouched(self):
+        conn = _FakePgConn({"other_uq": ["ticker", "date"]}, {"ticker"})
+        _migrate_insider_unique_key(conn)
+        assert conn.constraints["other_uq"] == ["ticker", "date"]
+
+    def test_sqlite_path_issues_no_constraint_ddl(self):
+        executed = []
+        conn = SimpleNamespace(
+            dialect=SimpleNamespace(name="sqlite"),
+            execute=lambda stmt, params=None: executed.append(str(stmt)),
+        )
+        _migrate_insider_unique_key(conn)
+        assert executed == ["ALTER TABLE insider_transactions ADD COLUMN txn_index INTEGER"]

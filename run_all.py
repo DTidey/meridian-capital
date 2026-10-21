@@ -13,6 +13,7 @@ Usage:
     python run_all.py --tickers AAPL MSFT    # scope ingestion + scoring to specific tickers
     python run_all.py --whatif               # preview only: no commits in portfolio/risk/execution
     python run_all.py --stress               # include stress tests in risk check
+    python run_all.py --forms 4              # Layer 1 fetches only these SEC form types
 """
 
 import argparse
@@ -63,6 +64,9 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true", help="Dry-run execution layer")
     p.add_argument("--whatif", action="store_true", help="Preview mode: no commits")
     p.add_argument("--stress", action="store_true", help="Include stress tests in risk check")
+    p.add_argument(
+        "--forms", nargs="+", metavar="FORM", help="SEC form types for Layer 1, e.g. --forms 4"
+    )
     args = p.parse_args()
 
     t_start = time.time()
@@ -86,6 +90,8 @@ def main() -> None:
         l1_cmd.append("--no-filings")
     if args.no_13f:
         l1_cmd.append("--no-13f")
+    if args.forms:
+        l1_cmd += ["--forms"] + args.forms
     if args.tickers:
         l1_cmd += ["--tickers"] + args.tickers
     if not run("Layer 1 — Data ingestion", l1_cmd):
