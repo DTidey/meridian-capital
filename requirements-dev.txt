@@ -136,7 +136,7 @@ numpy==2.4.6
     #   scipy
     #   streamlit
     #   yfinance
-openai==3.29.0
+openai==3.35.1
     # via -r requirements.in
 packageurl-python==0.17.6
     # via cyclonedx-python-lib
