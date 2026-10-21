@@ -12,6 +12,7 @@ Update these in the same PR as any change that makes them wrong.
 | `run_all.md` | Common `run_all.py` invocations |
 | `run_dashboard.md` | Starting the dashboard, its pages, and what it writes or calls |
 | `alpaca_paper_trading.md` | Paper-trading walkthrough and switching to live |
+| `data-audit-2026-10-21.md` | Sign-off checklist for the pre-paper-trading data audit; tick an item when its fix is verified in production |
 
 The repository `README.md` is the entry point and should agree with these.
 
