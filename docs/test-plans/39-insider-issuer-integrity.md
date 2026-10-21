@@ -36,7 +36,9 @@ Path: `docs/test-plans/39-insider-issuer-integrity.md`
   the production name `insider_transactions_ticker_accession_no_insider_name_date__key`)
 - AC8: `TestRebuildInsider::test_rebuild_replaces_rows` (other-issuer excluded),
   `test_share_classes_both_receive` (GOOG and GOOGL), `test_stale_flags_removed_and_recomputed`,
-  `test_logs_counts`
+  `test_logs_counts`; `TestRebuildPredecessorCik::test_configured_predecessor_kept` (XOM's
+  34088), `test_unconfigured_cik_with_matching_symbol_excluded` (the fund trading as "BNY"),
+  `test_predecessor_outside_universe_excluded`, `test_shipped_config_lists_xom_predecessor`
 - AC9: `TestRebuildInsider::test_failure_leaves_data_unchanged` (cluster step raises after the
   delete and inserts), `test_map_failure_leaves_data_unchanged`
 - AC10: `tests/test_run_data_args.py::test_flag_parsed`, `test_rebuild_runs_only_the_rebuild`,

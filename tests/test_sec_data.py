@@ -353,10 +353,12 @@ def _today() -> str:
     return utc_now().strftime("%Y-%m-%d")
 
 
-def _form4(issuer_cik=AAPL_CIK, owner="COOK TIMOTHY D", title="Director", txns=None):
+def _form4(issuer_cik=AAPL_CIK, owner="COOK TIMOTHY D", title="Director", txns=None, symbol=None):
     """Form 4 ownershipDocument; txns is a list of (code, shares, date)."""
     txns = txns if txns is not None else [("P", 1000, _today())]
     issuer = f"<issuerCik>{issuer_cik}</issuerCik>" if issuer_cik is not None else ""
+    if symbol is not None:
+        issuer += f"<issuerTradingSymbol>{symbol}</issuerTradingSymbol>"
     body = "".join(
         f"""
     <nonDerivativeTransaction>
@@ -702,14 +704,16 @@ _REBUILD_MAP = {"AAPL": AAPL_CIK, "BRK-B": "1067983", "GOOG": ALPHABET_CIK, "GOO
 _UNIVERSE = ["AAPL", "BRK-B", "GOOG", "GOOGL"]
 
 
-def _store_form4(conn, ticker, acc, xml):
+def _store_form4(conn, ticker, acc, xml, feed_cik="1"):
     conn.execute(
         sa.insert(sec_filings).values(
             ticker=ticker,
             form_type="4",
             filed_date=_today(),
             accession_no=acc,
-            filing_url=f"https://www.sec.gov/Archives/edgar/data/1/{acc.replace('-', '')}/",
+            filing_url=(
+                f"https://www.sec.gov/Archives/edgar/data/{feed_cik}/{acc.replace('-', '')}/"
+            ),
             content_text=xml,
             fetched_at=_today(),
         )
@@ -855,3 +859,40 @@ class TestRebuildInsider:
         result = rebuild_insider_transactions(tmp_db, _UNIVERSE + ["GEV"], config)
         assert result["GEV"] == 0
         assert result["AAPL"] == 3
+
+
+class TestRebuildPredecessorCik:
+    """XOM's stored Form 4s name its predecessor CIK, not the CIK it maps to today."""
+
+    def _rebuild(self, conn, config, monkeypatch, tickers):
+        cik_map = {"XOM": "2115436", "BNY": "1390777"}
+        monkeypatch.setattr(sec, "_load_cik_map", lambda s, lim: dict(cik_map))
+        monkeypatch.setattr(sec, "_make_session", lambda config: _FakeSession({}))
+        config["sec"]["predecessor_ciks"] = {"XOM": ["34088"]}
+        conn.commit()
+        return rebuild_insider_transactions(conn, tickers, config)
+
+    def test_configured_predecessor_kept(self, tmp_db, config, monkeypatch):
+        xml = _form4("34088", "WOODS", txns=[("S", 9, _today())], symbol="XOM")
+        _store_form4(tmp_db, "XOM", "acc-xom-1", xml, feed_cik="34088")
+        self._rebuild(tmp_db, config, monkeypatch, ["XOM"])
+        assert _rows(tmp_db) == [("XOM", "acc-xom-1", 0, "S", 9.0)]
+
+    # Adversarial: an unconfigured CIK is excluded even when its symbol is a universe ticker
+    # (a BlackRock municipal fund trades as "BNY").
+    def test_unconfigured_cik_with_matching_symbol_excluded(self, tmp_db, config, monkeypatch):
+        xml = _form4("1137390", "HUBBARD", txns=[("P", 3, _today())], symbol="BNY")
+        _store_form4(tmp_db, "BNY", "acc-myn-1", xml, feed_cik="1137390")
+        self._rebuild(tmp_db, config, monkeypatch, ["BNY"])
+        assert _rows(tmp_db) == []
+
+    # Adversarial: a configured predecessor for a ticker outside the universe writes nothing.
+    def test_predecessor_outside_universe_excluded(self, tmp_db, config, monkeypatch):
+        xml = _form4("34088", "WOODS", txns=[("S", 9, _today())], symbol="XOM")
+        _store_form4(tmp_db, "XOM", "acc-xom-1", xml, feed_cik="34088")
+        self._rebuild(tmp_db, config, monkeypatch, ["BNY"])
+        assert _rows(tmp_db) == []
+
+    # Adversarial: the shipped config carries XOM's predecessor CIK.
+    def test_shipped_config_lists_xom_predecessor(self, config):
+        assert config["sec"]["predecessor_ciks"] == {"XOM": ["34088"]}

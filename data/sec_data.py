@@ -653,6 +653,10 @@ def rebuild_insider_transactions(
             logger.warning("No CIK for %s in company_tickers.json — no insider rows", ticker)
             continue
         tickers_by_cik.setdefault(cik_map[ticker], []).append(ticker)
+    for ticker, ciks in config["sec"].get("predecessor_ciks", {}).items():
+        if ticker in tickers:
+            for cik in ciks:
+                tickers_by_cik.setdefault(_clean_cik(cik) or "", []).append(ticker)
 
     try:
         parsed, skipped = _reinsert_transactions(conn, tickers_by_cik)

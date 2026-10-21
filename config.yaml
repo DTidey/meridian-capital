@@ -27,6 +27,10 @@ sec:
     "10-Q": 270     # last ~3 quarters
     "8-K":  90      # recent material events only
     "4":    180     # matches insider_lookback_days
+  # Earlier CIKs whose Form 4s belong to the ticker (used by run_data.py --rebuild-insider).
+  # Add one when the SEC ingestion logs a CIK change for a ticker.
+  predecessor_ciks:
+    XOM: ["34088"]  # Exxon Mobil Corp, before the ExxonMobil Holdings reorganisation
   forms:
     - "10-K"
     - "10-Q"

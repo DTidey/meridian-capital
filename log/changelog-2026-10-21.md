@@ -75,3 +75,9 @@
 - **Fetch failures are not counted as issuer mismatches.** A Form 4 whose XML could not be
   downloaded has no issuer to compare, so the INFO total counts only parsed filings that name
   another issuer.
+- Packet 39 review: a read-only production dry run showed the issuer-CIK-only rebuild
+  would erase XOM's insider history (its stored Form 4s name predecessor CIK 34088; SEC now
+  maps XOM to 2115436). A heuristic (issuer equals the feed CIK and the trading symbol equals
+  the ticker) was rejected because a BlackRock municipal fund files as "BNY". Predecessor
+  CIKs are listed explicitly in `sec.predecessor_ciks`; the CIK-change WARNING prompts new
+  entries.

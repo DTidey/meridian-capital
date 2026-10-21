@@ -52,7 +52,8 @@ corrects the stored data from the Form 4 XML already in `sec_filings`.
 - [x] AC7: Migration replaces the 5-column key with `(ticker, accession_no, txn_index)`;
   running it twice succeeds and changes nothing.
 - [x] AC8: Rebuild replaces all insider rows and cluster flags from stored XML: other issuers
-  excluded, GOOG and GOOGL both filled, stale flags removed.
+  excluded, GOOG and GOOGL both filled, stale flags removed, configured predecessor CIKs
+  kept (XOM's 34088), unconfigured CIKs excluded even with a matching symbol.
 - [x] AC9: A failed rebuild leaves `insider_transactions` and `insider_cluster_flags` unchanged.
 - [x] AC10: `run_data.py --rebuild-insider` runs only the rebuild; `run_all.py --forms 4` passes
   `--forms 4` to `run_data.py`.
@@ -75,7 +76,14 @@ corrects the stored data from the Form 4 XML already in `sec_filings`.
   `--forms`).
 - `make lint`: pass
 - `make security`: pass
-- `make test`: 1128 passed (1069 before; 59 new)
+- `make test`: 1132 passed (1069 before; 63 new)
+- Read-only production dry run of the rebuild's mapping (parse every stored Form 4 in memory,
+  no writes): 31,980 filings parsed, 831 with no universe owner (other issuers plus tickers
+  no longer in the universe), 62,449 rows for 478 tickers (60,504 now). Open-market rows:
+  BRK-B 63 to 6, TT 14 to 18, NVDA 183 to 187, GOOGL 217 to 222, UBER 15 to 11, XOM 8 to 7
+  (its ProPetro holding dropped), BNY 0 to 4, AAPL 35 unchanged.
+- The migration's constraint lookup was run read-only against production and matched
+  `insider_transactions_ticker_accession_no_insider_name_date__key`.
 - Nothing was run against the production database; the PostgreSQL migration is tested against
   a simulated catalog and its SQL reviewed against the production constraint name.
 
@@ -84,8 +92,8 @@ corrects the stored data from the Form 4 XML already in `sec_filings`.
 1. Deploy (pull `main` into the live working copy). The first entry point to start runs the
    migration in `initialise_schema` (brief exclusive lock on `insider_transactions`).
 2. Only with the owner's confirmation, outside the cron window:
-   `python run_data.py --rebuild-insider`. Expect about 31,980 filings parsed, about 237 with
-   no universe issuer, roughly 60,000 rows for about 474 tickers.
+   `python run_data.py --rebuild-insider`. Expect about 31,980 filings parsed, about 831 with
+   no universe owner, about 62,450 rows for about 478 tickers (from the dry run).
 3. Only with the owner's confirmation: rescore (`python run_scoring.py`) so insider scores use
    the rebuilt rows.
 4. Proposed crontab change (owner edits): Mon-Thu run
@@ -94,6 +102,11 @@ corrects the stored data from the Form 4 XML already in `sec_filings`.
 
 ## Risks and follow-ups
 
+- **Predecessor CIKs are listed by hand** (`sec.predecessor_ciks`, now `XOM: ["34088"]`).
+  A production dry run showed the issuer-CIK-only rule would erase XOM's insider history
+  after its holding-company reorganisation, and a symbol-based heuristic admitted a
+  BlackRock fund that trades as "BNY". When ingestion logs a CIK change for a ticker, add
+  the old CIK before the next rebuild.
 - The rebuild deletes every insider row and flag in one transaction; run it outside the cron
   window, as a concurrent nightly insert can wait on its locks. It drops rows for tickers no
   longer in the universe (BK, EA and others), which scoring does not use.
