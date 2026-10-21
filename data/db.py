@@ -40,7 +40,7 @@ daily_prices = sa.Table(
     sa.Column("low", sa.Float),
     sa.Column("close", sa.Float),
     sa.Column("adj_close", sa.Float),
-    sa.Column("volume", sa.Integer),
+    sa.Column("volume", sa.BigInteger),
     sa.PrimaryKeyConstraint("ticker", "date"),
 )
 
@@ -256,7 +256,23 @@ def initialise_schema(engine: sa.engine.Engine) -> None:
         _add_column_if_missing(conn, "earnings_transcripts", "source_accession_no", "TEXT")
         _add_column_if_missing(conn, "sec_filings", "transcript_checked", "BOOLEAN DEFAULT FALSE")
         _add_column_if_missing(conn, "institutional_holdings", "filed_date", "TEXT")
+        _widen_volume_column(conn)
     logger.debug("Schema initialised")
+
+
+def _widen_volume_column(conn) -> None:
+    """daily_prices.volume to BIGINT on PostgreSQL databases created when it was INTEGER."""
+    if conn.dialect.name != "postgresql":
+        return  # SQLite INTEGER is already 64-bit
+    data_type = conn.execute(
+        sa.text(
+            "SELECT data_type FROM information_schema.columns WHERE table_schema = "
+            "current_schema() AND table_name = 'daily_prices' AND column_name = 'volume'"
+        )
+    ).scalar()
+    if data_type == "integer":
+        conn.execute(sa.text("ALTER TABLE daily_prices ALTER COLUMN volume TYPE BIGINT"))
+        logger.info("daily_prices.volume widened to BIGINT")
 
 
 def _add_column_if_missing(conn, table: str, column: str, col_type: str) -> None:

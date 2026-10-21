@@ -110,8 +110,9 @@ Individual layers:
 python run_data.py              # Layer 1 — data ingestion
 python run_data.py --no-filings --no-13f   # fast daily run, skip SEC
 python run_data.py --refresh-fundamentals  # re-fetch fundamentals for every ticker
+python run_data.py --refresh-prices       # re-download every ticker's full price history
 python run_data.py --refetch-13f           # re-fetch stored 13-F filings
-python run_scoring.py           # Layer 2 — factor scoring
+python run_scoring.py           # Layer 2 — factor scoring (stops if SPY has no bar for the score date)
 python run_transcripts.py       # transcript ingestion
 python run_analysis.py          # Layer 3 — AI analysis
 python run_portfolio.py         # Layer 4 — portfolio construction

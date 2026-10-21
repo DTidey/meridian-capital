@@ -65,6 +65,10 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Price history (packet `38-price-history-integrity`): a ticker's full history is re-downloaded
+  when a split or dividend re-adjusts it or it has a missing date; the nightly run stores the
+  day's close; all-null rows are no longer stored; `volume` is 64-bit; scoring stops when SPY
+  has no bar for the score date; new `run_data.py --refresh-prices`.
 - Insider analysis no longer re-runs nightly for unchanged Form 4 activity: cached on a hash
   of its transaction input instead of the score date (packet `37-insider-cache-key`).
 - Risk factors found in 15 more 10-Ks (`Item 1.A`, `Item 1(a)`, "Part I" prefixes and bare "Risk
