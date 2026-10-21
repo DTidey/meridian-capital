@@ -1,33 +1,30 @@
 """Estimate Revisions factor — 3 sub-factors, sector percentile ranked.
 
-Degenerate until ~30 days of analyst_estimates snapshots accumulate.
+Percent change of Yahoo's +1y consensus EPS against its own value 30, 60 and 90 days ago, for
+the same fiscal year, from the latest fresh earningsTrend snapshot.
 """
 
 import logging
-from datetime import timedelta
 
-import numpy as np
 import pandas as pd
 
-from factors._utils import sector_rank
+from factors._utils import GUARD_FLOOR, guarded_current, latest_trends, sector_rank
 
 logger = logging.getLogger(__name__)
 
 COLS = ["rev_30d", "rev_60d", "rev_90d"]
 
 _WINDOWS = {"rev_30d": 30, "rev_60d": 60, "rev_90d": 90}
-_DEGENERATE_THRESHOLD = 30  # days of history required before factor is live
-_PRIOR_TOLERANCE_DAYS = 7  # prior snapshot may predate the cutoff by at most this much
 
 
 def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     """Return DataFrame indexed by ticker with revision sub-factor scores (0–100).
 
-    If fewer than _DEGENERATE_THRESHOLD days of snapshots exist for a ticker,
-    that ticker's sub-factors default to 50.0 (neutral).
+    A ticker without a fresh +1y trend snapshot, or without a window's past value, scores a
+    neutral 50 on that sub-factor.
     """
     universe = data["universe"]
-    estimates = data["estimates"]
+    trends = data["estimate_trends"]
     min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
@@ -35,60 +32,12 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     sectors = universe.set_index("ticker")["sector"]
     tickers = universe["ticker"].tolist()
-    raw = pd.DataFrame(index=tickers, columns=COLS, dtype=float)
 
-    if estimates.empty:
-        logger.warning("Revisions: no estimate data — all tickers degenerate (50.0)")
-        return _default_50(universe)
+    if trends.empty:
+        logger.warning("Revisions: no estimate trend snapshots — all tickers neutral (50.0)")
+        return _empty_result(universe)
 
-    # Date of latest snapshot (used as reference)
-    ref_date = estimates["date"].max()
-
-    degenerate_count = 0
-
-    for ticker in tickers:
-        te = estimates[estimates["ticker"] == ticker].sort_values("date")
-        if te.empty:
-            raw.loc[ticker] = np.nan
-            degenerate_count += 1
-            continue
-
-        history_days = (te["date"].max() - te["date"].min()).days
-
-        if history_days < _DEGENERATE_THRESHOLD:
-            raw.loc[ticker] = np.nan
-            degenerate_count += 1
-            continue
-
-        latest_eps = te.iloc[-1]["eps_estimate_fwd"]
-
-        computed_any = False
-        for col, window in _WINDOWS.items():
-            cutoff = ref_date - timedelta(days=window)
-            earliest = cutoff - timedelta(days=_PRIOR_TOLERANCE_DAYS)
-            past = te[(te["date"] <= cutoff) & (te["date"] >= earliest)]
-            if past.empty:
-                raw.loc[ticker, col] = np.nan
-            else:
-                prior_eps = past.iloc[-1]["eps_estimate_fwd"]
-                if prior_eps is None or np.isnan(float(prior_eps)):
-                    raw.loc[ticker, col] = np.nan
-                else:
-                    raw.loc[ticker, col] = float(latest_eps) - float(prior_eps)
-                    computed_any = True
-
-        if not computed_any:
-            degenerate_count += 1
-
-    if degenerate_count > len(tickers) * 0.5:
-        logger.warning(
-            "Revisions: %d/%d tickers degenerate (< %d days of history)",
-            degenerate_count,
-            len(tickers),
-            _DEGENERATE_THRESHOLD,
-        )
-
-    raw = raw.astype(float)
+    raw = _raw_revisions(latest_trends(trends).reindex(tickers))
 
     scored = pd.DataFrame(index=raw.index)
     for col in COLS:
@@ -100,9 +49,28 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     return scored
 
 
-def _default_50(universe: pd.DataFrame) -> pd.DataFrame:
-    tickers = universe["ticker"].tolist()
-    return pd.DataFrame(50.0, index=tickers, columns=COLS + ["revisions_score"])
+def _raw_revisions(latest: pd.DataFrame) -> pd.DataFrame:
+    """(g - days_N) / max(|days_N|, 0.10) per window, g the guarded current; NaN when missing."""
+    guarded = pd.Series(
+        [guarded_current(row) for _, row in latest.iterrows()], index=latest.index, dtype=float
+    )
+    _log_guard(latest, guarded)
+    raw = pd.DataFrame(index=latest.index, columns=COLS, dtype=float)
+    for col, window in _WINDOWS.items():
+        prior = latest[f"days_{window}"].astype(float)
+        raw[col] = (guarded - prior) / prior.abs().clip(lower=GUARD_FLOOR)
+    return raw
+
+
+def _log_guard(latest: pd.DataFrame, guarded: pd.Series) -> None:
+    replaced = guarded.index[guarded.ne(latest["current"].astype(float)) & guarded.notna()]
+    names = f" ({', '.join(replaced)})" if len(replaced) else ""
+    logger.info(
+        "Revisions: glitch guard used the 7-day-ago consensus for %d ticker%s%s",
+        len(replaced),
+        "" if len(replaced) == 1 else "s",
+        names,
+    )
 
 
 def _empty_result(universe: pd.DataFrame) -> pd.DataFrame:

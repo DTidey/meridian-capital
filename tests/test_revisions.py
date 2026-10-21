@@ -30,9 +30,7 @@ def _flat(ticker, eps, date=_SNAP):
 
 
 def _trends(rows):
-    return pd.DataFrame(rows, columns=_TREND_COLS).astype(
-        {c: float for c in _TREND_COLS[2:]}
-    )
+    return pd.DataFrame(rows, columns=_TREND_COLS).astype(dict.fromkeys(_TREND_COLS[2:], float))
 
 
 def _make_data(tickers, rows=None):

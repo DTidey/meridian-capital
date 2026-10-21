@@ -100,6 +100,18 @@ erDiagram
         string  fetched_at
     }
 
+    estimate_trends {
+        string  ticker                 PK
+        string  date                   PK
+        string  period                 PK
+        float   current
+        float   days_7
+        float   days_30
+        float   days_60
+        float   days_90
+        string  fetched_at
+    }
+
     earnings_calendar {
         string  ticker                 PK
         string  earnings_date          PK
@@ -443,6 +455,7 @@ erDiagram
     sp500_universe       ||--o{ fundamentals             : "ticker"
     sp500_universe       ||--o{ short_interest           : "ticker"
     sp500_universe       ||--o{ analyst_estimates        : "ticker"
+    sp500_universe       ||--o{ estimate_trends          : "ticker"
     sp500_universe       ||--o{ earnings_calendar        : "ticker"
     sp500_universe       ||--o{ earnings_transcripts     : "ticker"
     sp500_universe       ||--o{ sec_filings              : "ticker"
@@ -492,6 +505,7 @@ erDiagram
 - **Layer 3 tables** (`analysis_results`, `ai_scores`, `combined_scores`) similarly share the metadata via `analysis.db`.
 - **Layers 4-7 tables** register on the same metadata via `portfolio.db`, `risk.db`, `execution.db` and `reporting.db`; `initialise_schema()` also adds columns introduced after a table was first created (e.g. `institutional_holdings.filed_date`).
 - **`fundamentals.period_end`** is the nearest calendar month-end (packet 23). A refresh keeps stored figures where Yahoo returns blanks (packet 26).
+- **`estimate_trends`** holds Yahoo's `earningsTrend` consensus EPS for fiscal periods `0y` and `+1y`, now and 7/30/60/90 days ago, one row per snapshot date (packet 41). Revisions and the forward earnings yield read the `+1y` rows; `analyst_estimates` feeds the dashboard only.
 - **`institutional_holdings.report_date`** is the quarter the 13F covers; `filed_date` is when it was filed (packet 17). Only S&P 500 tickers are stored.
 - **`analysis_results`** also holds the Ticker page's saved filing summaries (`analyzer = 'doc_summary'`, `artifact_id` = accession number).
 - **This diagram's columns are generated from the SQLAlchemy table definitions**; regenerate rather than hand-edit when the schema changes.

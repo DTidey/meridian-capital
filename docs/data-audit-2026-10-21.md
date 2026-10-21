@@ -109,7 +109,7 @@ signed off as it is fixed.
     - CRM showed -1.90 for two days.
   - Root cause: `data/estimates.py:18` stores values unvalidated; revisions use one prior
     snapshot.
-  - Fix: packet 41 (planned).
+  - Fix: packet 41 (PR pending).
   - Verify:
     - a forward EPS move above 50% that does not persist is not used;
     - PGR's revision scores in the window affected by the 24-28 September glitch are not
@@ -123,7 +123,7 @@ signed off as it is fixed.
     - MU and COST had all three revision windows at 100 on 2026-10-20.
     - About 400 calendar-year names roll over in January and February.
   - Root cause: no fiscal period is stored; `factors/revisions.py:161` compares across years.
-  - Fix: packet 41 (planned).
+  - Fix: packet 41 (PR pending).
   - Verify:
     - revisions compare estimates for the same fiscal period;
     - a roll-over date produces no revision spike for MU, COST or AAPL.
@@ -320,7 +320,7 @@ Each needs a packet, a backlog entry, or an explicit acceptance.
   - Float changes leak into it, because it is measured as a share of float.
   - `data/short_interest.py:15-27`. Fix: -
 - [ ] **M2. Revisions are measured in absolute dollars, not percent.** High-EPS names dominate.
-  `factors/revisions.py:161`. Fix: -
+  `factors/revisions.py:161`. Fix: packet 41 (PR pending)
 - [ ] **M3. Missing values are filled with 50 before ranking.**
   - Insider has no data for 173 tickers.
   - `ins_net_flow` ranks the smallest net seller above names with no activity.

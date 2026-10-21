@@ -56,11 +56,23 @@ The system is organised into seven sequential layers, each building on the outpu
 
 - Daily snapshot of forward EPS estimate, consensus price target, and analyst count per ticker, sourced from yfinance `.info`.
 - One snapshot per ticker per calendar day.
+- Alongside it, a daily `estimate_trends` snapshot from yfinance `earningsTrend` (one request per
+  ticker per run, shared with the earnings calendar): for fiscal periods `0y` and `+1y`, the
+  current consensus EPS and its value 7, 30, 60 and 90 days ago. A period without a current
+  consensus is not stored; a re-run the same day overwrites the snapshot.
+- The revisions factor and the value factor's forward earnings yield use the latest `+1y`
+  snapshot no older than 5 days, with its current value guarded against one-day glitches
+  (Yahoo's 7-days-ago value is used when the current one moved more than 50% from it, with a
+  $0.10 floor). Revisions are percent changes against 30, 60 and 90 days ago, with the same
+  $0.10 denominator floor (packet 41).
 
 ### 2.6 Earnings Calendar
 
-- Upcoming earnings dates fetched via yfinance `.calendar` for a configurable lookahead window (default: 90 days).
-- EPS estimate stored where available.
+- Upcoming earnings dates from yfinance `.info` (`earningsTimestampStart`, plus
+  `earningsTimestampEnd` when it is a different date) for a configurable lookahead window
+  (default: 90 days). The `.info` and `earningsTrend` responses are shared with steps 4 and 5;
+  no `.calendar` request is made (packet 41).
+- EPS estimate is the `earningsTrend` `0q` average where available, else NULL.
 - A successful fetch with dates in the window removes the ticker's other future dates
   (superseded); past dates and tickers whose fetch failed or returned no dates are untouched.
 
@@ -206,7 +218,8 @@ All ingestion operations are idempotent:
 - Universe and benchmark tickers upsert on primary key (replace on conflict).
 - Prices upsert on `(ticker, date)` — re-running overwrites any corrected data.
 - Fundamentals upsert on `(ticker, period_type, period_end)` with month-end periods, keeping stored figures where a refresh returns blanks.
-- Short interest, estimates, and earnings calendar skip records already present for today.
+- Short interest, estimates, and earnings calendar skip records already present for today;
+  `estimate_trends` upserts on `(ticker, date, period)`, so a re-run overwrites today's rows.
 - SEC filings skip accession numbers already stored.
 - Insider transactions and institutional holdings use insert-or-ignore on their unique constraints.
 - 13-F funds already loaded for a given quarter are skipped, unless `--refetch-13f` is used.

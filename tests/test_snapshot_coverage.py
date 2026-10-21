@@ -17,10 +17,6 @@ _CONFIG = {"earnings_calendar": {"lookahead_days": 30}}
 _BOOM = RuntimeError("Too Many Requests")
 
 
-def _future(days):
-    return (utc_now() + timedelta(days=days)).strftime("%Y-%m-%d")
-
-
 def _calendar_info():
     """.info carrying the next earnings date (packet 41: the calendar no longer uses .calendar)."""
     d = (utc_now() + timedelta(days=10)).replace(hour=12, minute=0, second=0, microsecond=0)

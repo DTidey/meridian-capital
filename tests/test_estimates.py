@@ -94,6 +94,7 @@ class TestTrendRows:
         )
         errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
         assert errors == ["Analyst estimate trends: 1/2 tickers fetched after retries (below 95%)"]
+        assert {r[0] for r in _trend_rows(tmp_db)} == {"PGR"}
 
     def test_trend_second_pass(self, tmp_db, fake, sleeps):
         f = fake(default_info=INFO, trend={"PGR": [_BOOM, _BOOM, _BOOM, PGR_TREND]})

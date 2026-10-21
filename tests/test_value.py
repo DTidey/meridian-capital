@@ -270,16 +270,16 @@ class TestFwdYieldFromTrend:
 
     # Adversarial: a negative forward EPS is a negative yield, ranked lowest, not dropped.
     def test_negative_eps_ranks_lowest(self):
-        data = _make_data(["A", "B", "LOSS"], trends=_trend_rows({"A": 4.0, "B": 6.0, "LOSS": -2.0}))
+        data = _make_data(
+            ["A", "B", "LOSS"], trends=_trend_rows({"A": 4.0, "B": 6.0, "LOSS": -2.0})
+        )
         result = compute(data, _CONFIG)
         assert result.loc["LOSS", "val_fwd_earn_yield"] == pytest.approx(100 / 3)
 
 
 class TestGlitchGuard:
     def test_pgr_glitch_uses_days_7(self):
-        trends = _trend_rows(
-            {"LOW": 10.0, "PGR": 1012.0, "HIGH": 20.0}, days_7={"PGR": 16.36848}
-        )
+        trends = _trend_rows({"LOW": 10.0, "PGR": 1012.0, "HIGH": 20.0}, days_7={"PGR": 16.36848})
         result = compute(_make_data(["LOW", "PGR", "HIGH"], trends=trends), _CONFIG)
         # 16.37 / 100 sits between 0.10 and 0.20; the raw 1012 would have ranked first.
         assert result.loc["PGR", "val_fwd_earn_yield"] == pytest.approx(200 / 3)

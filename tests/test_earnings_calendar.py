@@ -230,7 +230,10 @@ class TestSupersededDates:
         past = self._seed(tmp_db)
         entries = {"AAPL": [{"earnings_date": _future(12), "eps_estimate": 1.0}], "MSFT": None}
         with (
-            patch("data.earnings_calendar._fetch_earnings_date", side_effect=lambda t, *_: entries.get(t)),
+            patch(
+                "data.earnings_calendar._fetch_earnings_date",
+                side_effect=lambda t, *_: entries.get(t),
+            ),
             caplog.at_level("INFO"),
         ):
             update_earnings_calendar(tmp_db, ["AAPL", "MSFT"], _CONFIG)

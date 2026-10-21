@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from factors._utils import safe_div, sector_rank
+from factors._utils import guarded_current, latest_trends, safe_div, sector_rank
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     universe = data["universe"]
     prices = data["prices"]
     funds = data["fundamentals"]
-    estimates = data["estimates"]
+    trends = latest_trends(data["estimate_trends"])
     min_size = config.get("scoring", {}).get("min_sector_size", 5)
 
     if universe.empty:
@@ -38,20 +38,14 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
     # Latest quarterly fundamentals per ticker
     latest_fund = funds.sort_values("period_end").groupby("ticker").last()
 
-    # Latest estimate per ticker
-    latest_est = (
-        (estimates.sort_values("date").groupby("ticker")["eps_estimate_fwd"].last())
-        if not estimates.empty
-        else pd.Series(dtype=float)
-    )
-
     tickers = universe["ticker"].tolist()
     raw = pd.DataFrame(index=tickers)
 
     for ticker in tickers:
         price = latest_price.get(ticker)
         fund = latest_fund.loc[ticker] if ticker in latest_fund.index else None
-        eps = latest_est.get(ticker) if not latest_est.empty else None
+        # Guarded +1y consensus from the latest fresh earningsTrend snapshot
+        eps = guarded_current(trends.loc[ticker]) if ticker in trends.index else None
 
         if price is None or price == 0 or fund is None:
             for col in COLS:

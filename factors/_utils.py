@@ -76,3 +76,29 @@ def value_and_prior(df: pd.DataFrame, col: str, months: int) -> tuple[float | No
     latest = rows[col].iloc[ends.values.argmax()]  # positional: index labels may repeat
     prior = rows.loc[(ends.dt.year == target.year) & (ends.dt.month == target.month), col]
     return float(latest), (float(prior.iloc[0]) if not prior.empty else None)
+
+
+GUARD_FLOOR = 0.10  # $ floor for the glitch guard and revision denominators
+GUARD_MAX_MOVE = 0.5  # a move beyond 50% of the 7-days-ago consensus is treated as a glitch
+
+
+def latest_trends(trends: pd.DataFrame) -> pd.DataFrame:
+    """Each ticker's latest trend snapshot, indexed by ticker; whole rows, never mixed by date."""
+    return trends.sort_values("date").drop_duplicates("ticker", keep="last").set_index("ticker")
+
+
+def guarded_current(row) -> float:
+    """The +1y consensus, or Yahoo's 7-days-ago value for the same period when the current one
+    moved more than 50% from it (a one-snapshot glitch, e.g. PGR's 1012 against 16.37)."""
+    if row is None:
+        return np.nan
+    current, week_ago = _as_float(row.get("current")), _as_float(row.get("days_7"))
+    if not np.isnan(week_ago) and abs(current - week_ago) > GUARD_MAX_MOVE * max(
+        abs(week_ago), GUARD_FLOOR
+    ):
+        return week_ago
+    return current
+
+
+def _as_float(value) -> float:
+    return np.nan if value is None or pd.isna(value) else float(value)

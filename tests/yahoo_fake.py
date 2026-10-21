@@ -73,9 +73,7 @@ class _FakeTicker:
 
 def _frame(by_period: dict, columns) -> pd.DataFrame:
     """yfinance's shape: indexed by period, numeric columns plus a 'currency' string column."""
-    rows = [
-        {"period": p, **{c: v[c] for c in columns if c in v}} for p, v in by_period.items()
-    ]
+    rows = [{"period": p, **{c: v[c] for c in columns if c in v}} for p, v in by_period.items()]
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows).set_index("period")
