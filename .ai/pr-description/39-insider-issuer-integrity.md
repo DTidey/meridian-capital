@@ -76,7 +76,7 @@ corrects the stored data from the Form 4 XML already in `sec_filings`.
   `--forms`).
 - `make lint`: pass
 - `make security`: pass
-- `make test`: 1132 passed (1069 before; 63 new)
+- `make test`: 1177 passed after rebasing on packet 38 (1114 on main; 63 new)
 - Read-only production dry run of the rebuild's mapping (parse every stored Form 4 in memory,
   no writes): 31,980 filings parsed, 831 with no universe owner (other issuers plus tickers
   no longer in the universe), 62,449 rows for 478 tickers (60,504 now). Open-market rows:
