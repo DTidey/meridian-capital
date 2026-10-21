@@ -69,9 +69,11 @@ Out of scope / non-goals:
 - Snapshots are taken on weekdays, so the latest snapshot at or before any cutoff is normally 1
   to 3 days old. 7 days of tolerance covers a missed night or a long weekend without reaching
   back into a different window.
-- Retry delays (5, 15 and 45 seconds) and a 60-second pause before the second pass bound the
-  added time. In the worst case, a step whose every request is throttled gains a few minutes.
-  These are module constants, patched to zero in tests.
+- Retry delays (5 and 15 seconds between 3 attempts) and a 60-second pause before the second
+  pass. These are module constants, patched to zero in tests.
+- Retries alone do not bound the run time. With every request throttled, each ticker costs
+  about 20 seconds per pass, so 503 tickers would take about 5.6 hours per step. That would
+  delay scoring into the next trading day. A circuit breaker bounds it (below).
 
 ## Proposed behavior / API
 ### Public interface
@@ -97,6 +99,13 @@ Out of scope / non-goals:
   - After the last attempt it counts as a failure, logged at DEBUG with the exception.
 - **Second pass.** After a step's loop, if any ticker failed, wait 60 seconds and try each
   failed ticker once more (with the same retry).
+- **Circuit breaker.**
+  - Within a pass, once 10 tickers in a row have failed every attempt, the remaining tickers
+    in that pass are not requested and count as failed.
+  - A WARNING names the step and the number of tickers skipped.
+  - Any success resets the count.
+  - The second pass applies the same rule.
+  - Worst case per step: about 10 x 20 s + 60 s + 10 x 20 s, roughly 8 minutes.
 - **Coverage.**
   - Coverage = tickers fetched successfully / tickers attempted. Calendar success includes an
     empty result.
@@ -137,6 +146,10 @@ ERROR Earnings calendar: 0/503 tickers fetched after retries (below 95%)
 - AC8: A prior snapshot more than 7 days before a window's cutoff is not used; that sub-factor
   is NaN.
 - AC9: `make lint`, `make test` and `make security` pass.
+- AC10: After 10 consecutive failed tickers in a pass, the remaining tickers in that pass are
+  not requested, count as failed, and a WARNING is logged. A success in between resets the
+  count. With every request failing, a step makes at most 20 tickers' worth of requests
+  across both passes.
 
 ## Security considerations
 - Auth/authz impact: none.
@@ -177,6 +190,7 @@ ERROR Earnings calendar: 0/503 tickers fetched after retries (below 95%)
 - AC7 -> `tests/test_revisions.py::TestFridayWindow`; `tests/test_loader.py` (lookback).
 - AC8 -> `tests/test_revisions.py::TestPriorTolerance`.
 - AC9 -> `make lint`; `make test`; `make security`.
+- AC10 -> `tests/test_snapshot_coverage.py::TestCircuitBreaker`.
 
 ## Decision log
 - 2026-10-21: Share `.info` between short interest and estimates, and keep `.calendar` (owner's
@@ -187,5 +201,10 @@ ERROR Earnings calendar: 0/503 tickers fetched after retries (below 95%)
   would skip a whole night's scoring for a Yahoo outage.
 - 2026-10-21: Remove superseded dates only on a successful fetch that returned dates. An empty
   response is more likely a Yahoo gap than a cancelled report.
+- 2026-10-21: Circuit breaker after 10 consecutive failures, added in review. The
+  implementation showed the retries alone would take about 5.6 hours per step in a full
+  Yahoo outage (the original assumption said a few minutes). Ten in a row is far more than
+  the scattered failures of partial throttling, so it only trips when Yahoo is refusing
+  everything.
 - 2026-10-21: Prior-snapshot tolerance of 7 days rather than the exact cutoff date. Snapshots
   are weekday-only, so an exact-date match fails on every Friday.

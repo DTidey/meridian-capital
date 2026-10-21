@@ -161,3 +161,45 @@ class TestCoverageError:
             update_estimates(tmp_db, ["AAPL"])
         assert "Analyst estimates: 0/0 tickers fetched" in caplog.text
         assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+def _tickers(n):
+    return [f"T{i:03d}" for i in range(n)]
+
+
+class TestCircuitBreaker:
+    """AC10: a full outage stops after 10 consecutive failures per pass, not 503 x 40 s."""
+
+    @pytest.mark.parametrize("step", ["short_interest", "estimates", "calendar"])
+    def test_full_outage_bounded(self, tmp_db, fake, sleeps, step):
+        f = fake(default_info=_BOOM, default_calendar=_BOOM)
+        tickers = _tickers(50)
+        _run_info_step(step, tmp_db, tickers)
+        attr = "calendar" if step == "calendar" else "info"
+        # 10 tickers x 3 attempts in each of the two passes; the other 40 never requested.
+        assert sum(f.calls[attr].values()) == 60
+        assert len(f.calls[attr]) == 10
+        assert sleeps == [5, 15] * 10 + [60] + [5, 15] * 10
+
+    def test_skipped_tickers_count_as_failed(self, tmp_db, fake, sleeps, caplog):
+        fake(default_info=_BOOM)
+        summary = update_short_interest(tmp_db, _tickers(30))
+        assert summary == dict.fromkeys(_tickers(30), False)
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any("10 consecutive" in w and "20" in w for w in warnings)
+
+    # Adversarial: scattered failures (partial throttling) never trip the breaker.
+    def test_success_resets_the_count(self, tmp_db, fake, sleeps):
+        tickers = _tickers(40)
+        script = {t: [_BOOM] for i, t in enumerate(tickers) if i % 10 != 9}
+        f = fake(info=script, default_info=INFO)
+        summary = update_short_interest(tmp_db, tickers)
+        assert len(f.calls["info"]) == 40  # every ticker requested in the first pass
+        assert sum(summary.values()) == 4
+
+    # Adversarial: 9 consecutive failures stay under the threshold.
+    def test_nine_failures_do_not_trip(self, tmp_db, fake, sleeps):
+        tickers = _tickers(12)
+        f = fake(info={t: [_BOOM] for t in tickers[:9]}, default_info=INFO)
+        update_short_interest(tmp_db, tickers)
+        assert len(f.calls["info"]) == 12

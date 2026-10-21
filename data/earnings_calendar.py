@@ -155,7 +155,8 @@ def update_earnings_calendar(
         summary[ticker] = stored
         return True
 
-    fetched = fetch_in_two_passes(to_fetch, fetch_one)
+    summary.update(dict.fromkeys(to_fetch, 0))  # tickers a tripped breaker skips stay 0
+    fetched = fetch_in_two_passes(to_fetch, fetch_one, "Earnings calendar")
     conn.commit()
     total = sum(summary.values())
     log_coverage(

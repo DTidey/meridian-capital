@@ -62,6 +62,8 @@ ERROR Earnings calendar: 0/503 tickers fetched after retries (below 95%)
 - [x] AC8: A prior snapshot more than 7 days before a window's cutoff is not used; that
   sub-factor is NaN.
 - [x] AC9: `make lint`, `make test`, `make security` pass.
+- [x] AC10: After 10 consecutive failed tickers in a pass, the rest of that pass is skipped
+  (counted as failed, WARNING logged); a success resets the count.
 
 ## Security Review
 
@@ -79,7 +81,7 @@ ERROR Earnings calendar: 0/503 tickers fetched after retries (below 95%)
   tests; Friday window, 7-day tolerance and 105-day lookback tests failed.
 - `make lint`: pass
 - `make security`: pass
-- `make test`: 1219 passed (1177 on main; 42 new)
+- `make test`: 1225 passed (1177 on main; 48 new)
 - Nothing was run against Yahoo or the production database; yfinance is faked in all tests.
 
 ## Post-merge verification
@@ -96,10 +98,10 @@ ERROR Earnings calendar: 0/503 tickers fetched after retries (below 95%)
 
 ## Risks and follow-ups
 
-- **Run time.** A step whose every request is throttled now takes much longer: three attempts
-  with 20 s of waits per ticker, then a second pass after 60 s. For 503 tickers in a full outage
-  that is about 503 x 20 s x 2, around 5.6 hours per step, not "a few minutes" as the spec
-  estimates. Partial throttling costs far less. Watch the first nightly runs' elapsed time.
+- **Run time is bounded by a circuit breaker (AC10, added in review).** Retries alone would
+  have taken about 5.6 hours per step in a full Yahoo outage. After 10 consecutive failed
+  tickers a pass stops, so the worst case is about 8 minutes per step. The trade-off: in an
+  outage the skipped tickers get no snapshot that night, which the coverage ERROR reports.
 - If Yahoo is still throttling when the second pass starts, the 60-second pause may be too short;
   the ERROR line makes that visible.
 - The first successful calendar run deletes superseded future dates for every ticker it fetches,

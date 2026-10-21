@@ -87,7 +87,8 @@ def update_estimates(
         summary[ticker] = bool(data) and _store(conn, ticker, today, now, data)
         return True
 
-    fetched = fetch_in_two_passes(to_fetch, fetch_one)
+    summary.update(dict.fromkeys(to_fetch, False))  # tickers a tripped breaker skips stay False
+    fetched = fetch_in_two_passes(to_fetch, fetch_one, "Analyst estimates")
     conn.commit()
     log_coverage(
         "Analyst estimates", fetched, len(to_fetch), f" ({len(shared)} from the shared .info)"

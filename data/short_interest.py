@@ -80,7 +80,8 @@ def update_short_interest(
         summary[ticker] = bool(data) and _store(conn, ticker, today, now, data)
         return True
 
-    fetched = fetch_in_two_passes(to_fetch, fetch_one)
+    summary.update(dict.fromkeys(to_fetch, False))  # tickers a tripped breaker skips stay False
+    fetched = fetch_in_two_passes(to_fetch, fetch_one, "Short interest")
     conn.commit()
     log_coverage("Short interest", fetched, len(to_fetch))
     updated = sum(1 for v in summary.values() if v)

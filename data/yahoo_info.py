@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 RETRY_DELAYS = (5, 15)  # waits between the 3 attempts, seconds
 SECOND_PASS_PAUSE = 60  # seconds before retrying a step's failed tickers
 COVERAGE_MIN = 0.95
+BREAKER_FAILURES = 10  # consecutive failed tickers that end a pass early
 
 
 def call_with_retry[T](fetch: Callable[[], T]) -> T:
@@ -45,13 +46,41 @@ class YahooInfo:
         return info
 
 
-def fetch_in_two_passes(tickers: list[str], fetch_one: Callable[[str], bool]) -> int:
+def _run_pass(tickers: list[str], fetch_one: Callable[[str], bool], step: str) -> list[str]:
+    """Run fetch_one over tickers; return the failures.
+
+    After BREAKER_FAILURES failures in a row Yahoo is refusing everything, so the rest of the
+    pass is skipped (counted as failed) instead of waiting out every ticker's retries.
+    """
+    failed: list[str] = []
+    in_a_row = 0
+    for i, ticker in enumerate(tickers):
+        if in_a_row >= BREAKER_FAILURES:
+            skipped = tickers[i:]
+            logger.warning(
+                "%s: %d consecutive failures; skipping the remaining %d tickers in this pass",
+                step,
+                BREAKER_FAILURES,
+                len(skipped),
+            )
+            return failed + skipped
+        if fetch_one(ticker):
+            in_a_row = 0
+        else:
+            failed.append(ticker)
+            in_a_row += 1
+    return failed
+
+
+def fetch_in_two_passes(
+    tickers: list[str], fetch_one: Callable[[str], bool], step: str = "Yahoo snapshot"
+) -> int:
     """Run fetch_one over tickers, then once more over failures; return the number fetched."""
-    failed = [t for t in tickers if not fetch_one(t)]
+    failed = _run_pass(tickers, fetch_one, step)
     if failed:
         logger.info("%d tickers failed; second pass in %ds", len(failed), SECOND_PASS_PAUSE)
         time.sleep(SECOND_PASS_PAUSE)
-        failed = [t for t in failed if not fetch_one(t)]
+        failed = _run_pass(failed, fetch_one, step)
     return len(tickers) - len(failed)
 
 

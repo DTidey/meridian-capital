@@ -108,3 +108,9 @@
   the ERROR; the run summary keeps counting stored rows as before.
 - **Coverage threshold is inclusive at 95%.** 19/20 logs no ERROR; with nothing to attempt
   (everything snapshotted today) there is no ERROR either.
+- **Circuit breaker added in review (AC10).** The implementation showed the spec's "a few
+  minutes" worst case was wrong: retries alone cost about 20 s per ticker per pass, about 5.6
+  hours per step when Yahoo refuses everything. A pass now stops after 10 consecutive failed
+  tickers (about 8 minutes per step at worst). Ten in a row is far beyond the scattered
+  failures of partial throttling, so it only trips in an outage. Skipped tickers are
+  pre-filled as failed in each step's summary so the run summary stays complete.

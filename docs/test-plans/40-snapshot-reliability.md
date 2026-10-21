@@ -44,6 +44,10 @@ Path: `docs/test-plans/40-snapshot-reliability.md`
   `tests/test_loader.py::TestLoadEstimates::test_lookback_at_least_105_days`
 - AC8: `tests/test_revisions.py::TestPriorTolerance::test_prior_more_than_7_days_before_cutoff_not_used`
 - AC9: `make lint`, `make test`, `make security`
+- AC10: `tests/test_snapshot_coverage.py::TestCircuitBreaker::test_full_outage_bounded`
+  (short interest, estimates, calendar: 50 tickers all failing make 60 requests, with the
+  expected sleeps), `test_skipped_tickers_count_as_failed` (WARNING, skipped tickers False),
+  `test_success_resets_the_count` and `test_nine_failures_do_not_trip` (adversarial)
 
 ## Edge cases
 - From spec:
@@ -87,7 +91,7 @@ Path: `docs/test-plans/40-snapshot-reliability.md`
   `test_snapshot_coverage.py` failed to import (`data.yahoo_info` missing); calendar AC4/AC5 tests
   errored for the same reason; `TestFridayWindow` (both), `TestPriorTolerance` (more than 7
   days) and `test_lookback_at_least_105_days` failed.
-- Suite: 1177 tests before, 1219 after (42 new).
+- Suite: 1177 tests before, 1225 after (48 new).
 
 ## Commands
 ```bash
