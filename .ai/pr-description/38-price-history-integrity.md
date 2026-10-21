@@ -63,7 +63,7 @@ is exclusive), and `volume` was 32-bit.
   UTC clocks patched; SQLite only.
 - `make lint`: pass
 - `make security`: pass (bandit clean; pip-audit no known vulnerabilities, 8 pillow ignored)
-- `make test`: 1113 passed (1069 before)
+- `make test`: 1114 passed (1069 before)
 
 ## Post-merge production step (owner's confirmation required)
 
@@ -86,8 +86,8 @@ point has done so first, and removes the 4,194 pre-packet all-null rows.
   keeps its old rows (WARNING in the log); check the log for these after the backfill.
 - **Holiday runs stop at Layer 2.** `run_all.py` reports a Layer 2 failure on market holidays
   and runs no later layers that night. Intended (spec), but it will look like a failure.
-- **Gap check counts rows.** A ticker with a stray row on a non-calendar date and a missing
-  calendar date nets out and is not flagged; unlikely once all-null rows are gone.
+- **Gap check counts closes.** A ticker with a stray close on a non-calendar date and a missing
+  calendar date nets out and is not flagged; stored empty rows no longer hide a gap.
 - **Calendar denominator is every stored ticker,** including any no longer in the universe. If
   many stale tickers are stored, fewer dates reach the half threshold and gaps are missed.
 - **Polygon backend** (not in use) gets the same checks, but stores adjusted close as both close
