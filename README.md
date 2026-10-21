@@ -138,7 +138,7 @@ Open `http://localhost:8502`. The dashboard auto-refreshes every 5 minutes durin
 
 | Source | Data |
 |---|---|
-| yfinance | Prices (3yr lookback), fundamentals, short interest, analyst estimates, earnings calendar |
+| yfinance | Prices (3yr lookback), fundamentals, short interest, analyst estimates, earnings calendar (retried when throttled; an ERROR is logged when a snapshot step covers under 95% of tickers) |
 | SEC EDGAR | 10-K, 10-Q, 8-K, Form 4 insider transactions (8 req/s rate limit) |
 | 13-F filings | Institutional holdings for 9 tracked funds (Citadel, Point72, Berkshire, etc.), matched to tickers by CUSIP via OpenFIGI when configured |
 | FMP API | Earnings transcripts (optional; falls back to SEC 8-K Exhibit 99 mining) |

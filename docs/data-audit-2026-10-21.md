@@ -66,7 +66,7 @@ signed off as it is fixed.
     - CME's 2026-06-30 count is 359,275 (a 1000x glitch), making it LONG at 90.8.
     - MNST and APH are exactly double the SEC cover-page count.
   - Root cause: `data/fundamentals.py:116-127` has no share-class handling and no sanity check.
-  - Fix: packet 40 (planned).
+  - Fix: packet 42 (planned).
   - Verify:
     - BRK-B, CME, MNST and APH `shares_outstanding` are within 5% of SEC
       `EntityCommonStockSharesOutstanding` (B-share equivalent for BRK-B);
@@ -134,7 +134,7 @@ signed off as it is fixed.
     days.
   - Root cause: `factors/loader.py:26` sets the lookback equal to the 90-day window, and 90 days
     before a Friday is always a Saturday.
-  - Fix: packet 41 (planned).
+  - Fix: packet 40 (PR pending).
   - Verify: the count of `rev_90d = 50` on a Friday is in line with other weekdays.
   - Signed off: -
 
@@ -145,7 +145,7 @@ signed off as it is fixed.
     - 122 tickers carry superseded dates, which creates false earnings blackouts.
   - Root cause: `data/earnings_calendar.py:66-68` swallows exceptions; upserts never remove old
     dates.
-  - Fix: packet 41 (planned).
+  - Fix: packet 40 (PR pending).
   - Verify:
     - `max(fetched_at)` is less than one day old after the nightly run;
     - a run storing no events fails loudly;
@@ -157,7 +157,7 @@ signed off as it is fixed.
     - 27 of 108 LONGs and 41 of 97 SHORTs were quant-NEUTRAL names with no AI review.
     - PLD went from 23 to 3 (SHORT) and NEE from 23 to 3 (SHORT) with no AI.
   - Root cause: `analysis/combined_score.py:106-107`.
-  - Fix: packet 42 (planned).
+  - Fix: packet 43 (planned).
   - Verify: no ticker becomes LONG or SHORT only because it lacks AI coverage; recheck PLD and
     NEE.
   - Signed off: -
@@ -170,7 +170,7 @@ signed off as it is fixed.
     - Rows the reconcile creates have no sector or weight, so pre-trade checks reject them.
   - Root cause: `portfolio/rebalance.py:95-97, 240-276`; `execution/broker.py:126-146`;
     `execution/executor.py:403-419`.
-  - Fix: packet 43 (planned).
+  - Fix: packet 44 (planned).
   - Verify: an end-to-end rebalance, execute and reconcile on the paper account leaves
     `portfolio_positions` equal to Alpaca's positions, with signed shares.
   - Signed off: -
@@ -179,7 +179,7 @@ signed off as it is fixed.
   - Evidence: unrealised P&L is always 0, realised P&L is never booked, and NAV stays at
     100,000.
   - Root cause: `reporting/nav_series.py:49-50`; `portfolio/state.py:47`.
-  - Fix: packet 43 (planned).
+  - Fix: packet 44 (planned).
   - Verify: `portfolio_nav` updates daily from Alpaca account equity, and drawdown moves on a
     losing day.
   - Signed off: -
@@ -191,7 +191,7 @@ signed off as it is fixed.
       morning unrecorded.
     - Their limits are set from a close two sessions old.
   - Root cause: `execution/executor.py:101-107, 153-155, 367-369`.
-  - Fix: packet 43 (planned).
+  - Fix: packet 44 (planned).
   - Verify:
     - no order is CANCELLED in the database while open at Alpaca;
     - limits are set from a live quote.
@@ -242,7 +242,7 @@ signed off as it is fixed.
     separate tickers.
   - Root cause: `execution/executor.py:102`, `execution/short_check.py:34`,
     `execution/broker.py:68-75`.
-  - Fix: packet 43 (planned).
+  - Fix: packet 44 (planned).
   - Verify: a BRK-B paper order is accepted and reconciles to `BRK-B`.
   - Signed off: -
 
@@ -254,7 +254,7 @@ signed off as it is fixed.
       buyback.
     - GOOGL's EBIT exceeds its revenue.
   - Root cause: `factors/value.py:39, 63-69`; `data/fundamentals.py:62`.
-  - Fix: packet 40 (planned).
+  - Fix: packet 42 (planned).
   - Verify:
     - value inputs use four contiguous quarters;
     - shareholder yield is scored when only one component is missing;
@@ -265,7 +265,7 @@ signed off as it is fixed.
   - Evidence: AAPL is stored as -0.72, and the sign flips for negative-equity companies. The
     dashboard shows these values.
   - Root cause: `data/fundamentals.py:174`.
-  - Fix: packet 40 (planned).
+  - Fix: packet 42 (planned).
   - Verify: stored ROE equals net income divided by equity (AAPL 2026-06-30 about 0.28).
   - Signed off: -
 
@@ -295,7 +295,7 @@ signed off as it is fixed.
 - [ ] **H10. Estimates: 60-73 tickers drop out of each night's snapshot.**
   - Evidence: mostly tickers late in the alphabet; XOM's latest estimate was from 14 October.
   - Root cause: `data/estimates.py:28-30` has no retry, and failures are logged at debug.
-  - Fix: packet 41 (planned).
+  - Fix: packet 40 (PR pending).
   - Verify: `analyst_estimates` covers at least 98% of the universe on each weekday.
   - Signed off: -
 

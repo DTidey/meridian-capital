@@ -65,6 +65,12 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Yahoo snapshots (packet `40-snapshot-reliability`): short interest and estimates share one
+  `.info` request per ticker per run; every Yahoo fetch retries with backoff (5 s, 15 s) and
+  failed tickers get a second pass; each step logs its coverage and an ERROR below 95%; a failed
+  earnings calendar fetch is no longer stored as "no dates"; a successful calendar fetch removes
+  the ticker's superseded future dates; the 90-day estimate revision now works on Fridays
+  (105-day estimates lookback; prior snapshot up to 7 days before each window's cutoff).
 - Price history (packet `38-price-history-integrity`): a ticker's full history is re-downloaded
   when a split or dividend re-adjusts it or it has a missing date; the nightly run stores the
   day's close; all-null rows are no longer stored; `volume` is 64-bit; scoring stops when SPY

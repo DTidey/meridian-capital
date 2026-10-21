@@ -81,3 +81,30 @@
   the ticker) was rejected because a BlackRock municipal fund files as "BNY". Predecessor
   CIKs are listed explicitly in `sec.predecessor_ciks`; the CIK-change WARNING prompts new
   entries.
+
+# 2026-10-21: Snapshot reliability (packet 40)
+
+- **Split out of the estimates work.** Packet 40 was going to be fundamentals and 41 the estimates
+  fixes; PGR's forward EPS glitch enters `rev_30d` on 2026-10-24, and the calendar has been empty
+  since 10-14, so the snapshot reliability part ships first. The audit checklist renumbers later
+  packets (fundamentals 42, combined score 43, positions/NAV/execution 44); C5/C6 stay on 41.
+- **Retry inside `call_with_retry`, failure as an exception.** `.calendar` can legitimately
+  return `None` (no dates), so a `None` sentinel could not tell a failed fetch from an empty one.
+  The helper re-raises the last exception; callers turn that into `None` (calendar) or a `None`
+  `.info` (`YahooInfo.get`).
+- **Failed `.info` fetches are not memoised.** If short interest fails a ticker after both
+  passes, estimates tries it again; only successful responses are shared. This keeps the one
+  request per ticker rule for the normal case without letting one throttled burst blank both
+  steps.
+- **Calendar parse errors count as failures.** Only the request is retried; a response that
+  cannot be parsed returns `None` (logged at DEBUG) rather than `[]`, so it is never read as
+  "no dates" and never triggers the superseded delete.
+- **Superseded delete keeps the in-window dates from the response, not only the ones inserted.**
+  It runs only when at least one row was stored. A future date beyond the lookahead window that
+  the response no longer lists is also removed, as the spec's rule ("rows with
+  `earnings_date >= today` not in the new set") covers it.
+- **Coverage counts a fetch, not a stored row.** `.info` without short interest or estimate
+  fields is a successful fetch with nothing stored, so it does not trigger the second pass or
+  the ERROR; the run summary keeps counting stored rows as before.
+- **Coverage threshold is inclusive at 95%.** 19/20 logs no ERROR; with nothing to attempt
+  (everything snapshotted today) there is no ERROR either.
