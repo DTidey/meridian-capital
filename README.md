@@ -112,6 +112,7 @@ python run_data.py --no-filings --no-13f   # fast daily run, skip SEC
 python run_data.py --refresh-fundamentals  # re-fetch fundamentals for every ticker
 python run_data.py --refresh-prices       # re-download every ticker's full price history
 python run_data.py --refetch-13f           # re-fetch stored 13-F filings
+python run_data.py --rebuild-insider       # rebuild insider rows from stored Form 4 XML
 python run_scoring.py           # Layer 2 — factor scoring (stops if SPY has no bar for the score date)
 python run_transcripts.py       # transcript ingestion
 python run_analysis.py          # Layer 3 — AI analysis
@@ -122,7 +123,8 @@ python run_reporting.py         # Layer 7 — reporting
 ```
 
 `run_all.py` options include `--whatif` (preview, no commits), `--dry-run` (no Alpaca orders),
-`--no-execution`, `--no-reporting`, `--stress` and `--tickers`; see `docs/run_all.md`.
+`--no-execution`, `--no-reporting`, `--stress`, `--tickers` and `--forms` (passed to
+`run_data.py`); see `docs/run_all.md`.
 
 ## Dashboard
 

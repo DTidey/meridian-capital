@@ -97,7 +97,9 @@ data/
 
 ### 4.2 Entry point (`run_data.py`)
 
-The script runs nine ingestion steps in sequence against a single open database connection. SEC filings and transcripts (`--no-filings`) and 13-F holdings (`--no-13f`) can be skipped for faster daily runs; `--refresh-prices`, `--refresh-fundamentals` and `--refetch-13f` force a full re-fetch of those datasets. Prices also re-download a single ticker's full history on their own when a split or dividend has re-adjusted it or it has a missing date. A summary table is printed at the end.
+The script runs nine ingestion steps in sequence against a single open database connection. SEC filings and transcripts (`--no-filings`) and 13-F holdings (`--no-13f`) can be skipped for faster daily runs; `--refresh-prices`, `--refresh-fundamentals` and `--refetch-13f` force a full re-fetch of those datasets. Prices also re-download a single ticker's full history on their own when a split or dividend has re-adjusted it or it has a missing date. `--rebuild-insider` runs only the universe step and then rebuilds insider transactions and cluster flags from stored Form 4 XML. A summary table is printed at the end.
+
+SEC CIKs come from SEC's `company_tickers.json`, loaded once per run; if it fails to load, no SEC data is stored that run. Form 4 transactions are stored only when the filing's issuer CIK is the ticker's CIK.
 
 Execution sequence:
 
@@ -170,7 +172,7 @@ Both functions introspect the table's primary key at call time and delegate to t
 | Table | Primary key / unique | Description |
 |-------|---------------------|-------------|
 | `sec_filings` | `id` (auto); unique `accession_no` | 10-K/10-Q/8-K metadata and full text |
-| `insider_transactions` | `id` (auto); unique `(ticker, accession_no, insider_name, date, shares)` | Form 4 parsed transactions |
+| `insider_transactions` | `id` (auto); unique `(ticker, accession_no, txn_index)` | Form 4 parsed transactions; `txn_index` = 0-based position among the filing's non-derivative transactions |
 | `insider_cluster_flags` | `(ticker, window_start)` | Rolling-window cluster-buy detections |
 
 ### 5.5 Institutional
@@ -222,7 +224,7 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 | `test_universe.py` | Cache freshness logic, Wikipedia HTML parsing, ticker normalisation |
 | `test_market_data.py` | OHLCV parsing, incremental updates, batch fetching |
 | `test_fundamentals.py` | Statement parsing, ratio derivation, FMP vs yfinance paths |
-| `test_sec_data.py` | Form 4 XML parsing, cluster-buy detection, lookback filtering |
+| `test_sec_data.py` | Form 4 XML parsing, CIK map, issuer check, insider rebuild, cluster-buy detection, lookback filtering |
 | `test_institutional.py` | 13-F filing selection, parsing, OpenFIGI/name resolution, summary rebuild, point-in-time loader |
 | `test_earnings_calendar.py` | Earnings date ingestion |
 | `test_edgar_docs.py` | EDGAR index parsing, HTML-to-markdown table conversion |

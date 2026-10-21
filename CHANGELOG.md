@@ -69,6 +69,13 @@ Release policy:
   when a split or dividend re-adjusts it or it has a missing date; the nightly run stores the
   day's close; all-null rows are no longer stored; `volume` is 64-bit; scoring stops when SPY
   has no bar for the score date; new `run_data.py --refresh-prices`.
+- Insider transactions are stored only for the issuer they concern (a company's own trades in
+  other issuers, e.g. Berkshire buying Lennar, no longer count as BRK-B insider trades); every
+  transaction in a Form 4 is kept (unique key `(ticker, accession_no, txn_index)`, so an
+  exercise and a sale of the same share count are both stored); CIKs come from SEC's
+  `company_tickers.json` once per run instead of `browse-edgar` and stale stored URLs.
+  `run_data.py --rebuild-insider` rebuilds insider rows and cluster flags from stored Form 4
+  XML; `run_all.py --forms` passes form types to Layer 1 (packet `39-insider-issuer-integrity`).
 - Insider analysis no longer re-runs nightly for unchanged Form 4 activity: cached on a hash
   of its transaction input instead of the score date (packet `37-insider-cache-key`).
 - Risk factors found in 15 more 10-Ks (`Item 1.A`, `Item 1(a)`, "Part I" prefixes and bare "Risk
