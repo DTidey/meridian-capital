@@ -263,3 +263,41 @@ class TestLoadEstimates:
         data = load_scoring_data(tmp_db, {}, SCORE_DATE)
         dates = data["estimates"]["date"].dt.strftime("%Y-%m-%d").tolist()
         assert dates == ["2024-02-17", "2024-06-01"]
+
+
+class TestLoadEstimateTrends:
+    """Packet 41 (AC4): +1y trend snapshots from 5 days before the score date."""
+
+    def _insert(self, conn, d, period="+1y"):
+        from data.db import estimate_trends
+
+        conn.execute(
+            estimate_trends.insert().values(
+                ticker="AAPL", date=d, period=period, current=7.0, days_7=7.0, days_30=6.5
+            )
+        )
+        conn.commit()
+
+    def test_window_and_period(self, tmp_db):
+        # SCORE_DATE 2024-06-01: 5 days back is 2024-05-27, 6 days back is 2024-05-26.
+        for d in ("2024-05-26", "2024-05-27", "2024-06-01", "2024-06-02"):
+            self._insert(tmp_db, d)
+        self._insert(tmp_db, "2024-06-01", period="0y")
+        data = load_scoring_data(tmp_db, {}, SCORE_DATE)
+        trends = data["estimate_trends"]
+        assert trends["date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-05-27", "2024-06-01"]
+        assert trends.columns.tolist() == [
+            "ticker",
+            "date",
+            "current",
+            "days_7",
+            "days_30",
+            "days_60",
+            "days_90",
+        ]
+        assert trends["days_60"].isna().all()
+
+    def test_estimates_still_loaded(self, tmp_db):
+        data = load_scoring_data(tmp_db, {}, SCORE_DATE)
+        assert "estimates" in data
+        assert data["estimate_trends"].empty

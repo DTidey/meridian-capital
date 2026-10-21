@@ -21,8 +21,10 @@ def _future(days):
     return (utc_now() + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def _calendar():
-    return {"Earnings Date": [_future(10)], "Earnings Average": [1.5]}
+def _calendar_info():
+    """.info carrying the next earnings date (packet 41: the calendar no longer uses .calendar)."""
+    d = (utc_now() + timedelta(days=10)).replace(hour=12, minute=0, second=0, microsecond=0)
+    return {**INFO, "earningsTimestampStart": int(d.timestamp())}
 
 
 @pytest.fixture
@@ -70,11 +72,11 @@ class TestSecondPass:
 
     def test_calendar_second_pass_success_stored(self, tmp_db, fake, sleeps):
         f = fake(
-            calendar={"AAPL": [_BOOM, _BOOM, _BOOM, _calendar()]}, default_calendar=_calendar()
+            info={"AAPL": [_BOOM, _BOOM, _BOOM, _calendar_info()]}, default_info=_calendar_info()
         )
         summary = update_earnings_calendar(tmp_db, ["AAPL", "MSFT"], _CONFIG)
         assert summary == {"AAPL": 1, "MSFT": 1}
-        assert f.calls["calendar"] == {"AAPL": 4, "MSFT": 1}
+        assert f.calls["info"] == {"AAPL": 4, "MSFT": 1}
         assert _rows(tmp_db, earnings_calendar, "AAPL") == 1
         assert sleeps == [5, 15, 60]
 
@@ -111,12 +113,7 @@ class TestCoverageError:
         ],
     )
     def test_below_95_logs_error_and_continues(self, tmp_db, fake, sleeps, caplog, step, label):
-        fake(
-            info={"AAPL": [_BOOM]},
-            calendar={"AAPL": [_BOOM]},
-            default_info=INFO,
-            default_calendar=_calendar(),
-        )
+        fake(info={"AAPL": [_BOOM]}, default_info=_calendar_info())
         with caplog.at_level("INFO"):
             summary = _run_info_step(step, tmp_db, ["AAPL", "MSFT"])
         assert summary["MSFT"]
@@ -133,7 +130,7 @@ class TestCoverageError:
         assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
     def test_all_fail_logs_error(self, tmp_db, fake, sleeps, caplog):
-        fake(calendar={"AAPL": [_BOOM], "MSFT": [_BOOM]})
+        fake(info={"AAPL": [_BOOM], "MSFT": [_BOOM]})
         with caplog.at_level("INFO"):
             summary = update_earnings_calendar(tmp_db, ["AAPL", "MSFT"], _CONFIG)
         assert summary == {"AAPL": 0, "MSFT": 0}
@@ -172,13 +169,12 @@ class TestCircuitBreaker:
 
     @pytest.mark.parametrize("step", ["short_interest", "estimates", "calendar"])
     def test_full_outage_bounded(self, tmp_db, fake, sleeps, step):
-        f = fake(default_info=_BOOM, default_calendar=_BOOM)
+        f = fake(default_info=_BOOM)
         tickers = _tickers(50)
         _run_info_step(step, tmp_db, tickers)
-        attr = "calendar" if step == "calendar" else "info"
         # 10 tickers x 3 attempts in each of the two passes; the other 40 never requested.
-        assert sum(f.calls[attr].values()) == 60
-        assert len(f.calls[attr]) == 10
+        assert sum(f.calls["info"].values()) == 60
+        assert len(f.calls["info"]) == 10
         assert sleeps == [5, 15] * 10 + [60] + [5, 15] * 10
 
     def test_skipped_tickers_count_as_failed(self, tmp_db, fake, sleeps, caplog):
@@ -203,3 +199,15 @@ class TestCircuitBreaker:
         f = fake(info={t: [_BOOM] for t in tickers[:9]}, default_info=INFO)
         update_short_interest(tmp_db, tickers)
         assert len(f.calls["info"]) == 12
+
+
+class TestTrendCircuitBreaker:
+    """Packet 41 AC1: the earningsTrend fetch has packet 40's breaker too."""
+
+    def test_trend_outage_bounded(self, tmp_db, fake, sleeps, caplog):
+        f = fake(default_info=INFO, default_trend=_BOOM)
+        update_estimates(tmp_db, _tickers(50))
+        assert sum(f.calls["info"].values()) == 50
+        assert sum(f.calls["trend"].values()) == 60
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(w.startswith("Analyst estimate trends: 10 consecutive") for w in warnings)
