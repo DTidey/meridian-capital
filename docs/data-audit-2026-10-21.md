@@ -36,8 +36,8 @@ signed off as it is fixed.
 
 | Severity | Items | Signed off |
 |---|---|---|
-| Critical | 12 | 0 |
-| High | 11 | 0 |
+| Critical | 12 | 2 |
+| High | 11 | 1 |
 | Medium / low | 23 | 0 |
 
 ## Critical: wrong trades or broken bookkeeping
@@ -49,13 +49,15 @@ signed off as it is fixed.
     - Dividend drift moves momentum by a median 2.7 points, and by more than 10 points for 33
       tickers.
   - Root cause: `data/market_data.py:185-186` fetches only from the last stored date.
-  - Fix: packet 38, PR #91 (merged 2026-10-21, not yet deployed).
+  - Fix: packet 38, PR #91 (merged, deployed and backfilled 2026-10-21).
   - Verify:
     - after `run_data.py --refresh-prices`, APH's stored close for 2026-08-28 is about 78.87
       (split-adjusted);
     - no stored one-day return exceeds 40% without a corporate action;
     - adj_close matches a fresh yfinance pull within 0.1% for the sample tickers.
-  - Signed off: -
+  - Signed off: - (2026-10-21 partial: APH close 2026-08-28 = 78.87; the 13 remaining one-day
+    moves over 40% are real events (e.g. MRNA 2026-08-19 on 199M shares, CNC, GL, FISV,
+    VIX spikes). Pending: yfinance comparison, rate-limited by Yahoo on 2026-10-21.)
 
 - [ ] **C2. Fundamentals: bad share counts.**
   - Evidence:
@@ -71,30 +73,34 @@ signed off as it is fixed.
     - a 1000x or 2x quarter-on-quarter jump without a split is rejected.
   - Signed off: -
 
-- [ ] **C3. Insider: a company's own trades in other issuers are booked as insider trades.**
+- [x] **C3. Insider: a company's own trades in other issuers are booked as insider trades.**
   - Evidence:
     - BRK-B's insider_score of 100 comes entirely from Berkshire buying Lennar; the corrected
       score is 15.8.
     - About 35 tickers are affected, including UBER, ARES, HOOD, GS, BAC and BX.
   - Root cause: `data/sec_data.py:185-244` never checks the Form 4 `issuerCik`.
-  - Fix: packet 39, PR #92 (open).
+  - Fix: packet 39, PR #92 (merged, deployed and rebuilt 2026-10-21).
   - Verify:
     - after `run_data.py --rebuild-insider`, no `insider_transactions` row comes from a Form 4
       whose issuer is neither the ticker's CIK nor a configured predecessor;
     - BRK-B has 6 open-market rows (63 before).
-  - Signed off: -
+  - Signed off: 2026-10-21. Rebuild inserted 62,449 rows for 478 tickers; 831 filings had no
+    universe owner. BRK-B 6 open-market rows; insider_score 100 to 17.1 on the 2026-10-20
+    rescore; UBER 1.2 to 98.8.
 
-- [ ] **C4. Insider: the unique key silently dropped real transactions.**
+- [x] **C4. Insider: the unique key silently dropped real transactions.**
   - Evidence:
     - An exercise and a same-day sale of the same share count collapsed into one row (TT kept the
       M and lost the S).
     - 2,390 open-market rows ($5.4B of sales) are missing.
   - Root cause: key `(ticker, accession_no, insider_name, date, shares)` at `data/db.py:125`.
-  - Fix: packet 39, PR #92 (open).
+  - Fix: packet 39, PR #92 (merged, deployed and rebuilt 2026-10-21).
   - Verify:
     - TT accession `0001628280-26-054280` has both the M and the S row;
     - the constraint is `(ticker, accession_no, txn_index)`.
-  - Signed off: -
+  - Signed off: 2026-10-21. TT accession has M and S rows of 43,778 shares; constraint
+    `insider_transactions_ticker_accession_no_txn_index_key`; no row has a null txn_index.
+    TT insider_score 95.2 to 1.2 on the 2026-10-20 rescore.
 
 - [ ] **C5. Estimates: one-day forward EPS glitches feed straight into scores.**
   - Evidence:
@@ -196,18 +202,20 @@ signed off as it is fixed.
 - [ ] **H1. Prices: scores used the previous day's prices and VIX.**
   - Evidence: yfinance treats `end` as exclusive, and the code passed `end=today`.
   - Root cause: `data/market_data.py:162,195`.
-  - Fix: packet 38, PR #91 (merged 2026-10-21, not yet deployed).
+  - Fix: packet 38, PR #91 (merged, deployed and backfilled 2026-10-21).
   - Verify:
     - `factor_scores` for date D are written only when SPY has a bar dated D;
     - `regime_state.vix_close` equals the same-day VIX close.
   - Signed off: -
 
-- [ ] **H2. Prices: 4,194 empty rows stored and never repaired.**
+- [x] **H2. Prices: 4,194 empty rows stored and never repaired.**
   - Evidence: 460 tickers are empty on 2026-09-22 alone.
   - Root cause: `data/market_data.py:83-88`.
-  - Fix: packet 38, PR #91 (merged 2026-10-21, not yet deployed).
+  - Fix: packet 38, PR #91 (merged, deployed and backfilled 2026-10-21).
   - Verify: `daily_prices` has zero rows with no open, high, low and close.
-  - Signed off: -
+  - Signed off: 2026-10-21. Zero empty rows for universe and benchmark tickers. 20 remain
+    for 10 tickers no longer in the universe (AVB, BLDR, CTRA, CTVA, EA, EQR, PSKY, SATS,
+    TAP, WBD), which are neither fetched nor scored. Accepted.
 
 - [ ] **H3. Beta and covariance: one missing ticker drops that day for every ticker.**
   - Evidence:
@@ -267,7 +275,7 @@ signed off as it is fixed.
     - BNY maps to a BlackRock municipal fund.
     - XOM is pinned to its old CIK.
   - Root cause: `data/sec_data.py:54-71, 342-352`.
-  - Fix: packet 39, PR #92 (open).
+  - Fix: packet 39, PR #92 (merged, deployed and rebuilt 2026-10-21).
   - Verify:
     - after the next full SEC run, every universe ticker has stored filings;
     - BNY's filings come from CIK 1390777.
