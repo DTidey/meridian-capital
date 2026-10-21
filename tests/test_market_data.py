@@ -408,6 +408,17 @@ class TestGapCheck:
         _run(tmp_db, ["AAA", "BBB", "CCC"])
         assert _full_fetches(yahoo) == set()
 
+    def test_null_row_on_calendar_date_is_a_gap(self, tmp_db, yahoo):
+        for t in ("AAA", "BBB", "CCC"):
+            _seed(tmp_db, t, _DAYS[:-1])
+            yahoo.history[t] = _history(_DAYS)
+        _seed(tmp_db, "DDD", [d for d in _DAYS[:-1] if d != "2026-10-15"])
+        tmp_db.execute(sa.insert(daily_prices).values(ticker="DDD", date="2026-10-15"))
+        tmp_db.commit()
+        yahoo.history["DDD"] = _history(_DAYS)
+        _run(tmp_db, ["AAA", "BBB", "CCC", "DDD"])
+        assert _full_fetches(yahoo) == {"DDD"}
+
     def test_history_starting_late_is_not_a_gap(self, tmp_db, yahoo):
         for t in ("AAA", "BBB"):
             _seed(tmp_db, t, _DAYS[:-1])

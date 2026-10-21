@@ -28,7 +28,8 @@ Path: `docs/test-plans/38-price-history-integrity.md`
 - AC4: `TestAdjustmentCheck::test_unchanged_history_no_redownload`,
   `test_difference_within_tolerance_no_redownload` (exactly 0.01%)
 - AC5: `TestGapCheck::test_missing_calendar_date_triggers_redownload`,
-  `test_complete_history_no_redownload`, `test_gap_in_spy_detected`
+  `test_complete_history_no_redownload`, `test_gap_in_spy_detected`,
+  `test_null_row_on_calendar_date_is_a_gap` (a stored empty row does not hide the gap)
 - AC6: `TestFullRedownload::test_empty_fetch_keeps_rows`,
   `test_empty_fetch_after_adjustment_keeps_rows`, `test_all_null_fetch_keeps_rows`
 - AC7: `TestFullRedownload::test_refresh_redownloads_all`;

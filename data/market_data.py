@@ -215,7 +215,7 @@ def _calendar_dates(conn: sa.engine.Connection) -> list[str]:
 
 
 def _gap_tickers(conn: sa.engine.Connection, tickers: list[str]) -> list[str]:
-    """Tickers with fewer stored rows than calendar dates between their first and last row."""
+    """Tickers with fewer closes than calendar dates between their first and last close."""
     calendar = _calendar_dates(conn)
     spans = conn.execute(
         sa.select(
@@ -223,7 +223,9 @@ def _gap_tickers(conn: sa.engine.Connection, tickers: list[str]) -> list[str]:
             sa.func.min(daily_prices.c.date),
             sa.func.max(daily_prices.c.date),
             sa.func.count(),
-        ).group_by(daily_prices.c.ticker)
+        )
+        .where(daily_prices.c.close.is_not(None))
+        .group_by(daily_prices.c.ticker)
     ).all()
     short = {
         ticker
