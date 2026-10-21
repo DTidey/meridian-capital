@@ -35,7 +35,7 @@ erDiagram
         float   low
         float   close
         float   adj_close
-        integer volume
+        bigint  volume
     }
 
     fundamentals {

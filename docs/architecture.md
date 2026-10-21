@@ -97,7 +97,7 @@ data/
 
 ### 4.2 Entry point (`run_data.py`)
 
-The script runs nine ingestion steps in sequence against a single open database connection. SEC filings and transcripts (`--no-filings`) and 13-F holdings (`--no-13f`) can be skipped for faster daily runs; `--refresh-fundamentals` and `--refetch-13f` force a full re-fetch of those datasets. A summary table is printed at the end.
+The script runs nine ingestion steps in sequence against a single open database connection. SEC filings and transcripts (`--no-filings`) and 13-F holdings (`--no-13f`) can be skipped for faster daily runs; `--refresh-prices`, `--refresh-fundamentals` and `--refetch-13f` force a full re-fetch of those datasets. Prices also re-download a single ticker's full history on their own when a split or dividend has re-adjusted it or it has a missing date. A summary table is printed at the end.
 
 Execution sequence:
 
@@ -325,7 +325,7 @@ The `insert_or_replace` and `insert_or_ignore` helpers resolve to SQLite dialect
 
 ### Layer 2 — Factor Scoring (`factors/`)
 
-Reads Layer 1 tables; computes 27 sub-factors across 8 dimensions for every S&P 500 stock. All scores are sector-percentile ranks (0–100). Composite weights are adjusted by market regime (VIX-based LOW/NORMAL/HIGH_VOL). Crowding flags are written after 60 days of history. Output: `factor_scores`, `regime_state`, `crowding_flags`.
+Stops with an error, before loading data or writing scores, unless SPY has a bar with a close dated the score date (stale prices or a market holiday). Reads Layer 1 tables; computes 27 sub-factors across 8 dimensions for every S&P 500 stock. All scores are sector-percentile ranks (0–100). Composite weights are adjusted by market regime (VIX-based LOW/NORMAL/HIGH_VOL). Crowding flags are written after 60 days of history. Output: `factor_scores`, `regime_state`, `crowding_flags`.
 
 ### Layer 3 — AI Analysis (`analysis/`)
 

@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/38-price-history-integrity.md`
 **Spec slug:** price-history-integrity
-**Status:** Draft
+**Status:** Done
 **Owner:** DTidey
 **Date:** 2026-10-21
 

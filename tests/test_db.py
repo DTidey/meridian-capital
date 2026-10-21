@@ -5,6 +5,7 @@ import os
 import sqlalchemy as sa
 
 from data.db import (
+    _widen_volume_column,
     daily_prices,
     get_engine,
     initialise_schema,
@@ -128,3 +129,34 @@ def test_insider_transactions_unique_constraint(tmp_db):
     tmp_db.commit()
     count = tmp_db.execute(sa.select(sa.func.count()).select_from(insider_transactions)).scalar()
     assert count == 1
+
+
+class _FakePostgresConn:
+    """Records SQL; information_schema reports `data_type` for daily_prices.volume."""
+
+    def __init__(self, data_type):
+        self.dialect = type("D", (), {"name": "postgresql"})()
+        self.data_type = data_type
+        self.sql: list[str] = []
+
+    def execute(self, stmt):
+        self.sql.append(str(stmt))
+        return type("R", (), {"scalar": lambda _self: self.data_type})()
+
+
+def test_volume_migration_alters_integer_column():
+    conn = _FakePostgresConn("integer")
+    _widen_volume_column(conn)
+    assert any("ALTER TABLE daily_prices ALTER COLUMN volume TYPE BIGINT" in s for s in conn.sql)
+
+
+def test_volume_migration_noop_when_bigint():
+    conn = _FakePostgresConn("bigint")
+    _widen_volume_column(conn)
+    assert not any("ALTER" in s for s in conn.sql)
+
+
+def test_volume_migration_noop_on_sqlite(tmp_db):
+    _widen_volume_column(tmp_db)  # no information_schema on SQLite: must not raise
+    tmp_db.execute(sa.insert(daily_prices).values(ticker="A", date="2024-01-01", volume=2**40))
+    assert tmp_db.execute(sa.select(daily_prices.c.volume)).scalar() == 2**40

@@ -19,7 +19,16 @@ The system is organised into seven sequential layers, each building on the outpu
 ### 2.2 Market Prices
 
 - Daily OHLCV bars fetched for all universe and benchmark tickers.
-- Three-year lookback on initial run; subsequent runs are incremental (only dates after the last stored bar are requested).
+- Three-year lookback on initial run; subsequent runs are incremental, starting at the last
+  stored bar.
+- The day's bar is requested once the US session has closed (16:30 New York time or later);
+  before then the in-progress session is excluded.
+- A ticker's full history is re-downloaded, replacing all its stored rows in one transaction,
+  when the provider's close or adj_close for the last stored date differs by more than 0.01%
+  (a split or dividend re-adjusted the history), or when it has fewer rows than trading-calendar
+  dates (dates on which at least half of all stored tickers have a close) between its first and
+  last stored bar. An empty re-download keeps the existing rows.
+- Rows with no open, high, low or close are never stored.
 - Primary source: Polygon.io (if `POLYGON_API_KEY` is set). Fallback: yfinance, fetched in batches of 100 tickers.
 
 ### 2.3 Fundamentals
@@ -116,7 +125,8 @@ Each layer has its own entry point script. A unified orchestrator (`run_all.py`)
 ### Layer 1 (`run_data.py`)
 
 ```
-python run_data.py [--no-filings] [--no-13f] [--refresh-fundamentals] [--refetch-13f]
+python run_data.py [--no-filings] [--no-13f] [--refresh-prices] [--refresh-fundamentals]
+                   [--refetch-13f]
                    [--forms FORM ...] [--force-universe] [--tickers TICKER ...]
 ```
 
@@ -124,6 +134,7 @@ python run_data.py [--no-filings] [--no-13f] [--refresh-fundamentals] [--refetch
 |------|--------|
 | `--no-filings` | Skip SEC EDGAR fetch (10-K, 10-Q, 8-K, Form 4) and transcript ingestion |
 | `--no-13f` | Skip 13-F institutional holdings fetch |
+| `--refresh-prices` | Re-download every price ticker's full history, replacing its stored rows |
 | `--refresh-fundamentals` | Re-fetch fundamentals for every ticker, ignoring `fundamentals.refresh_days` |
 | `--refetch-13f` | Re-fetch the recent 13-F filings already stored, replacing each quarter after a successful fetch |
 | `--forms FORM [FORM ...]` | Fetch only the specified SEC form types |

@@ -4,7 +4,7 @@ Meridian Capital Partners — Layer 1 Data Ingestion Entry Point
 
 Usage:
     python run_data.py [--no-filings] [--no-13f] [--refetch-13f] [--forms 10-K 10-Q]
-                       [--force-universe]
+                       [--force-universe] [--refresh-prices]
 """
 
 import argparse
@@ -89,6 +89,7 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip 13-F institutional holdings fetch — faster daily runs",
     )
+    p.add_argument("--refresh-prices", action="store_true", help="Re-download all price history")
     p.add_argument(
         "--refresh-fundamentals",
         action="store_true",
@@ -177,7 +178,7 @@ def main() -> None:
     # 2. Prices  (universe + benchmarks)
     # -----------------------------------------------------------------------
     logger.info("[2/8] Market prices")
-    price_stats = update_prices(conn, price_tickers, config, providers)
+    price_stats = update_prices(conn, price_tickers, config, providers, refresh=args.refresh_prices)
     bars_added = sum(price_stats.values())
 
     # -----------------------------------------------------------------------

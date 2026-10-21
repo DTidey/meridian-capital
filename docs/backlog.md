@@ -21,3 +21,15 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** when a streamlit release allows pillow 13, upgrade both, pin pillow at 13 or later
   and delete `PILLOW_AUDIT_IGNORES` from the Makefile (`tests/test_audit_ignores.py` fails until
   then).
+
+## Polygon price backend: adjusted close and date index
+
+- **Raised:** 2026-10-21, packet 38.
+- **Problem:** `_fetch_polygon` in `data/market_data.py` requests `adjusted=true` and stores that
+  adjusted close as both `close` and `adj_close`, so `close` is not the raw close yfinance
+  stores. The `dates` line sits inside the `for bar` loop (rebuilt per bar; harmless but
+  wrong). Polygon's range end is inclusive, unlike yfinance's, so the packet-38 end date can
+  include a partial bar before 16:30 New York. Backend not in use (no `POLYGON_API_KEY`).
+- **Fix:** before enabling Polygon, fetch unadjusted and adjusted bars (or compute adj_close),
+  move `dates` out of the loop and pass an inclusive end date.
+

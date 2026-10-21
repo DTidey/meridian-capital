@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import sqlalchemy as sa
 import yaml
 from dotenv import load_dotenv
 
@@ -28,6 +29,7 @@ sys.path.insert(0, str(_ROOT))
 # Register Layer 2 tables on the shared metadata before calling initialise_schema
 import factors.db  # noqa: F401, E402
 from data.db import (  # noqa: E402
+    daily_prices,
     database_url,
     get_engine,
     initialise_schema,
@@ -100,6 +102,26 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--date", metavar="YYYY-MM-DD", help="Override score date")
     p.add_argument("--no-crowding", action="store_true", help="Skip crowding detection")
     return p.parse_args()
+
+
+def _latest_spy_date(conn, score_date: str) -> str | None:
+    """Date of the latest SPY bar with a close, on or before score_date."""
+    return conn.execute(
+        sa.select(sa.func.max(daily_prices.c.date)).where(
+            (daily_prices.c.ticker == "SPY")
+            & daily_prices.c.close.is_not(None)
+            & (daily_prices.c.date <= score_date)
+        )
+    ).scalar()
+
+
+def _prices_fresh(conn, score_date: str, logger) -> bool:
+    """Scores dated score_date must reflect that day's close: SPY needs a bar dated score_date."""
+    latest = _latest_spy_date(conn, score_date)
+    if latest == score_date:
+        return True
+    logger.error("Latest SPY bar is %s, not the score date %s: scoring stopped", latest, score_date)
+    return False
 
 
 def _write_factor_scores(conn, scored: pd.DataFrame, score_date: str) -> None:
@@ -221,6 +243,11 @@ def main() -> None:
     initialise_schema(engine)
     conn = engine.connect()
     logger.info("Database: %s", redacted_url(db_url))
+
+    if not _prices_fresh(conn, score_date, logger):
+        conn.close()
+        engine.dispose()
+        sys.exit(1)
 
     # ---------------------------------------------------------------------------
     # 1. Load data from Layer 1
