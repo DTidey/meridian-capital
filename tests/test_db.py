@@ -29,6 +29,7 @@ EXPECTED_TABLES = {
     "institutional_summary",
     "short_interest",
     "analyst_estimates",
+    "estimate_trends",
     "earnings_calendar",
     "earnings_transcripts",
 }
@@ -312,3 +313,22 @@ class TestInsiderUniqueMigration:
         )
         _migrate_insider_unique_key(conn)
         assert executed == ["ALTER TABLE insider_transactions ADD COLUMN txn_index INTEGER"]
+
+
+def test_estimate_trends_added_to_existing_database(tmp_path):
+    """Packet 41 (AC8): create_all adds the new table to a database that predates it."""
+    from data.db import estimate_trends, metadata
+
+    engine = get_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    old_tables = [t for t in metadata.sorted_tables if t is not estimate_trends]
+    metadata.create_all(engine, tables=old_tables)
+    assert not sa.inspect(engine).has_table("estimate_trends")
+    initialise_schema(engine)
+    initialise_schema(engine)
+    inspector = sa.inspect(engine)
+    assert inspector.get_pk_constraint("estimate_trends")["constrained_columns"] == [
+        "ticker",
+        "date",
+        "period",
+    ]
+    engine.dispose()

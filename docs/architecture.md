@@ -87,8 +87,8 @@ data/
 ├── market_data.py      # Daily OHLCV prices
 ├── fundamentals.py     # Financial statements + derived ratios (period-aligned, history kept)
 ├── short_interest.py   # Short interest snapshots
-├── estimates.py        # Analyst EPS and price target snapshots
-├── earnings_calendar.py# Upcoming earnings dates
+├── estimates.py        # Analyst EPS, price target and EPS trend snapshots
+├── earnings_calendar.py# Upcoming earnings dates (.info + earningsTrend)
 ├── yahoo_info.py       # Yahoo retry/backoff, shared .info per run, second pass, coverage log
 ├── transcripts.py      # Earnings call transcripts (FMP) or 8-K earnings releases
 ├── edgar_docs.py       # On-demand EDGAR filing fetch and HTML-to-markdown (dashboard viewer)
@@ -103,8 +103,9 @@ The script runs nine ingestion steps in sequence against a single open database 
 SEC CIKs come from SEC's `company_tickers.json`, loaded once per run; if it fails to load, no SEC data is stored that run. Form 4 transactions are stored only when the filing's issuer CIK is the ticker's CIK.
 
 Steps 4-6 fetch from Yahoo with retry and backoff and a second pass over failed tickers
-(`data/yahoo_info.py`). Steps 4 and 5 share one `YahooInfo`, so each ticker's `.info` is requested
-at most once per run. Each step logs its coverage and an ERROR below 95%, without stopping the run.
+(`data/yahoo_info.py`). Steps 4-6 share one `YahooInfo` and steps 5-6 one `YahooTrend`, so each
+ticker's `.info` and `earningsTrend` are each requested at most once per run, and there is no
+`.calendar` request. Each step logs its coverage and an ERROR below 95%, without stopping the run.
 
 Execution sequence:
 
@@ -113,7 +114,7 @@ Execution sequence:
 2. Prices           → daily_prices
 3. Fundamentals     → fundamentals
 4. Short interest   → short_interest
-5. Estimates        → analyst_estimates
+5. Estimates        → analyst_estimates, estimate_trends
 6. Earnings cal.    → earnings_calendar
 7. SEC filings      → sec_filings, insider_transactions, insider_cluster_flags
 8. Transcripts      → earnings_transcripts
@@ -170,6 +171,7 @@ Both functions introspect the table's primary key at call time and delegate to t
 |-------|---------------------|-------------|
 | `short_interest` | `(ticker, date)` | Shares short, short ratio, short % of float |
 | `analyst_estimates` | `(ticker, date)` | Forward EPS, price target, analyst count |
+| `estimate_trends` | `(ticker, date, period)` | Yahoo consensus EPS for `0y` / `+1y`, now and 7/30/60/90 days ago; feeds revisions and the forward yield |
 | `earnings_calendar` | `(ticker, earnings_date)` | Upcoming earnings dates + EPS estimate |
 
 ### 5.4 SEC regulatory
@@ -231,8 +233,9 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 | `test_fundamentals.py` | Statement parsing, ratio derivation, FMP vs yfinance paths |
 | `test_sec_data.py` | Form 4 XML parsing, CIK map, issuer check, insider rebuild, cluster-buy detection, lookback filtering |
 | `test_institutional.py` | 13-F filing selection, parsing, OpenFIGI/name resolution, summary rebuild, point-in-time loader |
-| `test_earnings_calendar.py` | Earnings date ingestion, failed vs empty fetch, superseded dates |
-| `test_yahoo_info.py` | Yahoo retry/backoff, shared `.info` per run |
+| `test_earnings_calendar.py` | Earnings dates from `.info`, `0q` EPS estimate, failed vs empty fetch, superseded dates |
+| `test_yahoo_info.py` | Yahoo retry/backoff, shared `.info` and `earningsTrend` per run |
+| `test_estimates.py` | `estimate_trends` rows from the shared `earningsTrend` |
 | `test_snapshot_coverage.py` | Snapshot second pass and coverage ERROR |
 | `test_edgar_docs.py` | EDGAR index parsing, HTML-to-markdown table conversion |
 | `test_providers.py` | Provider selection based on env var presence |
@@ -242,10 +245,10 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 | File | Subject |
 |------|---------|
 | `test_momentum.py` | 12-1m return, acceleration, relative strength sub-factors |
-| `test_value.py` | Forward yield, FCF yield, EV/EBITDA, shareholder yield sub-factors |
+| `test_value.py` | Forward yield (guarded `+1y` trend), FCF yield, EV/EBITDA, shareholder yield sub-factors |
 | `test_quality.py` | ROE stability, Piotroski F-Score, Altman Z-Score, accruals |
 | `test_growth.py` | Revenue/earnings YoY, FCF growth, R&D intensity |
-| `test_revisions.py` | 30/60/90-day EPS estimate change sub-factors, Friday window, prior-snapshot tolerance |
+| `test_revisions.py` | 30/60/90-day percent revisions from the `+1y` trend, glitch guard, fiscal-year roll-over |
 | `test_short_interest.py` | Short % float, days-to-cover, 30-day change |
 | `test_insider.py` | Net dollar flow, CEO/CFO weighting, cluster flag ranking |
 | `test_factor_institutional.py` | Fund count, net share change, simultaneous new positions |

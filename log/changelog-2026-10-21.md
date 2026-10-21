@@ -114,3 +114,49 @@
   tickers (about 8 minutes per step at worst). Ten in a row is far beyond the scattered
   failures of partial throttling, so it only trips in an outage. Skipped tickers are
   pre-filled as failed in each step's summary so the run summary stays complete.
+
+# 2026-10-21: Estimate trend revisions (packet 41)
+
+- **Trends are fetched for every ticker, not only those the estimates step still needs.** The
+  step skips tickers with today's `analyst_estimates` row. The nightly cron runs at 22:00 UTC, the
+  same UTC date as a daytime manual run, so tying the trend fetch to that skip would leave a
+  daytime trend snapshot in place. The spec's edge case says the nightly run overwrites it
+  (upsert), so the trend pass covers all tickers. It costs requests only on a same-day re-run,
+  and AC2's one request per ticker per run still holds.
+- **The trend fetch is its own pass inside the estimates step.** It has its own name
+  (`Analyst estimate trends`) for the second pass, the circuit breaker and the ERROR below 95%.
+  The spec's example INFO line is kept: `...(N from the shared .info); trends T/M`. Making one
+  ticker's success need both `.info` and the trend would let a trend outage trip the breaker and
+  skip `.info` for the rest of the pass, losing price targets and the calendar's dates.
+- **Calendar requests the trend only when `.info` has a date.** A failed `.info` is a failed
+  fetch (AC3) with no trend request. A success with no dates needs no EPS estimate. In the
+  nightly run both responses are already memoised, so this only saves requests when the step
+  runs on its own.
+- **`earningsTimestampEnd` without a start is not a date.** The spec defines the dates as the
+  start "plus" the end when it differs. Yahoo has not been seen sending an end without a start.
+- **Latest snapshot as a whole row.** `latest_trends` keeps each ticker's newest row
+  (`drop_duplicates`), not `groupby().last()`. That would fill a missing `days_90` from an
+  older day and mix snapshots. The same pattern is audit M14 in `factors/value.py`.
+- **Staleness is enforced by the loader.** `compute(data, config)` has no score date, so the
+  5-day window is the loader's query (`period = '+1y'`, `date >= score_date - 5`). The factors
+  take each ticker's latest row from what they are given.
+- **Guard count logged once.** Both factors call `guarded_current` (`factors/_utils.py`). Only
+  revisions logs the INFO count, so the line appears once per scoring run.
+- **No trend data at all: everything neutral.** As before for an empty `analyst_estimates`,
+  revisions returns 50 for every column, including `revisions_score`. Ranking a column of 50s
+  would give 75.
+- **Packet 40's revision tests retired.** `TestFridayWindow` and `TestPriorTolerance` tested the
+  snapshot-history lookup this packet removes. The 105-day `analyst_estimates` lookback stays,
+  with its test, because the loader still loads `data["estimates"]`. No factor reads it now.
+  It was left in place to keep the change in scope (`_EST_LOOKBACK_DAYS`'s comment is now
+  historical).
+- **yfinance swallows some trend errors.** With yfinance's default `hide_exceptions`, a
+  non-throttling HTTP error on `earningsTrend` becomes an empty frame. We read that as "no
+  coverage" (success, no rows), not as a failure to retry. `YFRateLimitError` still raises and is
+  retried. Watch the `trends T/M` count: a sudden drop with no ERROR points here.
+- **+1y row coverage ERROR added in review (AC10).** yfinance's default `hide_exceptions`
+  turns non-throttling HTTP errors on `earningsTrend` into an empty table, which counted as a
+  successful fetch. A broad outage of that kind would have stored no trends and left every
+  revision neutral with no ERROR. The check is measured against successfully fetched tickers
+  so a failed fetch is reported once, by the fetch coverage ERROR. Empty responses are not
+  retried, because a ticker without analyst coverage also returns one.

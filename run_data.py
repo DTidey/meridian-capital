@@ -43,7 +43,7 @@ from data.sec_data import rebuild_insider_transactions, update_sec_data
 from data.short_interest import update_short_interest
 from data.transcripts import update_transcripts
 from data.universe import fetch_sp500, get_all_tickers
-from data.yahoo_info import YahooInfo
+from data.yahoo_info import YahooInfo, YahooTrend
 
 
 def _load_config() -> dict:
@@ -225,7 +225,8 @@ def main() -> None:
     # 4. Short interest  (equities only)
     # -----------------------------------------------------------------------
     logger.info("[4/8] Short interest")
-    yahoo_info = YahooInfo()  # one .info request per ticker, shared with step 5
+    yahoo_info = YahooInfo()  # one .info request per ticker, shared with steps 5 and 6
+    yahoo_trend = YahooTrend()  # one earningsTrend request per ticker, shared by steps 5 and 6
     si_stats = update_short_interest(conn, equity_tickers, info=yahoo_info)
     si_updated = sum(1 for v in si_stats.values() if v)
 
@@ -233,14 +234,16 @@ def main() -> None:
     # 5. Analyst estimates  (equities only)
     # -----------------------------------------------------------------------
     logger.info("[5/8] Analyst estimates")
-    est_stats = update_estimates(conn, equity_tickers, info=yahoo_info)
+    est_stats = update_estimates(conn, equity_tickers, info=yahoo_info, trend=yahoo_trend)
     est_updated = sum(1 for v in est_stats.values() if v)
 
     # -----------------------------------------------------------------------
     # 6. Earnings calendar  (equities only)
     # -----------------------------------------------------------------------
     logger.info("[6/8] Earnings calendar")
-    ec_stats = update_earnings_calendar(conn, equity_tickers, config)
+    ec_stats = update_earnings_calendar(
+        conn, equity_tickers, config, info=yahoo_info, trend=yahoo_trend
+    )
     ec_events = sum(ec_stats.values())
 
     # -----------------------------------------------------------------------

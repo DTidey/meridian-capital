@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from data.db import (
     analyst_estimates,
     daily_prices,
+    estimate_trends,
     fundamentals,
     insider_cluster_flags,
     insider_transactions,
@@ -24,6 +25,7 @@ _PRICE_LOOKBACK_DAYS = 800  # ~3 years of trading days with buffer
 _FUND_QUARTERS = 12
 _SI_LOOKBACK_DAYS = 90
 _EST_LOOKBACK_DAYS = 105  # longest revision window (90) plus a margin for the prior snapshot
+_TREND_FRESH_DAYS = 5  # an older earningsTrend snapshot is stale
 _INSIDER_DAYS = 90
 
 
@@ -41,7 +43,7 @@ def load_scoring_data(
 
     Returns:
         Dict with keys: universe, prices, fundamentals, short_interest,
-        estimates, insider_txns, insider_clusters, institutional, vix.
+        estimates, estimate_trends, insider_txns, insider_clusters, institutional, vix.
     """
     cutoff = date.fromisoformat(score_date)
 
@@ -50,6 +52,7 @@ def load_scoring_data(
     funds = _load_fundamentals(conn, cutoff)
     si = _load_short_interest(conn, cutoff)
     estimates = _load_estimates(conn, cutoff)
+    trends = _load_estimate_trends(conn, cutoff)
     ins_txns = _load_insider_txns(conn, cutoff)
     ins_flags = _load_insider_flags(conn, cutoff)
     institution = _load_institutional(conn, cutoff)
@@ -68,6 +71,7 @@ def load_scoring_data(
         "fundamentals": funds,
         "short_interest": si,
         "estimates": estimates,
+        "estimate_trends": trends,
         "insider_txns": ins_txns,
         "insider_clusters": ins_flags,
         "institutional": institution,
@@ -164,6 +168,25 @@ def _load_estimates(conn: sa.engine.Connection, cutoff: date) -> pd.DataFrame:
         rows, columns=["ticker", "date", "eps_estimate_fwd", "price_target", "num_analysts"]
     )
     df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def _load_estimate_trends(conn: sa.engine.Connection, cutoff: date) -> pd.DataFrame:
+    """+1y consensus snapshots dated from _TREND_FRESH_DAYS before the score date to it."""
+    start = (cutoff - timedelta(days=_TREND_FRESH_DAYS)).isoformat()
+    cols = ["ticker", "date", "current", "days_7", "days_30", "days_60", "days_90"]
+    rows = conn.execute(
+        sa.select(*(estimate_trends.c[c] for c in cols))
+        .where(
+            (estimate_trends.c.period == "+1y")
+            & (estimate_trends.c.date >= start)
+            & (estimate_trends.c.date <= score_date_str(cutoff))
+        )
+        .order_by(estimate_trends.c.ticker, estimate_trends.c.date)
+    ).fetchall()
+    df = pd.DataFrame(rows, columns=cols)
+    df["date"] = pd.to_datetime(df["date"])
+    df[cols[2:]] = df[cols[2:]].astype(float)
     return df
 
 

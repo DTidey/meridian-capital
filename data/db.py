@@ -190,6 +190,22 @@ analyst_estimates = sa.Table(
     sa.PrimaryKeyConstraint("ticker", "date"),
 )
 
+# Yahoo earningsTrend: consensus EPS for one fiscal period now and 7/30/60/90 days ago
+estimate_trends = sa.Table(
+    "estimate_trends",
+    metadata,
+    sa.Column("ticker", sa.String, nullable=False),
+    sa.Column("date", sa.String, nullable=False),
+    sa.Column("period", sa.String, nullable=False),  # '0y' or '+1y'
+    sa.Column("current", sa.Float),
+    sa.Column("days_7", sa.Float),
+    sa.Column("days_30", sa.Float),
+    sa.Column("days_60", sa.Float),
+    sa.Column("days_90", sa.Float),
+    sa.Column("fetched_at", sa.String),
+    sa.PrimaryKeyConstraint("ticker", "date", "period"),
+)
+
 earnings_calendar = sa.Table(
     "earnings_calendar",
     metadata,

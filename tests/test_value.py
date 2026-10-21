@@ -63,7 +63,27 @@ def _fund_row(ticker, **overrides):
     return base
 
 
-def _make_data(tickers, prices=None, fund_overrides=None, estimates=None):
+def _trend_rows(eps_by_ticker, days_7=None):
+    """Latest +1y trend snapshot per ticker; days_7 defaults to current (no glitch)."""
+    days_7 = days_7 or {}
+    return pd.DataFrame(
+        [
+            {
+                "ticker": t,
+                "date": pd.Timestamp("2024-06-01"),
+                "current": eps,
+                "days_7": days_7.get(t, eps),
+                "days_30": eps,
+                "days_60": eps,
+                "days_90": eps,
+            }
+            for t, eps in eps_by_ticker.items()
+        ],
+        columns=["ticker", "date", "current", "days_7", "days_30", "days_60", "days_90"],
+    )
+
+
+def _make_data(tickers, prices=None, fund_overrides=None, trends=None):
     fund_overrides = fund_overrides or {}
     universe = pd.DataFrame(
         [(t, "IT") for t in tickers],
@@ -89,24 +109,14 @@ def _make_data(tickers, prices=None, fund_overrides=None, estimates=None):
     if not funds.empty:
         funds["period_end"] = pd.to_datetime(funds["period_end"])
 
-    if estimates is None:
-        est_rows = [
-            {
-                "ticker": t,
-                "date": pd.Timestamp("2024-06-01"),
-                "eps_estimate_fwd": 5.0,
-                "price_target": 120.0,
-                "num_analysts": 10,
-            }
-            for t in tickers
-        ]
-        estimates = pd.DataFrame(est_rows)
+    if trends is None:
+        trends = _trend_rows(dict.fromkeys(tickers, 5.0))
 
     return {
         "universe": universe,
         "prices": prices,
         "fundamentals": funds,
-        "estimates": estimates,
+        "estimate_trends": trends,
     }
 
 
@@ -151,24 +161,7 @@ class TestFwdEarningsYield:
                 "CHEAP": {"shares_outstanding": 1e8},
                 "EXPEN": {"shares_outstanding": 1e8},
             },
-            estimates=pd.DataFrame(
-                [
-                    {
-                        "ticker": "CHEAP",
-                        "date": pd.Timestamp("2024-06-01"),
-                        "eps_estimate_fwd": 10.0,
-                        "price_target": 120.0,
-                        "num_analysts": 5,
-                    },
-                    {
-                        "ticker": "EXPEN",
-                        "date": pd.Timestamp("2024-06-01"),
-                        "eps_estimate_fwd": 1.0,
-                        "price_target": 120.0,
-                        "num_analysts": 5,
-                    },
-                ]
-            ),
+            trends=_trend_rows({"CHEAP": 10.0, "EXPEN": 1.0}),
         )
         result = compute(data, _CONFIG)
         assert result.loc["CHEAP", "val_fwd_earn_yield"] > result.loc["EXPEN", "val_fwd_earn_yield"]
@@ -223,12 +216,10 @@ class TestMissingData:
         for col in COLS:
             assert result.loc["AAPL", col] == pytest.approx(50.0)
 
-    def test_missing_estimates_yields_50_for_fwd_yield(self):
+    def test_missing_trend_yields_50_for_fwd_yield(self):
         data = _make_data(
             ["AAPL", "MSFT"],
-            estimates=pd.DataFrame(
-                columns=["ticker", "date", "eps_estimate_fwd", "price_target", "num_analysts"]
-            ),
+            trends=_trend_rows({}),
         )
         result = compute(data, _CONFIG)
         assert result.loc["AAPL", "val_fwd_earn_yield"] == pytest.approx(50.0)
@@ -253,3 +244,43 @@ class TestShareholderYield:
             result.loc["HIGH_YIELD", "val_shareholder_yield"]
             > result.loc["LOW_YIELD", "val_shareholder_yield"]
         )
+
+
+# ---------------------------------------------------------------------------
+# Packet 41: forward yield from the guarded +1y trend (AC5, AC7)
+# ---------------------------------------------------------------------------
+
+
+class TestFwdYieldFromTrend:
+    def test_yield_is_plus_1y_current_over_price(self):
+        data = _make_data(["A", "B", "C"], trends=_trend_rows({"A": 4.0, "B": 6.0, "C": 5.0}))
+        result = compute(data, _CONFIG)
+        assert result["val_fwd_earn_yield"].tolist() == pytest.approx([100 / 3, 100.0, 200 / 3])
+
+    def test_no_trend_snapshot_neutral(self):
+        data = _make_data(["A", "B", "C"], trends=_trend_rows({"A": 4.0, "B": 6.0}))
+        result = compute(data, _CONFIG)
+        assert result.loc["C", "val_fwd_earn_yield"] == pytest.approx(50.0)
+
+    def test_analyst_estimates_not_read(self):
+        data = _make_data(["CHEAP", "EXPEN"], trends=_trend_rows({"CHEAP": 10.0, "EXPEN": 1.0}))
+        assert "estimates" not in data
+        result = compute(data, _CONFIG)
+        assert result.loc["CHEAP", "val_fwd_earn_yield"] > result.loc["EXPEN", "val_fwd_earn_yield"]
+
+    # Adversarial: a negative forward EPS is a negative yield, ranked lowest, not dropped.
+    def test_negative_eps_ranks_lowest(self):
+        data = _make_data(
+            ["A", "B", "LOSS"], trends=_trend_rows({"A": 4.0, "B": 6.0, "LOSS": -2.0})
+        )
+        result = compute(data, _CONFIG)
+        assert result.loc["LOSS", "val_fwd_earn_yield"] == pytest.approx(100 / 3)
+
+
+class TestGlitchGuard:
+    def test_pgr_glitch_uses_days_7(self):
+        trends = _trend_rows({"LOW": 10.0, "PGR": 1012.0, "HIGH": 20.0}, days_7={"PGR": 16.36848})
+        result = compute(_make_data(["LOW", "PGR", "HIGH"], trends=trends), _CONFIG)
+        # 16.37 / 100 sits between 0.10 and 0.20; the raw 1012 would have ranked first.
+        assert result.loc["PGR", "val_fwd_earn_yield"] == pytest.approx(200 / 3)
+        assert result.loc["HIGH", "val_fwd_earn_yield"] == pytest.approx(100.0)

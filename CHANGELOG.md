@@ -65,6 +65,14 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Estimate revisions and forward yield (packet `41-estimate-trend-revisions`): both now come
+  from Yahoo's `earningsTrend` consensus for the next fiscal year (`+1y`), stored nightly in a
+  new `estimate_trends` table, instead of our own `forwardEps` snapshots. Revisions are percent
+  changes against the same fiscal year's consensus 30, 60 and 90 days ago (no false revision
+  at a fiscal-year roll-over, no 30-day warm-up); a current value more than 50% away from
+  Yahoo's 7-days-ago value is treated as a glitch and replaced by it. The earnings calendar takes
+  its dates from `.info` and its EPS estimate from the `earningsTrend` `0q` average, so the
+  `.calendar` request is gone and Yahoo requests stay at about 1,006 a night.
 - Yahoo snapshots (packet `40-snapshot-reliability`): short interest and estimates share one
   `.info` request per ticker per run; every Yahoo fetch retries with backoff (5 s, 15 s) and
   failed tickers get a second pass; each step logs its coverage and an ERROR below 95%; a failed
