@@ -58,6 +58,9 @@ Release policy:
   agent rules (packet `14-merge-10rules-into-agents`).
 
 ### Security
+- pillow 12.3.0 -> 13.0.0 (with streamlit 1.66.1, the first to allow it) and virtualenv
+  21.14.5 -> 21.14.12 clear 24 pillow and two virtualenv advisories; the packet 36 pip-audit
+  ignores are removed, so `make security` ignores nothing (packet `45-pillow-13-virtualenv`).
 - certifi raised to 2026.10.19; eight pillow 12.3.0 advisories ignored by name in
   `make security` until streamlit allows pillow 13 (none reachable: no code opens images), with
   a test that forces their removal then (packet `36-pillow-certifi-advisories`).
