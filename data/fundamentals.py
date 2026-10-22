@@ -157,6 +157,17 @@ def _align(df: pd.DataFrame | None, columns) -> pd.DataFrame | None:
     return aligned
 
 
+def _equity_ratios(
+    ni: float | None, debt: float | None, equity: float | None
+) -> tuple[float | None, float | None]:
+    """(ROE, debt/equity); both None unless equity is positive, where they mean nothing."""
+    if equity is None or equity <= 0:
+        return None, None
+    roe = _safe(ni / equity) if ni is not None else None
+    debt_equity = _safe(debt / equity) if debt is not None else None
+    return roe, debt_equity
+
+
 def _compute_ratios(d: dict, prev: dict | None, prev_yoy: dict | None) -> dict:
     """Compute 24 derived ratios from current and prior period data."""
     rev = d["revenue"]
@@ -171,12 +182,11 @@ def _compute_ratios(d: dict, prev: dict | None, prev_yoy: dict | None) -> dict:
     ar = d["accounts_receivable"]
     cfo = d["cfo"]
 
-    roe = _pct_change(ni, eq)
+    roe, debt_equity = _equity_ratios(ni, dbt, eq)
     roa = _safe(ni / ast) if ni and ast else None
     gross_margin = _safe(gross / rev) if gross and rev else None
     op_margin = _safe(op_in / rev) if op_in and rev else None
     net_margin = _safe(ni / rev) if ni and rev else None
-    debt_equity = _safe(dbt / eq) if dbt and eq else None
     current_ratio = _safe(cur_a / cur_l) if cur_a and cur_l else None
     ar_to_rev = _safe(ar / rev) if ar and rev else None
     cfo_to_ni = _safe(cfo / ni) if cfo and ni else None
@@ -450,6 +460,44 @@ def merge_period_duplicates(conn: sa.engine.Connection) -> int:
     if deleted:
         logger.warning("Merged %d duplicate fundamentals rows (same month-end period)", deleted)
     return deleted
+
+
+def recompute_ratios(conn: sa.engine.Connection) -> int:
+    """Rewrite stored roe and debt_to_equity from each row's stored figures; rows changed."""
+    rows = conn.execute(
+        sa.select(
+            fundamentals.c.ticker,
+            fundamentals.c.period_type,
+            fundamentals.c.period_end,
+            fundamentals.c.net_income,
+            fundamentals.c.total_debt,
+            fundamentals.c.total_equity,
+            fundamentals.c.roe,
+            fundamentals.c.debt_to_equity,
+        )
+    ).fetchall()
+    changed = 0
+    for r in rows:
+        roe, debt_equity = _equity_ratios(
+            _safe(r.net_income), _safe(r.total_debt), _safe(r.total_equity)
+        )
+        if _same(roe, _safe(r.roe)) and _same(debt_equity, _safe(r.debt_to_equity)):
+            continue
+        conn.execute(
+            sa.update(fundamentals)
+            .where(_row_key(r.ticker, r.period_type, r.period_end))
+            .values(roe=roe, debt_to_equity=debt_equity)
+        )
+        changed += 1
+    conn.commit()
+    logger.info("Recomputed roe and debt_to_equity: %d of %d rows changed", changed, len(rows))
+    return changed
+
+
+def _same(a: float | None, b: float | None) -> bool:
+    if a is None or b is None:
+        return a is b
+    return abs(a - b) <= 1e-12 * max(1.0, abs(a))
 
 
 def _row_key(ticker: str, period_type: str, period_end: str):

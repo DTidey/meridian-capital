@@ -11,7 +11,7 @@ def _q(period_end, **overrides):
     row = {
         "period_end": period_end,
         "net_income": 25e9,
-        "ebit": 30e9,
+        "operating_income": 30e9,
         "fcf": 20e9,
         "dividends_paid": -4e9,
         "total_equity": 100e9,
@@ -28,7 +28,7 @@ _AAPL = [
     _q(
         "2026-06-30",
         net_income=29_789e6,
-        ebit=35_695e6,
+        operating_income=35_695e6,
         fcf=31_914e6,
         dividends_paid=-4_035e6,
         total_equity=107_520e6,
@@ -36,9 +36,27 @@ _AAPL = [
         cash=39_544e6,
         shares_outstanding=14_687_356e3,
     ),
-    _q("2026-03-31", net_income=29_578e6, ebit=35_885e6, fcf=26_731e6, dividends_paid=-3_822e6),
-    _q("2025-12-31", net_income=42_097e6, ebit=50_852e6, fcf=51_552e6, dividends_paid=-3_921e6),
-    _q("2025-09-30", net_income=27_466e6, ebit=32_427e6, fcf=26_486e6, dividends_paid=-3_862e6),
+    _q(
+        "2026-03-31",
+        net_income=29_578e6,
+        operating_income=35_885e6,
+        fcf=26_731e6,
+        dividends_paid=-3_822e6,
+    ),
+    _q(
+        "2025-12-31",
+        net_income=42_097e6,
+        operating_income=50_852e6,
+        fcf=51_552e6,
+        dividends_paid=-3_921e6,
+    ),
+    _q(
+        "2025-09-30",
+        net_income=27_466e6,
+        operating_income=32_427e6,
+        fcf=26_486e6,
+        dividends_paid=-3_862e6,
+    ),
 ]
 
 
@@ -91,14 +109,19 @@ class TestValuation:
         assert valuation(1.0, rows)["div_yield"] == pytest.approx(4e9 / 15e9)
 
     def test_missing_value_in_ttm(self):
-        rows = [_q("2026-06-30"), _q("2026-03-31", ebit=None), _q("2025-12-31"), _q("2025-09-30")]
+        rows = [
+            _q("2026-06-30"),
+            _q("2026-03-31", operating_income=None),
+            _q("2025-12-31"),
+            _q("2025-09-30"),
+        ]
         v = valuation(100.0, rows)
         assert v["ev_ebit"] is None
         assert v["pe"] is not None
 
     def test_bank_has_no_ebit_or_fcf(self):
         rows = [
-            _q(d, ebit=None, fcf=None)
+            _q(d, operating_income=None, fcf=None)
             for d in ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")
         ]
         v = valuation(300.0, rows)
@@ -107,7 +130,7 @@ class TestValuation:
 
     def test_negative_denominators_are_nm(self):
         rows = [
-            _q(d, net_income=-1e9, ebit=-2e9)
+            _q(d, net_income=-1e9, operating_income=-2e9)
             for d in ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")
         ]
         rows[0]["total_equity"] = -5e9

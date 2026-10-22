@@ -178,6 +178,17 @@ short_interest = sa.Table(
     sa.PrimaryKeyConstraint("ticker", "date"),
 )
 
+# Yahoo .info marketCap: every share class, at this listing's price (packet 42)
+market_caps = sa.Table(
+    "market_caps",
+    metadata,
+    sa.Column("ticker", sa.String, nullable=False),
+    sa.Column("date", sa.String, nullable=False),
+    sa.Column("market_cap", sa.Float),
+    sa.Column("fetched_at", sa.String),
+    sa.PrimaryKeyConstraint("ticker", "date"),
+)
+
 analyst_estimates = sa.Table(
     "analyst_estimates",
     metadata,

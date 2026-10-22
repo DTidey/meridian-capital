@@ -113,7 +113,7 @@ Execution sequence:
 1. Universe         → sp500_universe, benchmark_tickers
 2. Prices           → daily_prices
 3. Fundamentals     → fundamentals
-4. Short interest   → short_interest
+4. Short interest   → short_interest, market_caps
 5. Estimates        → analyst_estimates, estimate_trends
 6. Earnings cal.    → earnings_calendar
 7. SEC filings      → sec_filings, insider_transactions, insider_cluster_flags
@@ -170,6 +170,7 @@ Both functions introspect the table's primary key at call time and delegate to t
 | Table | Primary key / unique | Description |
 |-------|---------------------|-------------|
 | `short_interest` | `(ticker, date)` | Shares short, short ratio, short % of float |
+| `market_caps` | `(ticker, date)` | Yahoo `marketCap` (all share classes); value, quality and the Ticker page take market cap from it |
 | `analyst_estimates` | `(ticker, date)` | Forward EPS, price target, analyst count |
 | `estimate_trends` | `(ticker, date, period)` | Yahoo consensus EPS for `0y` / `+1y`, now and 7/30/60/90 days ago; feeds revisions and the forward yield |
 | `earnings_calendar` | `(ticker, earnings_date)` | Upcoming earnings dates + EPS estimate |
@@ -246,6 +247,8 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 |------|---------|
 | `test_momentum.py` | 12-1m return, acceleration, relative strength sub-factors |
 | `test_value.py` | Forward yield (guarded `+1y` trend), FCF yield, EV/EBITDA, shareholder yield sub-factors |
+| `test_value_inputs.py` | Market cap from snapshots, TTM flows, one balance-sheet quarter, operating income, equity rules (packet 42) |
+| `test_market_caps.py` | `market_caps` ingestion, effective shares and the glitch guard |
 | `test_quality.py` | ROE stability, Piotroski F-Score, Altman Z-Score, accruals |
 | `test_growth.py` | Revenue/earnings YoY, FCF growth, R&D intensity |
 | `test_revisions.py` | 30/60/90-day percent revisions from the `+1y` trend, glitch guard, fiscal-year roll-over |

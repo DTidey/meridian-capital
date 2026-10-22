@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/42-fundamentals-value-inputs.md`
 **Spec slug:** fundamentals-value-inputs
-**Status:** Draft
+**Status:** Done
 **Owner:** DTidey
 **Date:** 2026-10-22
 
@@ -136,8 +136,13 @@ Out of scope / non-goals:
   - `_altman_z` uses the shared market cap and `operating_income`.
   - `_roe_stability` uses `net_income / total_equity` per quarter, skipping quarters with
     equity <= 0.
+  - Leverage (debt / equity) comes from the raw figures of a quarter with a balance sheet, an
+    omitted debt line counting as no debt.
   - `_de_inv`: equity <= 0 with debt > 0 gives the lowest value in the sector (most
     leveraged); equity <= 0 with no debt gives NaN.
+  - Piotroski's "falling D/E" signal compares the same raw leverage, not the stored ratio. It
+    is lost when either quarter's leverage is NaN; two negative-equity quarters with debt count
+    as not rising.
 - **Ratios at ingestion:**
   - `roe = net_income / total_equity` when equity > 0, else `None`.
   - `debt_to_equity = total_debt / total_equity` when equity > 0, else `None`. Zero debt gives
@@ -146,7 +151,7 @@ Out of scope / non-goals:
   - Recomputes `roe` and `debt_to_equity` for every stored fundamentals row from its stored raw
     figures. Other columns are untouched.
   - Idempotent. Logs the rows changed.
-  - Cannot be combined with `--tickers`, like `--rebuild-insider`.
+  - Cannot be combined with `--tickers` or `--rebuild-insider`.
 
 ### Error handling
 - A ticker whose `.info` fetch fails gets no row that day. The helper uses the earlier
@@ -182,10 +187,12 @@ Out of scope / non-goals:
   total_equity` for equity > 0, and `None` for equity <= 0.
   - Quality's ROE stability uses net income / equity.
   - A negative-equity ticker with debt ranks lowest in its sector on `qual_de_inv`.
+  - Quality leverage (`qual_de_inv`, Piotroski signal 5) uses raw debt / equity, with an
+    omitted debt line as no debt.
 - AC9: `run_data.py --recompute-ratios` rewrites stored `roe` and `debt_to_equity` with the AC8
   formulas.
   - It leaves other columns unchanged and is idempotent (a second run changes 0 rows).
-  - It rejects `--tickers`.
+  - It rejects `--tickers` and `--rebuild-insider`.
 - AC10: The dashboard ticker valuation uses the shared market cap and TTM helpers. Its
   behavior is otherwise unchanged (existing valuation tests pass, apart from the EBIT source).
 - AC11: `make lint`, `make test` and `make security` pass.
@@ -219,14 +226,18 @@ Out of scope / non-goals:
   TTM; balance-sheet items come from the quarter before.
 
 ## Test guidance
-- AC1 -> `tests/test_market_caps.py` (store, skip today's, shared cache, bad values)
-- AC2 -> `tests/test_market_cap_helper.py` (latest, glitch, single, fallback, split)
-- AC3 -> `tests/test_value*.py` (BRK-B fixture), `tests/test_quality*.py` (Altman Z)
-- AC4, AC5, AC7 -> `tests/test_value*.py`, `tests/test_ttm.py`
-- AC6 -> value, quality and dashboard valuation tests with EBIT != operating income
-- AC8 -> `tests/test_fundamentals*.py` (`_compute_ratios`), quality tests
-- AC9 -> `tests/test_recompute_ratios.py` (SQLite fixture, idempotence, CLI rejects `--tickers`)
-- AC10 -> existing `tests/test_ticker_valuation*.py`
+- AC1 -> `tests/test_market_caps.py::TestUpdateMarketCaps`; `tests/test_run_data_args.py`
+- AC2 -> `tests/test_market_caps.py::TestSharesFromSnapshots`, `TestMarketCaps`, `TestLoader`
+- AC3 -> `tests/test_value_inputs.py::TestMarketCapSource`
+- AC4 -> `tests/test_value_inputs.py::TestTtm`
+- AC5 -> `tests/test_value_inputs.py::TestShareholderYield`, `tests/test_ttm.py::TestZeroWhenOmitted`
+- AC6 -> `tests/test_value_inputs.py::TestOperatingIncome`, `tests/test_quality.py::TestAltmanZ`,
+  `tests/test_ticker_valuation.py`
+- AC7 -> `tests/test_value_inputs.py::TestOneBalanceSheetQuarter`
+- AC8 -> `tests/test_recompute_ratios.py::TestEquityRatios`,
+  `tests/test_value_inputs.py::TestEquityRules`, `tests/test_quality.py::TestRoeStability`
+- AC9 -> `tests/test_recompute_ratios.py::TestRecomputeRatios`, `TestCli`
+- AC10 -> `tests/test_ttm.py::TestDashboardShares` (includes the 30-day snapshot window), `tests/test_ticker_valuation.py`
 - AC11 -> `make lint`, `make test`, `make security`
 
 ## Production verification (after merge, owner's go-ahead)
@@ -248,5 +259,9 @@ Out of scope / non-goals:
   retroactively.
 - 2026-10-22: Consumers switch to `operating_income` instead of rewriting the stored `ebit`
   column, so no fundamentals re-fetch is needed.
+- 2026-10-22 (review): Piotroski's D/E signal and `qual_de_inv` read raw figures too, so
+  stored-ratio changes from `--recompute-ratios` cannot shift them, and a missing debt line
+  counts as no debt in quality as it does in value. The dashboard uses scoring's 30-day
+  snapshot window.
 - 2026-10-22: Quality computes ROE from raw figures, so ROE stability does not mix old and new
   stored formulas while stored rows await `--recompute-ratios`.

@@ -68,6 +68,13 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Fundamentals and value inputs (packet `42-fundamentals-value-inputs`): market cap now comes
+  from Yahoo's `marketCap` (new `market_caps` table, every share class, one-day glitch guard),
+  fixing BRK-B and CME. The value factor uses trailing-twelve-month flows from one consistent set
+  of quarters, operating income as EBIT, and zero for an omitted dividend or buyback line. ROE
+  is net income / equity (it was stored as the true value minus one), and negative equity with
+  debt ranks as most leveraged. `run_data.py --recompute-ratios` rewrites stored ROE and
+  debt/equity.
 - Estimate revisions and forward yield (packet `41-estimate-trend-revisions`): both now come
   from Yahoo's `earningsTrend` consensus for the next fiscal year (`+1y`), stored nightly in a
   new `estimate_trends` table, instead of our own `forwardEps` snapshots. Revisions are percent

@@ -13,6 +13,18 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** for USB/WFC, fetch the EX-13 exhibit when Item 1A points to it; for the others,
   inspect their layouts individually.
 
+## Balance-sheet share history
+
+- **Raised:** 2026-10-22, packet 42.
+- **Problem:** packet 42 takes market cap from Yahoo's `marketCap`, but
+  `fundamentals.shares_outstanding` is still stored as Yahoo reports it. It still feeds Piotroski's
+  dilution signal and the market cap fallback. BRK-B is the Class A equivalent (1.43M), CME's
+  2026-06-30 row is 1000x too small, and rows before 2025-06-30 often hold issued, not outstanding,
+  shares (AFL, IBM, MCD and others), which makes a false drop at 2025-06-30.
+- **Fix:** flag or reject a one-quarter jump that reverses, and store share counts in
+  Class B equivalents for BRK-B; or derive Piotroski's dilution signal from the `market_caps`
+  share history once it is long enough.
+
 ## Polygon price backend: adjusted close and date index
 
 - **Raised:** 2026-10-21, packet 38.

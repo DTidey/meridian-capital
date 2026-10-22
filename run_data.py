@@ -5,6 +5,7 @@ Meridian Capital Partners — Layer 1 Data Ingestion Entry Point
 Usage:
     python run_data.py [--no-filings] [--no-13f] [--refetch-13f] [--forms 10-K 10-Q]
                        [--force-universe] [--refresh-prices] [--rebuild-insider]
+                       [--recompute-ratios]
 """
 
 import argparse
@@ -35,8 +36,9 @@ from data.db import (
 )
 from data.earnings_calendar import update_earnings_calendar
 from data.estimates import update_estimates
-from data.fundamentals import update_fundamentals
+from data.fundamentals import recompute_ratios, update_fundamentals
 from data.institutional import update_institutional
+from data.market_caps import update_market_caps
 from data.market_data import update_prices
 from data.providers import Providers
 from data.sec_data import rebuild_insider_transactions, update_sec_data
@@ -126,10 +128,17 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only rebuild insider transactions and cluster flags from stored Form 4 XML",
     )
+    p.add_argument(
+        "--recompute-ratios",
+        action="store_true",
+        help="Only recompute stored roe and debt_to_equity from stored fundamentals",
+    )
     args = p.parse_args()
     if args.rebuild_insider and args.tickers:
         # The rebuild deletes every insider row, so it must re-insert the whole universe.
         p.error("--rebuild-insider rebuilds the whole universe; it cannot take --tickers")
+    if args.recompute_ratios and (args.tickers or args.rebuild_insider):
+        p.error("--recompute-ratios runs alone over every stored row")
     return args
 
 
@@ -159,6 +168,11 @@ def _rebuild_insider(conn, tickers: list[str], config: dict, t_start: float) -> 
     )
 
 
+def _recompute_only(conn) -> None:
+    logging.getLogger("run_data").info("Recomputing stored ratios — all ingestion steps skipped")
+    _print_summary({"Fundamentals rows changed": recompute_ratios(conn)})
+
+
 def main() -> None:
     args = _parse_args()
     config = _load_config()
@@ -178,6 +192,12 @@ def main() -> None:
     initialise_schema(engine)
     conn = engine.connect()
     logger.info("Database: %s", redacted_url(db_url))
+
+    if args.recompute_ratios:
+        _recompute_only(conn)
+        conn.close()
+        engine.dispose()
+        return
 
     # Providers
     providers = Providers()
@@ -224,11 +244,13 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # 4. Short interest  (equities only)
     # -----------------------------------------------------------------------
-    logger.info("[4/8] Short interest")
-    yahoo_info = YahooInfo()  # one .info request per ticker, shared with steps 5 and 6
+    logger.info("[4/8] Short interest and market caps")
+    yahoo_info = YahooInfo()  # one .info request per ticker, shared with market caps, 5 and 6
     yahoo_trend = YahooTrend()  # one earningsTrend request per ticker, shared by steps 5 and 6
     si_stats = update_short_interest(conn, equity_tickers, info=yahoo_info)
     si_updated = sum(1 for v in si_stats.values() if v)
+    mc_stats = update_market_caps(conn, equity_tickers, info=yahoo_info)
+    mc_updated = sum(1 for v in mc_stats.values() if v)
 
     # -----------------------------------------------------------------------
     # 5. Analyst estimates  (equities only)
@@ -291,6 +313,7 @@ def main() -> None:
             "Tickers with new prices": sum(1 for v in price_stats.values() if v),
             "Fundamental periods added": periods_added,
             "Short interest updated": f"{si_updated} tickers",
+            "Market caps updated": f"{mc_updated} tickers",
             "Estimates updated": f"{est_updated} tickers",
             "Upcoming earnings events": ec_events,
             "SEC filings cached": filings_stored,
