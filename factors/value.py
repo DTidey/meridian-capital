@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 from factors._utils import guarded_current, latest_trends, safe_div, sector_rank
+from factors.market_cap import market_caps
+from factors.ttm import num, ttm
 
 logger = logging.getLogger(__name__)
 
@@ -31,63 +33,20 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         return _empty_result(universe)
 
     sectors = universe.set_index("ticker")["sector"]
-
-    # Latest close per ticker
     latest_price = prices.sort_values("date").groupby("ticker")["close"].last()
-
-    # Latest quarterly fundamentals per ticker
-    latest_fund = funds.sort_values("period_end").groupby("ticker").last()
+    mcaps = market_caps(prices, data.get("market_caps"), funds)
+    quarters = _quarters_newest_first(funds)
 
     tickers = universe["ticker"].tolist()
-    raw = pd.DataFrame(index=tickers)
-
+    raw = pd.DataFrame(np.nan, index=tickers, columns=COLS, dtype=float)
     for ticker in tickers:
         price = latest_price.get(ticker)
-        fund = latest_fund.loc[ticker] if ticker in latest_fund.index else None
+        if not price or ticker not in quarters:
+            continue
         # Guarded +1y consensus from the latest fresh earningsTrend snapshot
         eps = guarded_current(trends.loc[ticker]) if ticker in trends.index else None
-
-        if price is None or price == 0 or fund is None:
-            for col in COLS:
-                raw.loc[ticker, col] = np.nan
-            continue
-
-        shares = fund.get("shares_outstanding") if fund is not None else None
-        equity = fund.get("total_equity")
-        fcf = fund.get("fcf")
-        debt = fund.get("total_debt") or 0.0
-        cash = fund.get("cash") or 0.0
-        ebit = fund.get("ebit")
-        rev = fund.get("revenue")
-        divs = abs(fund.get("dividends_paid") or 0.0)
-        bbacks = abs(fund.get("buybacks") or 0.0)
-
-        mkt_cap = (shares or 0) * price
-        ev = mkt_cap + (debt or 0) - (cash or 0) if mkt_cap > 0 else None
-
         raw.loc[ticker, "val_fwd_earn_yield"] = safe_div(eps, price)
-
-        raw.loc[ticker, "val_book_to_price"] = (
-            safe_div(safe_div(equity, shares), price)
-            if equity is not None and shares and shares > 0
-            else np.nan
-        )
-
-        raw.loc[ticker, "val_fcf_yield"] = safe_div(fcf, mkt_cap) if mkt_cap > 0 else np.nan
-
-        if ev and ev > 0 and ebit and ebit > 0:
-            raw.loc[ticker, "val_ev_ebitda_inv"] = safe_div(ebit, ev)
-        else:
-            raw.loc[ticker, "val_ev_ebitda_inv"] = np.nan
-
-        raw.loc[ticker, "val_shareholder_yield"] = (
-            (divs + bbacks) / mkt_cap if mkt_cap > 0 else np.nan
-        )
-
-        if ev and ev > 0 and rev:
-            raw.loc[ticker, "val_sales_to_ev"] = safe_div(rev, ev)
-        else:
-            raw.loc[ticker, "val_sales_to_ev"] = np.nan
+        raw.loc[ticker, COLS[1:]] = _statement_yields(quarters[ticker], mcaps.get(ticker))
 
     # Rank within sector
     scored = pd.DataFrame(index=raw.index)
@@ -98,6 +57,41 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         scored[COLS].mean(axis=1), sectors.reindex(scored.index), min_size
     )
     return scored
+
+
+def _quarters_newest_first(funds: pd.DataFrame) -> dict[str, list[dict]]:
+    if funds.empty:
+        return {}
+    ordered = funds.sort_values("period_end", ascending=False).copy()
+    ordered["period_end"] = pd.to_datetime(ordered["period_end"]).dt.strftime("%Y-%m-%d")
+    return {t: g.to_dict("records") for t, g in ordered.groupby("ticker")}
+
+
+def _statement_yields(quarters: list[dict], mcap: float | None) -> list[float]:
+    """Book/price, FCF yield, EBIT/EV, shareholder yield and sales/EV (COLS[1:] order).
+
+    Flows are trailing twelve months; balance-sheet items all come from the latest quarter
+    that has a balance sheet, so no row mixes periods.
+    """
+    nan = np.nan
+    if not mcap or np.isnan(mcap) or mcap <= 0:
+        return [nan] * 5
+    bs = next((q for q in quarters if num(q.get("total_assets")) is not None), None)
+    equity = num(bs.get("total_equity")) if bs else None
+    debt = (num(bs.get("total_debt")) or 0.0) if bs else None  # omitted line: no debt
+    cash = num(bs.get("cash")) if bs else None
+    ev = mcap + debt - cash if debt is not None and cash is not None else None
+    ebit, rev, fcf = (ttm(quarters, f) for f in ("operating_income", "revenue", "fcf"))
+    divs, bbacks = ttm(quarters, "dividends_paid"), ttm(quarters, "buybacks")
+    returned = None if divs is None and bbacks is None else (divs or 0.0) + (bbacks or 0.0)
+    ev_ok = ev is not None and ev > 0
+    return [
+        equity / mcap if equity is not None else nan,
+        fcf / mcap if fcf is not None else nan,
+        ebit / ev if ev_ok and ebit is not None and ebit > 0 else nan,
+        returned / mcap if returned is not None else nan,
+        rev / ev if ev_ok and rev else nan,
+    ]
 
 
 def _empty_result(universe: pd.DataFrame) -> pd.DataFrame:

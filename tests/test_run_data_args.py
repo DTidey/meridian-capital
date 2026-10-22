@@ -132,6 +132,7 @@ def test_low_coverage_run_continues(snapshot_run, caplog):
     errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
     assert errors == [
         "Short interest: 0/2 tickers fetched after retries (below 95%)",
+        "Market caps: 0/2 tickers fetched after retries (below 95%)",
         "Analyst estimates: 0/2 tickers fetched after retries (below 95%)",
     ]
     assert "Layer 1 ingestion complete" in caplog.text

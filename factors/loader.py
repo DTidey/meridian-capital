@@ -14,6 +14,7 @@ from data.db import (
     insider_cluster_flags,
     insider_transactions,
     institutional_holdings,
+    market_caps,
     short_interest,
     sp500_universe,
 )
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 _PRICE_LOOKBACK_DAYS = 800  # ~3 years of trading days with buffer
 _FUND_QUARTERS = 12
 _SI_LOOKBACK_DAYS = 90
+MCAP_LOOKBACK_DAYS = 30  # the guard needs each ticker's two latest snapshots
 _EST_LOOKBACK_DAYS = 105  # longest revision window (90) plus a margin for the prior snapshot
 _TREND_FRESH_DAYS = 5  # an older earningsTrend snapshot is stale
 _INSIDER_DAYS = 90
@@ -42,7 +44,7 @@ def load_scoring_data(
         score_date: ISO date string (YYYY-MM-DD) for the scoring run.
 
     Returns:
-        Dict with keys: universe, prices, fundamentals, short_interest,
+        Dict with keys: universe, prices, fundamentals, market_caps, short_interest,
         estimates, estimate_trends, insider_txns, insider_clusters, institutional, vix.
     """
     cutoff = date.fromisoformat(score_date)
@@ -50,6 +52,7 @@ def load_scoring_data(
     universe = _load_universe(conn)
     prices = _load_prices(conn, cutoff)
     funds = _load_fundamentals(conn, cutoff)
+    mcaps = _load_market_caps(conn, cutoff)
     si = _load_short_interest(conn, cutoff)
     estimates = _load_estimates(conn, cutoff)
     trends = _load_estimate_trends(conn, cutoff)
@@ -69,6 +72,7 @@ def load_scoring_data(
         "universe": universe,
         "prices": prices,
         "fundamentals": funds,
+        "market_caps": mcaps,
         "short_interest": si,
         "estimates": estimates,
         "estimate_trends": trends,
@@ -125,6 +129,18 @@ def _load_fundamentals(conn: sa.engine.Connection, cutoff: date) -> pd.DataFrame
     ).fetchall()
     df = pd.DataFrame(rows, columns=[c.name for c in fundamentals.columns])
     df["period_end"] = pd.to_datetime(df["period_end"])
+    return df
+
+
+def _load_market_caps(conn: sa.engine.Connection, cutoff: date) -> pd.DataFrame:
+    start = (cutoff - timedelta(days=MCAP_LOOKBACK_DAYS)).isoformat()
+    rows = conn.execute(
+        sa.select(market_caps.c.ticker, market_caps.c.date, market_caps.c.market_cap)
+        .where((market_caps.c.date >= start) & (market_caps.c.date <= score_date_str(cutoff)))
+        .order_by(market_caps.c.ticker, market_caps.c.date)
+    ).fetchall()
+    df = pd.DataFrame(rows, columns=["ticker", "date", "market_cap"])
+    df["date"] = pd.to_datetime(df["date"])
     return df
 
 

@@ -200,10 +200,9 @@ class TestAltmanZ:
                 "working_capital": 5e8,
                 "total_assets": 5e9,
                 "retained_earnings": 1e9,
-                "ebit": 2e8,
+                "operating_income": 2e8,
                 "total_liabilities": 2e9,
                 "revenue": 1e9,
-                "shares_outstanding": 1e8,
             }
         )
         for k, v in overrides.items():
@@ -211,7 +210,7 @@ class TestAltmanZ:
         return r
 
     def test_healthy_firm_z_above_299(self):
-        z = _altman_z(self._row(), price=100.0)
+        z = _altman_z(self._row(), mkt_cap=1e10)
         assert z > 2.99
 
     def test_distressed_firm_z_below_181(self):
@@ -220,20 +219,20 @@ class TestAltmanZ:
             self._row(
                 total_liabilities=8e9,
                 retained_earnings=-2e9,
-                ebit=-5e8,
+                operating_income=-5e8,
                 working_capital=-1e8,
             ),
-            price=5.0,
+            mkt_cap=5e8,
         )
         assert z < 1.81
 
     def test_missing_field_returns_nan(self):
         r = self._row()
         r["working_capital"] = None
-        assert np.isnan(_altman_z(r, price=100.0))
+        assert np.isnan(_altman_z(r, mkt_cap=1e10))
 
-    def test_missing_price_returns_nan(self):
-        assert np.isnan(_altman_z(self._row(), price=None))
+    def test_missing_market_cap_returns_nan(self):
+        assert np.isnan(_altman_z(self._row(), mkt_cap=None))
 
 
 # ---------------------------------------------------------------------------
@@ -241,14 +240,18 @@ class TestAltmanZ:
 # ---------------------------------------------------------------------------
 
 
+def _roe_frame(roes, equity=1e9):
+    return pd.DataFrame({"net_income": [r * equity for r in roes], "total_equity": equity})
+
+
 class TestRoeStability:
     def test_stable_roe_scores_higher_than_volatile(self):
-        stable = pd.DataFrame({"roe": [0.10] * 8})
-        volatile = pd.DataFrame({"roe": [0.30, -0.20, 0.40, -0.10, 0.25, -0.15, 0.35, -0.05]})
+        stable = _roe_frame([0.10] * 8)
+        volatile = _roe_frame([0.30, -0.20, 0.40, -0.10, 0.25, -0.15, 0.35, -0.05])
         assert _roe_stability(stable) > _roe_stability(volatile)
 
     def test_single_quarter_returns_nan(self):
-        assert np.isnan(_roe_stability(pd.DataFrame({"roe": [0.10]})))
+        assert np.isnan(_roe_stability(_roe_frame([0.10])))
 
 
 # ---------------------------------------------------------------------------

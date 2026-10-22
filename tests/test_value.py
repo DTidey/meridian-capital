@@ -83,6 +83,9 @@ def _trend_rows(eps_by_ticker, days_7=None):
     )
 
 
+_QUARTER_ENDS = ("2023-06-30", "2023-09-30", "2023-12-31", "2024-03-31")
+
+
 def _make_data(tickers, prices=None, fund_overrides=None, trends=None):
     fund_overrides = fund_overrides or {}
     universe = pd.DataFrame(
@@ -102,7 +105,12 @@ def _make_data(tickers, prices=None, fund_overrides=None, trends=None):
         ]
         prices = pd.DataFrame(prices_rows)
 
-    fund_rows = [_fund_row(t, **fund_overrides.get(t, {})) for t in tickers]
+    # Four contiguous quarters, so the TTM flows are four times the quarterly figures
+    fund_rows = [
+        _fund_row(t, **{"period_end": end, **fund_overrides.get(t, {})})
+        for t in tickers
+        for end in _QUARTER_ENDS
+    ]
     funds = (
         pd.DataFrame(fund_rows) if fund_rows else pd.DataFrame(columns=list(_fund_row("X").keys()))
     )
@@ -174,7 +182,7 @@ class TestFwdEarningsYield:
 
 class TestEvEbitda:
     def test_negative_ebit_yields_nan_then_50(self):
-        data = _make_data(["AAPL", "MSFT"], fund_overrides={"AAPL": {"ebit": -1e8}})
+        data = _make_data(["AAPL", "MSFT"], fund_overrides={"AAPL": {"operating_income": -1e8}})
         result = compute(data, _CONFIG)
         # AAPL has negative ebit → NaN → gets 50
         assert result.loc["AAPL", "val_ev_ebitda_inv"] == pytest.approx(50.0)
@@ -185,8 +193,8 @@ class TestEvEbitda:
         data = _make_data(
             ["LOW_EV", "HIGH_EV"],
             fund_overrides={
-                "LOW_EV": {"total_debt": 1e7, "cash": 1e8, "ebit": 2e8},
-                "HIGH_EV": {"total_debt": 5e9, "cash": 1e7, "ebit": 2e8},
+                "LOW_EV": {"total_debt": 1e7, "cash": 1e8, "operating_income": 2e8},
+                "HIGH_EV": {"total_debt": 5e9, "cash": 1e7, "operating_income": 2e8},
             },
         )
         result = compute(data, _CONFIG)

@@ -91,6 +91,13 @@ erDiagram
         string  fetched_at
     }
 
+    market_caps {
+        string  ticker                 PK
+        string  date                   PK
+        float   market_cap
+        string  fetched_at
+    }
+
     analyst_estimates {
         string  ticker                 PK
         string  date                   PK
@@ -454,6 +461,7 @@ erDiagram
     sp500_universe       ||--o{ daily_prices             : "ticker"
     sp500_universe       ||--o{ fundamentals             : "ticker"
     sp500_universe       ||--o{ short_interest           : "ticker"
+    sp500_universe       ||--o{ market_caps              : "ticker"
     sp500_universe       ||--o{ analyst_estimates        : "ticker"
     sp500_universe       ||--o{ estimate_trends          : "ticker"
     sp500_universe       ||--o{ earnings_calendar        : "ticker"
@@ -506,6 +514,7 @@ erDiagram
 - **Layers 4-7 tables** register on the same metadata via `portfolio.db`, `risk.db`, `execution.db` and `reporting.db`; `initialise_schema()` also adds columns introduced after a table was first created (e.g. `institutional_holdings.filed_date`).
 - **`fundamentals.period_end`** is the nearest calendar month-end (packet 23). A refresh keeps stored figures where Yahoo returns blanks (packet 26).
 - **`estimate_trends`** holds Yahoo's `earningsTrend` consensus EPS for fiscal periods `0y` and `+1y`, now and 7/30/60/90 days ago, one row per snapshot date (packet 41). Revisions and the forward earnings yield read the `+1y` rows; `analyst_estimates` feeds the dashboard only.
+- **`market_caps`** holds Yahoo's `.info` `marketCap` per ticker per day (packet 42): every share class at this listing's price. Value, quality and the Ticker page derive shares as market cap / close and guard against one-day glitches; `fundamentals.shares_outstanding` is the fallback.
 - **`institutional_holdings.report_date`** is the quarter the 13F covers; `filed_date` is when it was filed (packet 17). Only S&P 500 tickers are stored.
 - **`analysis_results`** also holds the Ticker page's saved filing summaries (`analyzer = 'doc_summary'`, `artifact_id` = accession number).
 - **This diagram's columns are generated from the SQLAlchemy table definitions**; regenerate rather than hand-edit when the schema changes.

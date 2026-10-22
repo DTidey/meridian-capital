@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from factors._utils import safe_div, sector_rank, value_and_prior
+from factors.market_cap import market_caps
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,7 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
     sectors = universe.set_index("ticker")["sector"]
 
-    latest_price = (
-        (prices.sort_values("date").groupby("ticker")["close"].last())
-        if not prices.empty
-        else pd.Series(dtype=float)
-    )
+    mcaps = market_caps(prices, data.get("market_caps"), funds)
 
     tickers = universe["ticker"].tolist()
     raw = pd.DataFrame(index=tickers, columns=COLS, dtype=float)
@@ -52,7 +49,6 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
             continue
 
         latest = ticker_funds.iloc[-1]
-        price = latest_price.get(ticker)
 
         raw.loc[ticker, "qual_roe_stability"] = _roe_stability(ticker_funds)
         raw.loc[ticker, "qual_gm_level"] = latest.get("gross_margin")
@@ -61,7 +57,7 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
         raw.loc[ticker, "qual_cfo_to_ni"] = _cfo_to_ni(latest)
         raw.loc[ticker, "qual_accruals_inv"] = _accruals_inv(latest)
         raw.loc[ticker, "qual_piotroski"] = _piotroski(ticker_funds)
-        raw.loc[ticker, "qual_altman_z"] = _altman_z(latest, price)
+        raw.loc[ticker, "qual_altman_z"] = _altman_z(latest, mcaps.get(ticker))
 
     # Cast to float (avoids object dtype issues from mixed None/float)
     raw = raw.astype(float)
@@ -82,8 +78,12 @@ def compute(data: dict[str, pd.DataFrame], config: dict) -> pd.DataFrame:
 
 
 def _roe_stability(df: pd.DataFrame) -> float:
-    """Negative stdev of ROE over up to 12 quarters (higher = more stable)."""
-    roes = df["roe"].dropna().tail(12)
+    """Negative stdev of ROE over up to 12 quarters (higher = more stable).
+
+    ROE is net income / equity from the raw figures, skipping quarters without positive equity.
+    """
+    positive = df[df["total_equity"] > 0]
+    roes = (positive["net_income"] / positive["total_equity"]).dropna().tail(12)
     if len(roes) < 2:
         return np.nan
     return -float(roes.std())
@@ -99,10 +99,25 @@ def _gm_trend(df: pd.DataFrame) -> float:
 
 def _de_inv(row: pd.Series) -> float:
     """Inverted debt-to-equity (lower debt = higher score)."""
-    de = row.get("debt_to_equity")
-    if de is None or np.isnan(float(de)):
+    return -_leverage(row)
+
+
+def _leverage(row: pd.Series) -> float:
+    """Debt / equity from the raw figures of a quarter with a balance sheet.
+
+    An omitted debt line is no debt. Negative equity with debt is the most leveraged case
+    (+inf); without positive equity and debt the ratio means nothing (NaN).
+    """
+    equity, debt = _num(row.get("total_equity")), _num(row.get("total_debt")) or 0.0
+    if equity is None:
         return np.nan
-    return -float(de)
+    if equity <= 0:
+        return np.inf if debt > 0 else np.nan
+    return debt / equity
+
+
+def _num(value) -> float | None:
+    return None if value is None or pd.isna(value) else float(value)
 
 
 def _cfo_to_ni(row: pd.Series) -> float:
@@ -144,8 +159,7 @@ def _piotroski(df: pd.DataFrame) -> float:
     cfo_cur = cur.get("cfo") or 0.0
     ni_cur = cur.get("net_income") or 0.0
 
-    de_cur = cur.get("debt_to_equity") or 0.0
-    de_prev = prev.get("debt_to_equity") or 0.0
+    de_cur, de_prev = _leverage(cur), _leverage(prev)
     cr_cur = cur.get("current_ratio") or 0.0
     cr_prev = prev.get("current_ratio") or 0.0
     sh_cur = cur.get("shares_outstanding") or 0.0
@@ -160,7 +174,7 @@ def _piotroski(df: pd.DataFrame) -> float:
         _flag(cfo_cur > 0),  # 2. CFO > 0
         _flag(roa_cur is not None and roa_prev is not None and roa_cur > roa_prev),  # 3. Rising ROA
         _flag(cfo_cur > ni_cur),  # 4. CFO > NI
-        _flag(de_cur <= de_prev),  # 5. Falling D/E
+        _flag(de_cur <= de_prev),  # 5. Falling D/E (False when either is NaN)
         _flag(cr_cur >= cr_prev),  # 6. Rising current ratio
         _flag(sh_cur <= sh_prev),  # 7. No dilution
         _flag(gm_cur >= gm_prev),  # 8. Rising gross margin
@@ -169,31 +183,21 @@ def _piotroski(df: pd.DataFrame) -> float:
     return float(sum(signals))
 
 
-def _altman_z(row: pd.Series, price) -> float:
-    """Altman Z-Score for public manufacturing firms."""
+def _altman_z(row: pd.Series, mkt_cap) -> float:
+    """Altman Z-Score for public manufacturing firms; EBIT is operating income."""
     wc = row.get("working_capital")
     ta = row.get("total_assets")
     re = row.get("retained_earnings")
-    ebit = row.get("ebit")
+    ebit = row.get("operating_income")
     tl = row.get("total_liabilities")
     sales = row.get("revenue")
-    shares = row.get("shares_outstanding")
 
-    if any(v is None for v in [wc, ta, re, ebit, tl, sales, shares, price]):
+    values = [_num(v) for v in (wc, ta, re, ebit, tl, sales, mkt_cap)]
+    if any(v is None for v in values):
         return np.nan
+    wc, ta, re, ebit, tl, sales, mkt_cap = values
     if ta == 0 or tl == 0:
         return np.nan
-
-    ta, re, ebit, tl, sales, wc, shares = (
-        float(ta),
-        float(re),
-        float(ebit),
-        float(tl),
-        float(sales),
-        float(wc),
-        float(shares),
-    )
-    mkt_cap = shares * float(price)
 
     z = (
         1.2 * (wc / ta)

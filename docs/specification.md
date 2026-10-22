@@ -34,7 +34,7 @@ The system is organised into seven sequential layers, each building on the outpu
 ### 2.3 Fundamentals
 
 - Quarterly and annual financial statements: income statement, balance sheet, and cash flow statement.
-- 16 derived ratios computed and stored per period: ROE, ROA, gross/operating/net margin, revenue and earnings growth (YoY and QoQ), debt/equity, current ratio, AR/revenue, CFO/net income, accruals ratio, working capital and asset turnover. (FCF yield is computed in the value factor, `val_fcf_yield`.)
+- 16 derived ratios computed and stored per period: ROE (net income / equity), ROA, gross/operating/net margin, revenue and earnings growth (YoY and QoQ), debt/equity, current ratio, AR/revenue, CFO/net income, accruals ratio, working capital and asset turnover. (FCF yield is computed in the value factor, `val_fcf_yield`.)
 - Source: yfinance (the FMP backend exists in code but is not selected).
 - Balance sheet and cash flow are matched to the income statement by period, not column position;
   a period missing from one statement leaves its values empty.
@@ -43,6 +43,8 @@ The system is organised into seven sequential layers, each building on the outpu
   blank.
 - Shares outstanding exclude treasury stock ("Ordinary Shares Number", else issued minus
   treasury).
+- ROE and debt/equity are left empty when equity is zero or negative (packet 42).
+  `run_data.py --recompute-ratios` rewrites both for every stored row.
 - Quarterly QoQ and YoY growth ratios compare against the period exactly 3 and 12 months earlier
   (annual rows compare both with 12 months earlier).
 
@@ -51,6 +53,10 @@ The system is organised into seven sequential layers, each building on the outpu
 - Daily snapshot of shares short, short ratio, and short percent of float per ticker, sourced from yfinance `.info`.
 - One snapshot per ticker per calendar day; existing records for today are skipped.
 - Short interest and analyst estimates share one `.info` response per ticker per run.
+- The same response gives a daily `market_caps` snapshot (Yahoo `marketCap`, every share class).
+  Value, quality and the Ticker page take market cap from it: shares are market cap / close on the
+  snapshot date, and the previous snapshot is kept when the latest moves more than 1.5x. Without
+  a snapshot, balance-sheet shares are used (packet 42).
 
 ### 2.5 Analyst Estimates
 

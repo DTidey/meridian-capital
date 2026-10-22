@@ -2,45 +2,19 @@
 
 from __future__ import annotations
 
-import math
-from datetime import date
+from datetime import date, timedelta
 
 import sqlalchemy as sa
 import streamlit as st
 
 from dashboard.theme import metric_card, section_header
-from data.db import daily_prices, fundamentals
+from data.db import daily_prices, fundamentals, market_caps
+from factors.loader import MCAP_LOOKBACK_DAYS
+from factors.market_cap import shares_from_snapshots
+from factors.ttm import num as _num
+from factors.ttm import ttm as _ttm
 
-_TTM_FIELDS = ("net_income", "ebit", "fcf", "dividends_paid")
-_MAX_SKIP_DAYS = 100  # one quarter
-_MAX_TTM_SPAN_DAYS = 300  # four contiguous quarter ends are ~9 months apart; a gap makes ~12
-
-
-def _num(value) -> float | None:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return None
-    return float(value)
-
-
-def _ttm(quarters: list[dict], field: str) -> float | None:
-    """Sum over the four latest quarters reporting this field, if they form a trailing year.
-
-    Quarters without the field are skipped (Yahoo can list a period before publishing its
-    figures); the span check still rejects a gap in the middle of the series.
-    """
-    reported = [q for q in quarters if _num(q.get(field)) is not None][:4]
-    if len(reported) < 4:
-        return None
-    newest, first, last = (
-        date.fromisoformat(q["period_end"][:10]) for q in (quarters[0], reported[3], reported[0])
-    )
-    # Contiguous, and recent: at most one quarter skipped, so a stopped dividend doesn't
-    # show last year's yield
-    if (last - first).days > _MAX_TTM_SPAN_DAYS or (newest - last).days > _MAX_SKIP_DAYS:
-        return None
-    values = [_num(q[field]) for q in reported]
-    # Dividends are cash outflows; sum their sizes so mixed signs can't cancel
-    return sum(abs(v) for v in values) if field == "dividends_paid" else sum(values)
+_TTM_FIELDS = ("net_income", "operating_income", "fcf", "dividends_paid")
 
 
 def _ratio(numerator: float | None, denominator: float | None):
@@ -50,12 +24,17 @@ def _ratio(numerator: float | None, denominator: float | None):
     return "n/m" if denominator <= 0 or numerator <= 0 else numerator / denominator
 
 
-def valuation(close: float | None, quarters: list[dict]) -> dict | None:
-    """Valuation metrics; quarters newest first. None without a price and share count."""
+def valuation(
+    close: float | None, quarters: list[dict], shares: float | None = None
+) -> dict | None:
+    """Valuation metrics; quarters newest first. None without a price and share count.
+
+    shares: effective shares from the market cap snapshots; without them, the balance sheet's.
+    """
     # Balance-sheet items from the latest quarter that has them (Yahoo can publish the income
     # statement before the balance sheet, leaving the newest row's balance fields empty)
     latest = next((q for q in quarters if _num(q.get("shares_outstanding"))), {})
-    shares = _num(latest.get("shares_outstanding"))
+    shares = shares or _num(latest.get("shares_outstanding"))
     close = _num(close)
     if not close or not shares:
         return None
@@ -68,7 +47,7 @@ def valuation(close: float | None, quarters: list[dict]) -> dict | None:
         "market_cap": mcap,
         "ev": ev,
         "pe": _ratio(mcap, ttm["net_income"]),
-        "ev_ebit": _ratio(ev, ttm["ebit"]),
+        "ev_ebit": _ratio(ev, ttm["operating_income"]),
         "pb": _ratio(mcap, _num(latest.get("total_equity"))),
         "fcf_yield": fcf / mcap if fcf is not None else None,
         "div_yield": divs / mcap if divs is not None else None,
@@ -127,7 +106,8 @@ def render_valuation(engine, ticker: str) -> None:
                 .limit(8)
             )
         ]
-    v = valuation(price.close if price else None, quarters)
+        shares = _snapshot_shares(conn, ticker, price.date if price else None)
+    v = valuation(price.close if price else None, quarters, shares)
     if v is None:
         st.caption("No valuation data.")
         return
@@ -147,3 +127,31 @@ def render_valuation(engine, ticker: str) -> None:
     for col, (label, text) in zip(st.columns(len(cards)), cards, strict=True):
         with col:
             metric_card(label, text)
+
+
+def _snapshot_shares(conn, ticker: str, as_of: str | None) -> float | None:
+    """Effective shares from the ticker's stored market caps (the scoring helper's rule and
+    window, ending at the latest close)."""
+    if as_of is None:
+        return None
+    start = (date.fromisoformat(as_of) - timedelta(days=MCAP_LOOKBACK_DAYS)).isoformat()
+    snaps = conn.execute(
+        sa.select(market_caps.c.date, market_caps.c.market_cap)
+        .where(
+            (market_caps.c.ticker == ticker)
+            & (market_caps.c.date >= start)
+            & (market_caps.c.date <= as_of)
+        )
+        .order_by(market_caps.c.date.desc())
+        .limit(5)
+    ).fetchall()
+    paired = []
+    for day, mcap in snaps:
+        close = conn.execute(
+            sa.select(daily_prices.c.close)
+            .where((daily_prices.c.ticker == ticker) & (daily_prices.c.date <= day))
+            .order_by(daily_prices.c.date.desc())
+            .limit(1)
+        ).scalar()
+        paired.append((_num(mcap), _num(close)))
+    return shares_from_snapshots(paired)

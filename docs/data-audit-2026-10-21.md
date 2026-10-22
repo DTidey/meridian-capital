@@ -66,13 +66,18 @@ signed off as it is fixed.
     - BRK-B is stored as 1.43M shares (the Class A equivalent), giving book/price of 981x and a
       composite of 98.7, LONG.
     - CME's 2026-06-30 count is 359,275 (a 1000x glitch), making it LONG at 90.8.
-    - MNST and APH are exactly double the SEC cover-page count.
+    - MNST and APH are exactly double the SEC cover-page count. Corrected 2026-10-22: not a
+      fault. MNST split 2:1 on 2026-08-11 and APH on 2026-09-03; the stored counts are
+      split-adjusted like our prices, and the cover pages compared predate the splits.
   - Root cause: `data/fundamentals.py:116-127` has no share-class handling and no sanity check.
-  - Fix: packet 42 (planned).
+  - Fix: packet 42 (PR pending). Fixed differently from the plan: market cap comes from Yahoo's
+    `marketCap` (new `market_caps` table, every share class) with a one-day glitch guard, not
+    from corrected balance-sheet counts. SEC has no single cover-page count for multi-class
+    filers.
   - Verify:
-    - BRK-B, CME, MNST and APH `shares_outstanding` are within 5% of SEC
-      `EntityCommonStockSharesOutstanding` (B-share equivalent for BRK-B);
-    - a 1000x or 2x quarter-on-quarter jump without a split is rejected.
+    - after the first nightly `market_caps` snapshot and a rescore, the market cap used for
+      BRK-B, CME, MNST and APH is within 5% of Yahoo `marketCap`;
+    - BRK-B's book/price and composite are no longer extreme.
   - Signed off: -
 
 - [x] **C3. Insider: a company's own trades in other issuers are booked as insider trades.**
@@ -267,7 +272,7 @@ signed off as it is fixed.
       buyback.
     - GOOGL's EBIT exceeds its revenue.
   - Root cause: `factors/value.py:39, 63-69`; `data/fundamentals.py:62`.
-  - Fix: packet 42 (planned).
+  - Fix: packet 42 (PR pending).
   - Verify:
     - value inputs use four contiguous quarters;
     - shareholder yield is scored when only one component is missing;
@@ -278,7 +283,7 @@ signed off as it is fixed.
   - Evidence: AAPL is stored as -0.72, and the sign flips for negative-equity companies. The
     dashboard shows these values.
   - Root cause: `data/fundamentals.py:174`.
-  - Fix: packet 42 (planned).
+  - Fix: packet 42 (PR pending).
   - Verify: stored ROE equals net income divided by equity (AAPL 2026-06-30 about 0.28).
   - Signed off: -
 
@@ -370,13 +375,15 @@ Each needs a packet, a backlog entry, or an explicit acceptance.
     sanity).
   - Fix: -
 - [ ] **M12. Fundamentals: negative equity gives a negative D/E.** The most leveraged names rank
-  as least leveraged (LOW, MAR, DPZ, YUM). `factors/quality.py:100-105`. Fix: -
+  as least leveraged (LOW, MAR, DPZ, YUM). `factors/quality.py:100-105`. Fix: packet 42
+  (PR pending): negative equity with debt ranks as most leveraged.
 - [ ] **M13. Sector-agnostic factors distort banks, insurers and REITs.**
   - Gross margin, D/E, Altman Z and CFO/NI do not suit banks.
   - REIT FCF is null.
   - Fix: -
 - [ ] **M14. Value mixes periods.** `groupby('ticker').last()` takes the last non-null value per
-  column, so one row can mix periods (DPZ). `factors/value.py:39`. Fix: -
+  column, so one row can mix periods (DPZ). `factors/value.py:39`. Fix: packet 42 (PR pending):
+  TTM flows and one balance-sheet quarter.
 - [ ] **M15. Transcripts are wrongly labelled.**
   - Quarter labels are wrong for non-December fiscal years.
   - All rows are press releases, because FMP returns 403.
