@@ -36,13 +36,13 @@ signed off as it is fixed.
 
 | Severity | Items | Signed off |
 |---|---|---|
-| Critical | 12 | 2 |
-| High | 11 | 1 |
+| Critical | 12 | 5 |
+| High | 11 | 2 |
 | Medium / low | 23 | 0 |
 
 ## Critical: wrong trades or broken bookkeeping
 
-- [ ] **C1. Prices: splits and dividends after the initial load never reached older rows.**
+- [x] **C1. Prices: splits and dividends after the initial load never reached older rows.**
   - Evidence:
     - APH's 2:1 split shows as a 50% one-day loss (stored close 157.74 to 79.28 on 2026-08-31).
     - APH (composite 2.7), CVNA (6.4), KLAC (5.3) and CRWD (14.7) are SHORT on these artefacts.
@@ -55,9 +55,11 @@ signed off as it is fixed.
       (split-adjusted);
     - no stored one-day return exceeds 40% without a corporate action;
     - adj_close matches a fresh yfinance pull within 0.1% for the sample tickers.
-  - Signed off: - (2026-10-21 partial: APH close 2026-08-28 = 78.87; the 13 remaining one-day
-    moves over 40% are real events (e.g. MRNA 2026-08-19 on 199M shares, CNC, GL, FISV,
-    VIX spikes). Pending: yfinance comparison, rate-limited by Yahoo on 2026-10-21.)
+  - Signed off: 2026-10-22. APH close 2026-08-28 = 78.87; the 13 remaining one-day moves over
+    40% are real events (e.g. MRNA 2026-08-19 on 199M shares, CNC, GL, FISV, VIX spikes); none
+    since. close and adj_close match a fresh yfinance pull exactly (max gap 0.0000%, 266 days
+    from 2025-10-01) for the 11 sample tickers plus APH, CVNA, KLAC and CRWD. CRWD SHORT to
+    NEUTRAL (momentum 14.7 to 94.7); APH momentum 1.3 to 46.7.
 
 - [ ] **C2. Fundamentals: bad share counts.**
   - Evidence:
@@ -102,41 +104,46 @@ signed off as it is fixed.
     `insider_transactions_ticker_accession_no_txn_index_key`; no row has a null txn_index.
     TT insider_score 95.2 to 1.2 on the 2026-10-20 rescore.
 
-- [ ] **C5. Estimates: one-day forward EPS glitches feed straight into scores.**
+- [x] **C5. Estimates: one-day forward EPS glitches feed straight into scores.**
   - Evidence:
     - PGR forwardEps was 1012 instead of about 16.3 on 24, 25 and 28 September.
     - That spike passes through rev_30d, rev_60d and rev_90d until late December.
     - CRM showed -1.90 for two days.
   - Root cause: `data/estimates.py:18` stores values unvalidated; revisions use one prior
     snapshot.
-  - Fix: packet 41 (PR pending).
+  - Fix: packet 41, PR #96 (merged and deployed 2026-10-21).
   - Verify:
     - a forward EPS move above 50% that does not persist is not used;
     - PGR's revision scores in the window affected by the 24-28 September glitch are not
       extreme.
-  - Signed off: -
+  - Signed off: 2026-10-22. Revisions now come from Yahoo's EPS trend (`estimate_trends`), not
+    stored `forwardEps` snapshots, so the September PGR spike is no longer an input; PGR
+    revisions_score 51.3 on 2026-10-21. The glitch guard fired once on 2026-10-21 (FRT, Yahoo
+    returned 0.0 for the 7-day-ago figure) and fell back to the 7-day-ago consensus.
 
-- [ ] **C6. Estimates: a fiscal-year roll-over is scored as an analyst upgrade.**
+- [x] **C6. Estimates: a fiscal-year roll-over is scored as an analyst upgrade.**
   - Evidence:
     - forwardEps is the next-fiscal-year estimate, so it steps up when a company reports its
       fourth quarter.
     - MU and COST had all three revision windows at 100 on 2026-10-20.
     - About 400 calendar-year names roll over in January and February.
   - Root cause: no fiscal period is stored; `factors/revisions.py:161` compares across years.
-  - Fix: packet 41 (PR pending).
+  - Fix: packet 41, PR #96 (merged and deployed 2026-10-21).
   - Verify:
     - revisions compare estimates for the same fiscal period;
     - a roll-over date produces no revision spike for MU, COST or AAPL.
-  - Signed off: -
+  - Signed off: 2026-10-22. EPS trend compares current vs 7/30/60/90-day-ago figures for the
+    same period ('0y', '+1y'). On 2026-10-21 MU 97/95/92 (genuine: +1y 178.2 to 206.8 in 30
+    days), COST 91/74/65 (was 100/100/100 on 2026-10-20), AAPL 11/28/8.
 
 - [ ] **C7. Estimates: the 90-day revision is neutral for every ticker every Friday.**
   - Evidence: rev_90d = 50 for 503 of 503 tickers on 9 and 16 October, against 8-78 on other
     days.
   - Root cause: `factors/loader.py:26` sets the lookback equal to the 90-day window, and 90 days
     before a Friday is always a Saturday.
-  - Fix: packet 40 (PR pending).
+  - Fix: packet 40, PR #95 (merged and deployed 2026-10-21).
   - Verify: the count of `rev_90d = 50` on a Friday is in line with other weekdays.
-  - Signed off: -
+  - Signed off: - (pending Friday 2026-10-23's run; 8 tickers on Wednesday 2026-10-21.)
 
 - [ ] **C8. Earnings calendar: no data since 14 October, and failures are silent.**
   - Evidence:
@@ -145,12 +152,16 @@ signed off as it is fixed.
     - 122 tickers carry superseded dates, which creates false earnings blackouts.
   - Root cause: `data/earnings_calendar.py:66-68` swallows exceptions; upserts never remove old
     dates.
-  - Fix: packet 40 (PR pending).
+  - Fix: packet 40, PR #95 (merged and deployed 2026-10-21).
   - Verify:
     - `max(fetched_at)` is less than one day old after the nightly run;
     - a run storing no events fails loudly;
     - no ticker has more than one future date.
-  - Signed off: -
+  - Signed off: - (2026-10-22 partial: `max(fetched_at)` 2026-10-21 22:01, 256 events stored,
+    79 superseded removed. Fails the last check: 55 tickers still have two future dates, all
+    stored by the 2026-10-21 daytime backfill and skipped by the nightly run as already
+    updated, so their old dates were not removed. Recheck after 2026-10-22's run. The
+    loud-failure check has not been exercised in production.)
 
 - [ ] **C9. Combined score: AI is blended only into AI-covered names, and the scales are mixed.**
   - Evidence:
@@ -199,14 +210,16 @@ signed off as it is fixed.
 
 ## High: wrong inputs, weaker risk control
 
-- [ ] **H1. Prices: scores used the previous day's prices and VIX.**
+- [x] **H1. Prices: scores used the previous day's prices and VIX.**
   - Evidence: yfinance treats `end` as exclusive, and the code passed `end=today`.
   - Root cause: `data/market_data.py:162,195`.
   - Fix: packet 38, PR #91 (merged, deployed and backfilled 2026-10-21).
   - Verify:
     - `factor_scores` for date D are written only when SPY has a bar dated D;
     - `regime_state.vix_close` equals the same-day VIX close.
-  - Signed off: -
+  - Signed off: 2026-10-22. The nightly run fetched with end 2026-10-22 (exclusive); SPY has a
+    2026-10-21 bar (773.09) and scoring ran for 2026-10-21. `regime_state.vix_close` 16.68
+    for 2026-10-21 equals the stored ^VIX close that day (17.31 for 2026-10-20 likewise).
 
 - [x] **H2. Prices: 4,194 empty rows stored and never repaired.**
   - Evidence: 460 tickers are empty on 2026-09-22 alone.
@@ -295,9 +308,10 @@ signed off as it is fixed.
 - [ ] **H10. Estimates: 60-73 tickers drop out of each night's snapshot.**
   - Evidence: mostly tickers late in the alphabet; XOM's latest estimate was from 14 October.
   - Root cause: `data/estimates.py:28-30` has no retry, and failures are logged at debug.
-  - Fix: packet 40 (PR pending).
+  - Fix: packet 40, PR #95 (merged and deployed 2026-10-21).
   - Verify: `analyst_estimates` covers at least 98% of the universe on each weekday.
-  - Signed off: -
+  - Signed off: - (2026-10-21 shows 503/503, but from the daytime backfill; the nightly run
+    fetched 0. First real test is 2026-10-22's run.)
 
 - [ ] **H11. Transcripts: non-earnings documents are fed to the earnings analyzer.**
   - Evidence:
@@ -320,7 +334,7 @@ Each needs a packet, a backlog entry, or an explicit acceptance.
   - Float changes leak into it, because it is measured as a share of float.
   - `data/short_interest.py:15-27`. Fix: -
 - [ ] **M2. Revisions are measured in absolute dollars, not percent.** High-EPS names dominate.
-  `factors/revisions.py:161`. Fix: packet 41 (PR pending)
+  `factors/revisions.py:161`. Fix: packet 41, PR #96 (merged and deployed 2026-10-21)
 - [ ] **M3. Missing values are filled with 50 before ranking.**
   - Insider has no data for 173 tickers.
   - `ins_net_flow` ranks the smallest net seller above names with no activity.
