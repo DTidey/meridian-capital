@@ -68,6 +68,10 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Factor monitor baseline (packet `46-factor-monitor-baseline`): no alerts without a long and a
+  short book, and today's spread is z-scored against the book's own past spreads from
+  `portfolio_history` instead of a universe top-half/bottom-half spread. Ends the eight
+  meaningless MEDIUM alerts (|z| up to about 20,000) on every what-if nightly run.
 - Fundamentals and value inputs (packet `42-fundamentals-value-inputs`): market cap now comes
   from Yahoo's `marketCap` (new `market_caps` table, every share class, one-day glitch guard),
   fixing BRK-B and CME. The value factor uses trailing-twelve-month flows from one consistent set

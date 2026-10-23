@@ -81,3 +81,22 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   and re-downloads the same Form 4s (and 10-K/10-Q/8-K text) every run; the inserts are no-ops.
 - **Fix:** fetch submissions once per CIK and record seen accessions per CIK, writing insider
   rows for every ticker of the issuer.
+
+## Layer 5 does not see the what-if book
+
+- **Raised:** 2026-10-23, packet 46 (out of scope there).
+- **Problem:** nightly runs use `--whatif`, so Layer 4 commits nothing and `portfolio_positions`
+  stays empty. Layer 5 then runs the factor risk model, correlation monitor and factor monitor
+  on no positions (the 2026-10-22 log shows correlation 0.000 and 0 effective bets), so the
+  what-if risk check says nothing about the 20/20 book Layer 4 just proposed.
+- **Fix:** pass the Layer 4 target book to Layer 5 in what-if mode (for example a target-book
+  file or table), or state in the run output that what-if risk checks are skipped.
+
+## Dead factor-exposure flagging
+
+- **Raised:** 2026-10-23, packet 46.
+- **Problem:** `portfolio/factor_exposure.py` `flag_unusual_exposures` is never called, and its
+  `_historical_spreads` pools up to 5,000 rows across dates into one value per factor, so it
+  could never reach its 10-value minimum.
+- **Fix:** delete both, or rebuild them on the packet 46 portfolio-history baseline if a Layer 4
+  exposure flag is wanted.
