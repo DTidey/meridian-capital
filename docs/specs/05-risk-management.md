@@ -424,11 +424,16 @@ risk-elevated positioning.
 
 ### Algorithm
 
-1. Load factor spread (long book weighted avg minus short book weighted avg) for today
-   from `portfolio_positions` + `factor_scores`. Reuses `portfolio.factor_exposure.compute_exposures`.
-2. Load historical spreads: pull the last 252 trading days of `factor_scores` rows,
-   compute cross-sectional std for each factor across the whole universe on each date.
-3. Z-score today's spread: `z = (spread - mean_hist) / std_hist` per factor.
+1. Skip (no alerts; `risk_log` OK `no positions`) when `portfolio_positions` has no LONG or
+   no SHORT rows. Otherwise load factor spread (long book weighted avg minus short book
+   weighted avg) for today from `portfolio_positions` + `factor_scores`. Reuses
+   `portfolio.factor_exposure.compute_exposures`.
+2. Load historical spreads: for each of the last 252 `portfolio_history` snapshot dates
+   before today, compute that day's book spread the same way against that day's
+   `factor_scores`. Dates without scores or without both books are skipped; with fewer than
+   10 usable dates, skip (no alerts). Amended by packet 46: the original universe
+   top-half/bottom-half baseline measured a different quantity from the book spread.
+3. Z-score today's spread: `z = (spread - mean_hist) / std_hist` per factor (sample std).
 4. Alert if `|z| > 1.5`.
 5. Cross-reference with crowding flags from `factors.crowding` (already computed in
    Layer 2 -- query `factor_scores` where `crowding_flag IS NOT NULL` or use the

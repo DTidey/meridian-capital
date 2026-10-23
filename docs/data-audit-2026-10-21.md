@@ -186,7 +186,9 @@ signed off as it is fixed.
     - Rows the reconcile creates have no sector or weight, so pre-trade checks reject them.
   - Root cause: `portfolio/rebalance.py:95-97, 240-276`; `execution/broker.py:126-146`;
     `execution/executor.py:403-419`.
-  - Fix: packet 44 (planned).
+  - Fix: packet 44 (planned). Must also write the full book to `portfolio_history` on every
+    commit; today `_update_positions` stores only new and adjusted tickers. The packet 46 factor
+    monitor baseline reads those snapshots as whole books.
   - Verify: an end-to-end rebalance, execute and reconcile on the paper account leaves
     `portfolio_positions` equal to Alpaca's positions, with signed shares.
   - Signed off: -
