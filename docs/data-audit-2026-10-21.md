@@ -180,7 +180,9 @@ signed off as it is fixed.
     - 27 of 108 LONGs and 41 of 97 SHORTs were quant-NEUTRAL names with no AI review.
     - PLD went from 23 to 3 (SHORT) and NEE from 23 to 3 (SHORT) with no AI.
   - Root cause: `analysis/combined_score.py:106-107`.
-  - Fix: packet 43 (planned).
+  - Fix: packet 43 (PR pending). Direction is the Layer 2 direction, so only AI-reviewed
+    candidates can be LONG or SHORT; within each side, quant and AI ranks are blended 60/40
+    and mapped onto the side's band. The sector re-rank is gone.
   - Verify: no ticker becomes LONG or SHORT only because it lacks AI coverage; recheck PLD and
     NEE.
   - Signed off: -

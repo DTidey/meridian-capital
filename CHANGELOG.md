@@ -70,6 +70,10 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Combined score (packet `43-combined-score-candidates`): direction is the Layer 2 direction,
+  so only AI-reviewed candidates can be LONG or SHORT; within each side, quant and AI ranks are
+  blended 60/40 and mapped onto the side's band (longs 80-100, shorts 0-20). Ends unreviewed
+  names displacing reviewed ones (68 of 205 on 2026-10-23); audit C9.
 - Factor monitor baseline (packet `46-factor-monitor-baseline`): no alerts without a long and a
   short book, and today's spread is z-scored against the book's own past spreads from
   `portfolio_history` instead of a universe top-half/bottom-half spread. Ends the eight
