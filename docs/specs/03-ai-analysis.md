@@ -17,7 +17,7 @@ Layer 3 reads LONG and SHORT candidates produced by Layer 2 and enriches each wi
 - AC5: The earnings analyzer returns None when no transcript exists for the ticker; otherwise it scores 6 categories (1-10) and stores the mean as `earnings_score` in `ai_scores`.
 - AC6: The risk analyzer strips HTML tags from 10-K `content_text`, truncates to `filing_risk_max_chars`, returns None when no 10-K is cached, and maps `risk_severity` (LOW/MEDIUM/HIGH/CRITICAL) to `risk_score` values of 10, 8, 6, 4. (Scoring superseded by packet 31: `docs/specs/31-risk-score-severity-mix.md`.)
 - AC7: The insider analyzer returns None when no open-market transactions (`is_open_market = 1`) exist in the 90-day window; otherwise it maps `signal_strength` (STRONG_BUY/MODERATE_BUY/NEUTRAL/MODERATE_SELL/STRONG_SELL) to `insider_ai_score` values of 10, 7.5, 5, 2.5, 1.
-- AC8: The combined score blends Layer 2 `quant_composite` (0-100) and AI `ai_composite` (normalised from 1-10 to 0-100) at 60%/40%; tickers with `analyzers_used == 0` use 100% quant weighting; the combined score is re-ranked within GICS sector and LONG/SHORT labels are re-applied using the same thresholds as Layer 2.
+- AC8: The combined score blends Layer 2 `quant_composite` (0-100) and AI `ai_composite` (normalised from 1-10 to 0-100) at 60%/40%; tickers with `analyzers_used == 0` use 100% quant weighting; the combined score is re-ranked within GICS sector and LONG/SHORT labels are re-applied using the same thresholds as Layer 2. (Superseded by packet 43: `docs/specs/43-combined-score-candidates.md`.)
 - AC9: The report generator writes one markdown file per LONG/SHORT candidate to `output/reports_{YYYYMMDD}/`, covering quantitative scores, all four analyzer outputs (gracefully omitting any that returned None), upcoming catalysts from `earnings_calendar`, and sector context.
 - AC10: The entry point `run_analysis.py` supports `--estimate-cost` (token count via tiktoken, exit without API calls), `--ticker`, `--sector`, `--date`, and `--no-cache` flags, and prints a cost summary on completion.
 
@@ -157,7 +157,7 @@ Final blended conviction score.
 | `score_date` | String | ISO date |
 | `quant_composite` | Float | Layer 2 composite score (0–100) |
 | `ai_composite` | Float | AI score normalised to 0–100 |
-| `combined_score` | Float | 60% quant + 40% AI, re-ranked within sector (0–100) |
+| `combined_score` | Float | 60% quant + 40% AI, re-ranked within sector (0–100); superseded by packet 43 (within-side ranks, Layer 2 direction) |
 | `direction` | String | `LONG` / `SHORT` / `NEUTRAL` |
 | `computed_at` | String | Timestamp |
 
