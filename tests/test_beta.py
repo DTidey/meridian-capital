@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -65,7 +66,8 @@ class TestComputeBetas:
         flat_prices = [50.0] * 30
         _insert_prices(tmp_db, "FLAT", flat_prices)
         betas = compute_betas(tmp_db, ["FLAT"], "2026-01-31", lookback_days=60)
-        assert abs(betas["FLAT"]) == pytest.approx(0.0, abs=0.1)
+        # Raw beta 0, shrunk towards 1 (packet 52): 0.67 * 0 + 0.33
+        assert betas["FLAT"] == pytest.approx(0.33, abs=0.05)
 
     def test_missing_ticker_defaults_to_one(self, tmp_db):
         """Ticker not in DB → beta = 1.0."""
@@ -75,7 +77,7 @@ class TestComputeBetas:
         assert betas["NOTEXIST"] == pytest.approx(1.0)
 
     def test_insufficient_history_defaults_to_one(self, tmp_db):
-        """Only 5 price rows for ticker → below 10-row threshold → beta = 1.0."""
+        """Only 5 price rows for ticker → below the 20-return threshold → beta = 1.0."""
         spy_prices = _monotone_prices(n=30, start=100.0, step=1.0)
         _insert_prices(tmp_db, "SPY", spy_prices)
         short_prices = _monotone_prices(n=5, start=50.0, step=0.5)
@@ -95,3 +97,88 @@ class TestComputeBetas:
         betas = pd.Series(dtype=float)
         result = portfolio_beta(weights, betas)
         assert result == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Packet 52: pairwise betas and Blume shrinkage
+# ---------------------------------------------------------------------------
+
+
+def _random_walk(n, seed, scale=0.01, start=100.0, base=None, beta=1.0):
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(0, scale, n)
+    rets = noise if base is None else beta * base + noise * 0.3
+    return start * np.exp(np.cumsum(rets)), rets
+
+
+def _spy_and(tmp_db, n=60, beta=2.0):
+    spy_prices, spy_rets = _random_walk(n, seed=1)
+    _insert_prices(tmp_db, "SPY", spy_prices)
+    a_prices, _ = _random_walk(n, seed=2, base=spy_rets, beta=beta)
+    _insert_prices(tmp_db, "AAA", a_prices)
+    return spy_rets
+
+
+class TestPairwise:
+    def test_beta_same_alone_or_with_gappy_peer(self, tmp_db):
+        # H3: a peer missing most days used to drop those days for every ticker.
+        _spy_and(tmp_db)
+        gappy = [100.0 + i for i in range(60)]
+        d = date.fromisoformat("2026-01-01")
+        rows = [
+            {"ticker": "GAP", "date": str(d + timedelta(days=i)), "adj_close": p, "close": p}
+            for i, p in enumerate(gappy)
+            if i % 3 == 0
+        ]
+        tmp_db.execute(daily_prices.insert(), rows)
+        tmp_db.commit()
+        alone = compute_betas(tmp_db, ["AAA"], "2026-03-31")["AAA"]
+        together = compute_betas(tmp_db, ["AAA", "GAP"], "2026-03-31")["AAA"]
+        assert together == pytest.approx(alone)
+        assert alone != pytest.approx(1.0, abs=0.05)  # a real estimate, not the default
+
+    def test_lookback_counts_spy_days(self, tmp_db):
+        # The window is the last N SPY returns: a shorter lookback gives a different estimate.
+        _spy_and(tmp_db, n=60)
+        full = compute_betas(tmp_db, ["AAA"], "2026-03-31", lookback_days=59)["AAA"]
+        short = compute_betas(tmp_db, ["AAA"], "2026-03-31", lookback_days=20)["AAA"]
+        assert full != pytest.approx(short)
+
+    def test_peer_with_off_calendar_date(self, tmp_db):
+        # Adversarial: a peer row on a day SPY lacks must not break SPY's next return.
+        _spy_and(tmp_db)
+        tmp_db.execute(
+            daily_prices.insert().values(
+                ticker="ODD", date="2026-01-10T12", adj_close=10.0, close=10.0
+            )
+        )
+        tmp_db.commit()
+        alone = compute_betas(tmp_db, ["AAA"], "2026-03-31")["AAA"]
+        together = compute_betas(tmp_db, ["AAA", "ODD"], "2026-03-31")["AAA"]
+        assert together == pytest.approx(alone)
+
+
+class TestShrinkage:
+    def test_blume_adjustment(self, tmp_db):
+        spy_rets = _spy_and(tmp_db, beta=2.0)
+        raw = pd.Series(np.diff(np.log(_random_walk(60, seed=2, base=spy_rets, beta=2.0)[0])))
+        spy = pd.Series(np.diff(np.log(_random_walk(60, seed=1)[0])))
+        expected_raw = raw.cov(spy) / spy.var()
+        beta = compute_betas(tmp_db, ["AAA"], "2026-03-31")["AAA"]
+        assert beta == pytest.approx(0.67 * expected_raw + 0.33, rel=1e-6)
+
+    def test_extreme_beta_pulled_in(self, tmp_db):
+        _spy_and(tmp_db, beta=4.0)
+        assert compute_betas(tmp_db, ["AAA"], "2026-03-31")["AAA"] < 3.5
+
+    def test_negative_beta_shrunk_towards_one(self, tmp_db):
+        # Adversarial: shrinkage moves a negative beta up, not further away.
+        _spy_and(tmp_db, beta=-0.5)
+        beta = compute_betas(tmp_db, ["AAA"], "2026-03-31")["AAA"]
+        assert -0.5 < beta < 0.33
+
+    def test_fewer_than_twenty_shared_returns_defaults(self, tmp_db):
+        spy_prices, _ = _random_walk(60, seed=1)
+        _insert_prices(tmp_db, "SPY", spy_prices)
+        _insert_prices(tmp_db, "NEW", [50.0 + i for i in range(15)], start_date="2026-02-15")
+        assert compute_betas(tmp_db, ["NEW"], "2026-03-31")["NEW"] == pytest.approx(1.0)

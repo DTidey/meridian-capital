@@ -261,7 +261,11 @@ signed off as it is fixed.
     - `_adjust_beta` has no effect, and betas are not shrunk (range -0.6 to 4.4).
   - Root cause: `portfolio/beta.py:37-43`, `portfolio/mvo_optimizer.py:186`,
     `portfolio/optimizer.py:309-316`.
-  - Fix: not yet planned.
+  - Fix: packet 52 (PR pending). Betas pairwise against SPY and Blume-shrunk (owner's choice);
+    the beta adjustment reweights within each book (owner's choice over a SPY hedge); MVO
+    covariance keeps days with gaps. Dry run on 2026-10-23: net beta -0.33 to -0.15; the whole
+    target book passes pre-trade (24 pass, 16 resized for earnings blackout), which also meets
+    H4's Verify.
   - Verify: a ticker's beta is the same whether computed alone or with the universe.
   - Signed off: -
 

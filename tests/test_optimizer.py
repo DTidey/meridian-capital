@@ -6,12 +6,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 
 import portfolio.db  # noqa: F401
 from data.db import earnings_calendar
-from portfolio.optimizer import _apply_conviction_tilt, optimise
+from portfolio.optimizer import _adjust_beta, _apply_conviction_tilt, optimise
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -305,3 +306,103 @@ class TestOptimizerEdgeCases:
         prices: dict = {}
         result = optimise(candidates, prices, betas, _CONFIG, _SCORE_DATE, tmp_db)
         assert result.empty
+
+
+def _beta_book(long_betas, short_betas, long_gross=0.80, short_gross=0.70):
+    rows = [
+        {"ticker": f"L{i}", "direction": "LONG", "weight": long_gross / len(long_betas)}
+        for i in range(len(long_betas))
+    ] + [
+        {"ticker": f"S{i}", "direction": "SHORT", "weight": short_gross / len(short_betas)}
+        for i in range(len(short_betas))
+    ]
+    betas = pd.Series(
+        {f"L{i}": b for i, b in enumerate(long_betas)}
+        | {f"S{i}": b for i, b in enumerate(short_betas)}
+    )
+    return pd.DataFrame(rows), betas
+
+
+def _net_beta(df, betas):
+    sign = df["direction"].map({"LONG": 1.0, "SHORT": -1.0})
+    return float((df["weight"] * sign * df["ticker"].map(betas)).sum())
+
+
+class TestAdjustBeta:
+    """Packet 52 (H3): the beta adjustment reweights within books and actually moves beta."""
+
+    _LONGS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4]
+    _SHORTS = [0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8]
+
+    def _adjust(self, df, betas, max_beta=0.15):
+        return _adjust_beta(df, betas, max_beta, 0.80, 0.70, 0.005, 0.15)
+
+    def test_net_beta_brought_within_limit(self):
+        # Like 2026-10-23: high-beta shorts make the book short beta.
+        df, betas = _beta_book(self._LONGS, self._SHORTS)
+        assert _net_beta(df, betas) < -0.15
+        out = self._adjust(df, betas)
+        assert abs(_net_beta(out, betas)) <= 0.15 + 1e-6
+
+    def test_gross_and_bounds_kept(self):
+        df, betas = _beta_book(self._LONGS, self._SHORTS)
+        out = self._adjust(df, betas)
+        assert out.loc[out.direction == "LONG", "weight"].sum() == pytest.approx(0.80)
+        assert out.loc[out.direction == "SHORT", "weight"].sum() == pytest.approx(0.70)
+        assert out["weight"].between(0.005 - 1e-9, 0.15 + 1e-9).all()
+        assert set(out["ticker"]) == set(df["ticker"])
+
+    def test_positive_excess_tilts_the_other_way(self):
+        # High-beta longs, low-beta shorts: net beta too positive.
+        df, betas = _beta_book(self._SHORTS, self._LONGS)
+        assert _net_beta(df, betas) > 0.15
+        out = self._adjust(df, betas)
+        assert abs(_net_beta(out, betas)) <= 0.15 + 1e-6
+        longs = out[out.direction == "LONG"].set_index("ticker")["weight"]
+        assert longs["L0"] > longs["L9"]  # lower-beta long gains weight
+
+    def test_within_limit_unchanged(self):
+        df, betas = _beta_book([1.0] * 10, [1.0] * 10)
+        out = self._adjust(df, betas, max_beta=0.15)
+        pd.testing.assert_frame_equal(out.reset_index(drop=True), df.reset_index(drop=True))
+
+    def test_unreachable_warns(self, caplog):
+        # Adversarial: equal betas inside each book cannot be reweighted into the limit.
+        df, betas = _beta_book([0.5] * 10, [1.5] * 10)
+        with caplog.at_level("WARNING"):
+            out = self._adjust(df, betas)
+        assert "net beta" in caplog.text
+        assert out.loc[out.direction == "SHORT", "weight"].sum() == pytest.approx(0.70)
+
+    def test_old_scaling_no_op_is_gone(self):
+        # Adversarial: the old code scaled the short book and renormalised it back.
+        df, betas = _beta_book(self._LONGS, self._SHORTS)
+        out = self._adjust(df, betas)
+        assert not np.allclose(out["weight"].values, df["weight"].values)
+
+    def test_production_bounds_twenty_names(self):
+        # Production-like: 20 names a book, 5% cap; shorts higher beta than longs (2026-10-23),
+        # with the within-book spread real books have (the tilt needs it to move net beta).
+        longs = list(np.linspace(0.3, 1.3, 20))
+        shorts = list(np.linspace(0.8, 1.9, 20))
+        df, betas = _beta_book(longs, shorts)
+        assert _net_beta(df, betas) < -0.15
+        out = _adjust_beta(df, betas, 0.15, 0.80, 0.70, 0.005, 0.05)
+        assert abs(_net_beta(out, betas)) <= 0.15 + 1e-6
+        assert out["weight"].max() <= 0.05 + 1e-9
+        assert out.loc[out.direction == "SHORT", "weight"].sum() == pytest.approx(0.70)
+
+    def test_book_too_small_for_gross_is_skipped(self, caplog):
+        # Adversarial: 10 shorts x 5% cannot hold 0.70; the tilt must not shrink the book.
+        df, betas = _beta_book(self._LONGS + self._LONGS, self._SHORTS)
+        with caplog.at_level("WARNING"):
+            out = _adjust_beta(df, betas, 0.15, 0.80, 0.70, 0.005, 0.05)
+        assert "skipped" in caplog.text
+        pd.testing.assert_frame_equal(out, df)
+
+    def test_single_short_cannot_flip_net_beta(self, caplog):
+        # Adversarial: one short at the cap used to overshoot to the other side silently.
+        df, betas = _beta_book([0.5] * 20, [3.0], short_gross=0.05)
+        with caplog.at_level("WARNING"):
+            out = _adjust_beta(df, betas, 0.15, 0.80, 0.05, 0.005, 0.05)
+        assert abs(_net_beta(out, betas)) <= 0.15 + 1e-6 or "net beta" in caplog.text

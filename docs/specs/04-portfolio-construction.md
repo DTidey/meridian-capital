@@ -225,6 +225,8 @@ def compute_betas(
 - Fetch `adj_close` for all tickers + `SPY` from `daily_prices` for the last `lookback_days` calendar days.
 - Compute daily log-returns.
 - `beta[t] = cov(r_t, r_SPY) / var(r_SPY)` — standard OLS beta.
+- Since packet 52 (`docs/specs/52-betas.md`): pairwise against SPY over the last N SPY returns
+  (at least 20 shared, else 1.0), then Blume-adjusted `0.67 * raw + 0.33`.
 - Missing tickers (insufficient history) default to `beta = 1.0`.
 
 ```python
@@ -339,7 +341,7 @@ Primary optimiser. Always produces a valid result.
 
 7. **Sector neutrality:** For each GICS sector, compute `net_sector_weight = Σ(long_weights) − Σ(short_weights)`. If `|net_sector_weight| > max_sector_net_pct`, scale down the dominant-side positions in that sector proportionally until the constraint is met.
 
-8. **Beta adjustment:** Compute `net_beta = portfolio_beta(weights, betas)`. If `|net_beta| > max_beta`, scale the short book up or down until the constraint is satisfied (keeps long book fixed to avoid over-trading the higher-conviction side).
+8. **Beta adjustment:** Compute `net_beta = portfolio_beta(weights, betas)`. If `|net_beta| > max_beta`, scale the short book up or down until the constraint is satisfied (keeps long book fixed to avoid over-trading the higher-conviction side). Since packet 52: reweight within each book (longs by exp(-k beta), shorts by exp(+k beta), bounded, gross kept), k found by bisection; a warning if the limit cannot be reached.
 
 9. **Output:** Return `pd.DataFrame` with columns `[ticker, direction, weight, shares, sector, combined_score, beta]`.
 

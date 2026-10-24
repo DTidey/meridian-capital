@@ -183,7 +183,8 @@ def _build_cov(
         .pivot(index="date", columns="ticker", values="adj_close")
         .tail(cov_days + 1)
     )
-    returns = np.log(prices_df / prices_df.shift(1)).dropna()
+    # Keep a day if any ticker traded; per-ticker gaps are filled below, not dropped for all
+    returns = np.log(prices_df / prices_df.shift(1)).dropna(how="all")
 
     if len(returns) < _MIN_HISTORY:
         raise ValueError(f"Insufficient history for covariance: {len(returns)} < {_MIN_HISTORY}")

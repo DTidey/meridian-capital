@@ -8,11 +8,13 @@ import pandas as pd
 import sqlalchemy as sa
 
 from data.db import earnings_calendar
-from portfolio.beta import portfolio_beta
 from portfolio.book_targets import book_targets
 from portfolio.transaction_costs import compute_adv
 
 logger = logging.getLogger(__name__)
+
+_MAX_BETA_TILT = 20.0  # strongest exp(k * beta) tilt tried
+_BISECTION_STEPS = 40
 
 
 def optimise(
@@ -103,13 +105,13 @@ def optimise(
     longs = combined[combined["direction"] == "LONG"].copy()
     shorts = combined[combined["direction"] == "SHORT"].copy()
 
-    # 7. Beta adjustment (scale short book to meet constraint)
+    # 7. Beta adjustment (reweight within each book to meet the constraint)
     all_tickers = pd.concat([longs, shorts])["ticker"].tolist()
     if betas.empty:
         betas = pd.Series(dict.fromkeys(all_tickers, 1.0))
 
     combined = pd.concat([longs, shorts], ignore_index=True)
-    combined = _adjust_beta(combined, betas, max_beta, short_gross)
+    combined = _adjust_beta(combined, betas, max_beta, long_gross, short_gross, min_pos, max_pos)
 
     # 8. Compute share counts and current prices
     combined = _add_shares_and_prices(combined, prices, nav)
@@ -284,39 +286,112 @@ def _adjust_beta(
     combined: pd.DataFrame,
     betas: pd.Series,
     max_beta: float,
+    long_gross: float,
     short_gross: float,
+    min_pos: float,
+    max_pos: float,
 ) -> pd.DataFrame:
-    df = combined.copy()
-    long_mask = df["direction"] == "LONG"
-    short_mask = df["direction"] == "SHORT"
+    """Reweight within each book until |net beta| <= max_beta (weights positive here).
 
-    long_weights = df.loc[long_mask].set_index("ticker")["weight"]
-    short_weights = -df.loc[short_mask].set_index("ticker")["weight"]
-    all_weights = pd.concat([long_weights, short_weights])
+    Longs are scaled by exp(-k * beta) and shorts by exp(+k * beta), then each book is scaled
+    back to its gross target within the position bounds; k is the smallest tilt found by
+    bisection. Skipped, with a warning, when a book cannot hold its gross within the bounds.
+    """
+    beta = combined["ticker"].map(betas).fillna(1.0)
+    net = _net_beta(combined, beta)
+    if abs(net) <= max_beta:
+        return combined
+    if not _books_feasible(combined, long_gross, short_gross, min_pos, max_pos):
+        logger.warning("Optimizer: beta tilt skipped; a book cannot hold its gross in bounds")
+        return combined
 
-    net_beta = portfolio_beta(all_weights, betas)
-    if abs(net_beta) <= max_beta:
-        return df
+    sign = float(np.sign(net))
 
-    # Scale the short book to offset the net beta
-    long_beta_contrib = portfolio_beta(long_weights, betas)
-    target_short_beta = long_beta_contrib - max_beta * np.sign(net_beta)
+    def tilt(t: float) -> pd.DataFrame:
+        return _tilt_books(combined, beta, sign * t, long_gross, short_gross, min_pos, max_pos)
 
-    short_tickers = df.loc[short_mask, "ticker"].values
-    current_short_betas = betas.reindex(short_tickers).fillna(1.0)
-    current_short_beta_contrib = (
-        short_weights.reindex(short_tickers).fillna(0) * current_short_betas
-    ).sum()
+    low, high = 0.0, _MAX_BETA_TILT
+    for _ in range(_BISECTION_STEPS):
+        mid = (low + high) / 2
+        if sign * _net_beta(tilt(mid), beta) > max_beta:
+            low = mid
+        else:
+            high = mid
+    result = tilt(high)
+    if abs(_net_beta(result, beta)) > max_beta + 1e-9:
+        logger.warning(
+            "Optimizer: net beta %.3f cannot reach the %.2f limit by reweighting (best %.3f)",
+            net,
+            max_beta,
+            _net_beta(result, beta),
+        )
+    return result
 
-    if abs(current_short_beta_contrib) > 1e-6:
-        scale = abs(target_short_beta / current_short_beta_contrib)
-        scale = np.clip(scale, 0.5, 2.0)  # guard against extreme adjustments
-        df.loc[short_mask, "weight"] *= scale
-        # Re-normalise short book
-        short_total = df.loc[short_mask, "weight"].sum()
-        if short_total > 0:
-            df.loc[short_mask, "weight"] = df.loc[short_mask, "weight"] / short_total * short_gross
-    return df
+
+def _books_feasible(df, long_gross, short_gross, min_pos, max_pos) -> bool:
+    """True when each book can sum to its gross with every weight in [min_pos, max_pos]."""
+    for direction, gross in (("LONG", long_gross), ("SHORT", short_gross)):
+        n = int((df["direction"] == direction).sum())
+        if n and not (n * min_pos - 1e-9 <= gross <= n * max_pos + 1e-9):
+            return False
+    return True
+
+
+def _tilt_books(
+    df: pd.DataFrame,
+    beta: pd.Series,
+    k: float,
+    long_gross: float,
+    short_gross: float,
+    min_pos: float,
+    max_pos: float,
+) -> pd.DataFrame:
+    """Tilt by exp(-k * beta) for longs and exp(+k * beta) for shorts; rescale each book."""
+    out = df.copy()
+    long_mask = out["direction"] == "LONG"
+    out.loc[long_mask, "weight"] *= np.exp(-k * beta[long_mask])
+    out.loc[~long_mask, "weight"] *= np.exp(k * beta[~long_mask])
+    out.loc[long_mask, "weight"] = _bounded_scale(
+        out.loc[long_mask, "weight"], min_pos, max_pos, long_gross
+    )
+    out.loc[~long_mask, "weight"] = _bounded_scale(
+        out.loc[~long_mask, "weight"], min_pos, max_pos, short_gross
+    )
+    return out
+
+
+def _bounded_scale(w: pd.Series, lo: float, hi: float, gross: float) -> pd.Series:
+    """Scale w to sum to gross with every weight in [lo, hi], keeping the order of the rest.
+
+    Weights pushed past a bound are fixed at it and the others share what is left, so a strong
+    tilt saturates at the bounds instead of collapsing back to equal weights.
+    """
+    fixed = pd.Series(np.nan, index=w.index)
+    for _ in range(len(w) + 1):
+        free = fixed.isna()
+        if not free.any():
+            break
+        total = w[free].sum()
+        remaining = gross - fixed.sum()
+        if total > 0:
+            scaled = w[free] * remaining / total
+        else:
+            scaled = pd.Series(remaining / free.sum(), index=w[free].index)
+        over, under = scaled > hi, scaled < lo
+        if not over.any() and not under.any():
+            fixed[free] = scaled
+            break
+        # One side per pass: fixing both at once can overshoot the gross target
+        if over.any():
+            fixed[scaled.index[over]] = hi
+        else:
+            fixed[scaled.index[under]] = lo
+    return fixed
+
+
+def _net_beta(df: pd.DataFrame, beta: pd.Series) -> float:
+    sign = np.where(df["direction"] == "LONG", 1.0, -1.0)
+    return float((df["weight"] * sign * beta.loc[df.index]).sum())
 
 
 def _add_shares_and_prices(
