@@ -86,8 +86,8 @@ _CONFIG = {
     "portfolio": {
         "num_longs": 5,
         "num_shorts": 5,
-        "target_long_gross": 0.90,
-        "target_short_gross": 0.60,
+        "target_long_gross": 0.80,
+        "target_short_gross": 0.70,
         "max_position_pct": 0.30,
         "min_position_pct": 0.01,
         "max_sector_pct": 0.90,
@@ -131,7 +131,7 @@ class TestMvoOptimiser:
 
         result = optimise(cands, prices, betas, _CONFIG, "2024-03-30", tmp_db)
         long_sum = result[result["direction"] == "LONG"]["weight"].sum()
-        assert long_sum == pytest.approx(0.90, abs=0.05)
+        assert long_sum == pytest.approx(0.80, abs=0.05)
 
     def test_short_weights_sum_to_gross(self, tmp_db):
         cands = _make_candidates()
@@ -143,7 +143,7 @@ class TestMvoOptimiser:
         result = optimise(cands, prices, betas, _CONFIG, "2024-03-30", tmp_db)
         # Short weights are negative
         short_sum = result[result["direction"] == "SHORT"]["weight"].abs().sum()
-        assert short_sum == pytest.approx(0.60, abs=0.05)
+        assert short_sum == pytest.approx(0.70, abs=0.05)
 
     def test_falls_back_to_conviction_tilt_on_insufficient_data(self, tmp_db):
         # No price data → covariance fails → fallback

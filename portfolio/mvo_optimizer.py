@@ -9,6 +9,7 @@ from scipy.optimize import minimize
 
 from data.db import daily_prices
 from portfolio import optimizer as tilt
+from portfolio.book_targets import book_targets
 from portfolio.transaction_costs import estimate_cost
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,7 @@ def _mvo(
     _tc_cfg = pcfg.get("transaction_costs", {})
 
     nav = float(pcfg.get("nav_usd", 10_000_000))
-    long_gross = float(pcfg.get("target_long_gross", 0.90))
-    short_gross = float(pcfg.get("target_short_gross", 0.60))
+    long_gross, short_gross = book_targets(config)
     max_pos = float(pcfg.get("max_position_pct", 0.05))
     min_pos = float(pcfg.get("min_position_pct", 0.005))
     max_sector = float(pcfg.get("max_sector_pct", 0.25))

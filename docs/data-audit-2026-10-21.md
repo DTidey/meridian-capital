@@ -270,7 +270,10 @@ signed off as it is fixed.
     - Targets are 0.90 long and 0.60 short (net +0.30) against a 0.15 limit.
     - The configured net and gross bounds are never read.
   - Root cause: `config.yaml:162-166` vs `204-206`; `portfolio/optimizer.py:230-276`.
-  - Fix: not yet planned.
+  - Fix: packet 51 (PR pending). Targets 0.80 long / 0.70 short (owner's choice: gross 1.50,
+    net +0.10), and `portfolio/book_targets.py` rejects targets outside `gross_exposure`, the
+    portfolio net bounds or the pre-trade limits. Dry run on 2026-10-23: gross 150%, net 10%;
+    net beta -0.33 is H3 (next packet), so Verify waits for H3.
   - Verify: the simulated target book passes every pre-trade check.
   - Signed off: -
 
