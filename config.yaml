@@ -247,8 +247,6 @@ execution:
   alpaca_paper:         true    # false → live trading endpoint
   limit_slippage_pct:   0.005   # 0.5% limit buffer above/below mid
   max_adv_pct:          0.02    # chunk orders larger than 2% of ADV
-  poll_timeout_s:       120
-  poll_interval_s:      5
   shortable_cache_days: 7
 
 reporting:

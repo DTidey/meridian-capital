@@ -14,7 +14,7 @@ import execution.db  # noqa: F401
 import factors.db  # noqa: F401
 import portfolio.db  # noqa: F401
 import risk.db  # noqa: F401
-from data.db import initialise_schema
+from data.db import daily_prices, initialise_schema
 from execution.db import execution_orders
 from execution.executor import _chunk_orders, _limit_price, execute_approvals
 from portfolio.db import portfolio_positions, position_approvals
@@ -63,7 +63,11 @@ def _insert_position(conn, ticker, shares=100.0, current_price=150.0, direction=
     conn.commit()
 
 
-def _insert_approval(conn, ticker, action="BUY", target=200.0, current=100.0, status="APPROVED"):
+def _insert_approval(
+    conn, ticker, action="BUY", target=200.0, current=100.0, status="APPROVED", close=100.0
+):
+    if close is not None:  # limits come from the stored close for the score date
+        conn.execute(daily_prices.insert().values(ticker=ticker, date=_DATE, close=close))
     conn.execute(
         position_approvals.insert().values(
             rebalance_date=_DATE,
@@ -84,8 +88,6 @@ def _base_config():
         "execution": {
             "limit_slippage_pct": 0.005,
             "max_adv_pct": 0.02,
-            "poll_timeout_s": 5,
-            "poll_interval_s": 1,
             "shortable_cache_days": 7,
         }
     }
@@ -188,30 +190,6 @@ class TestExecuteApprovalsFilled:
         assert row is not None
         assert row.shares == pytest.approx(50.0)  # unchanged until the next book sync
 
-    def test_zero_fill_order_cancelled(self, conn, tmp_path):
-        """Zero fill should result in CANCELLED execution_order row."""
-        _insert_position(conn, "XYZ", shares=10.0, current_price=50.0)
-        _insert_approval(conn, "XYZ", action="BUY", target=20.0, current=10.0)
-
-        client = MagicMock()
-        mock_order = MagicMock()
-        mock_order.id = "order-uuid-zero"
-        client.submit_order.return_value = mock_order
-
-        zero_fill = MagicMock()
-        zero_fill.status = "filled"
-        zero_fill.filled_qty = "0"
-        zero_fill.filled_avg_price = None
-        client.get_order_by_id.return_value = zero_fill
-
-        with patch("execution.executor.is_shortable", return_value=True):
-            execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
-
-        rows = conn.execute(
-            sa.select(execution_orders.c.status).where(execution_orders.c.ticker == "XYZ")
-        ).fetchall()
-        assert any(r[0] == "CANCELLED" for r in rows)
-
     def test_not_shortable_skipped(self, conn, tmp_path):
         _insert_position(conn, "GME", shares=0.0, current_price=15.0)
         _insert_approval(conn, "GME", action="SHORT", target=100.0, current=0.0)
@@ -227,12 +205,11 @@ class TestExecuteApprovalsFilled:
         client.submit_order.assert_not_called()
 
 
-def _filled_client(symbol_positions=()):
+def _filled_client(symbol_positions=(), open_orders=()):
     client = MagicMock()
     client.get_all_positions.return_value = list(symbol_positions)
-    client.submit_order.return_value = MagicMock(id="order-1")
-    filled = MagicMock(status="filled", filled_qty="5", filled_avg_price="400")
-    client.get_order_by_id.return_value = filled
+    client.get_orders.return_value = list(open_orders)
+    client.submit_order.return_value = MagicMock(id="order-1", status="accepted", filled_qty="0")
     return client
 
 
@@ -291,3 +268,107 @@ class TestBookOfRecord:
         results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
         assert results[0]["status"] != "SKIPPED"
         client.submit_order.assert_called_once()
+
+
+def _order_rows(conn, ticker):
+    return conn.execute(
+        sa.select(execution_orders).where(execution_orders.c.ticker == ticker)
+    ).fetchall()
+
+
+class TestSubmission:
+    """Packet 49: queued DAY orders are recorded, not polled."""
+
+    def test_records_alpaca_status_without_polling(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        with patch("time.sleep") as sleep:
+            results = execute_approvals(
+                conn, client, _DATE, _base_config(), tmp_path, dry_run=False
+            )
+        sleep.assert_not_called()
+        client.get_order_by_id.assert_not_called()
+        assert results[0]["status"] == "SUBMITTED"
+        [row] = _order_rows(conn, "AAPL")
+        assert row.order_id == "order-1"
+        assert row.status == "PENDING"
+
+    def test_rejected_at_submission_is_failed(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        client.submit_order.return_value = MagicMock(id="o-2", status="rejected", filled_qty="0")
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] == "FAILED"
+        assert _order_rows(conn, "AAPL")[0].status == "FAILED"
+
+    def test_submit_error_is_failed_not_cancelled(self, conn, tmp_path):
+        # Adversarial: nothing in the executor may write CANCELLED.
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        client.submit_order.side_effect = RuntimeError("alpaca down")
+        execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert [r.status for r in _order_rows(conn, "AAPL")] == ["FAILED"]
+
+    def test_limit_from_close_for_score_date(self, conn, tmp_path):
+        # A position's stale current_price must not set the limit.
+        _insert_position(conn, "AAPL", shares=5.0, current_price=150.0)
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=5.0, close=200.0)
+        conn.execute(daily_prices.insert().values(ticker="AAPL", date="2026-05-05", close=190.0))
+        conn.commit()
+        client = _filled_client()
+        execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        req = client.submit_order.call_args.args[0]
+        assert req.limit_price == pytest.approx(201.0)  # 200 * 1.005
+
+    def test_no_close_for_date_skipped(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0, close=None)
+        conn.execute(daily_prices.insert().values(ticker="AAPL", date="2026-05-05", close=190.0))
+        conn.commit()
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0] == {
+            "ticker": "AAPL",
+            "action": "BUY",
+            "status": "SKIPPED",
+            "reason": "no_close",
+        }
+        client.submit_order.assert_not_called()
+        assert _order_rows(conn, "AAPL") == []
+
+    def test_open_order_skipped(self, conn, tmp_path):
+        _insert_approval(conn, "BRK-B", action="BUY", target=5.0, current=0.0)
+        client = _filled_client(open_orders=[MagicMock(symbol="BRK.B")])
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["reason"] == "open_order"
+        client.submit_order.assert_not_called()
+
+    def test_open_orders_unavailable_raises(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        client.get_orders.side_effect = RuntimeError("alpaca down")
+        with pytest.raises(RuntimeError):
+            execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        client.submit_order.assert_not_called()
+        assert _order_rows(conn, "AAPL") == []
+
+    def test_dry_run_does_not_list_open_orders(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        client.get_orders.side_effect = RuntimeError("must not be called")
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=True)
+        assert results[0]["status"] == "DRY_RUN"
+
+    def test_open_orders_listed_with_max_limit(self, conn, tmp_path):
+        # Alpaca returns 50 orders unless asked for more; the guard asks for its maximum.
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert client.get_orders.call_args.args[0].limit == 500
+
+    def test_truncated_open_orders_raises(self, conn, tmp_path):
+        # Adversarial: a full page may hide more open orders, so nothing is submitted.
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client(open_orders=[MagicMock(symbol=f"T{i}") for i in range(500)])
+        with pytest.raises(RuntimeError):
+            execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        client.submit_order.assert_not_called()

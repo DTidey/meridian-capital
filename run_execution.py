@@ -168,12 +168,14 @@ def main() -> int:
         return 0
 
     from execution.book_sync import sync_book
+    from execution.order_sync import sync_orders
 
     # -----------------------------------------------------------------------
     # --sync: rebuild positions from the broker
     # -----------------------------------------------------------------------
     if args.sync:
         with engine.connect() as conn:
+            print(f"Order sync: {sync_orders(conn, client)}")
             summary = sync_book(conn, client, score_date)
         _print_sync(summary)
         return 0
@@ -188,7 +190,9 @@ def main() -> int:
     dry_run = args.dry_run
 
     with engine.connect() as conn:
-        # 1. Book sync (dry-run: log only, no DB writes)
+        # 1. Order sync (record fills since the last run), then book sync
+        #    (dry-run: book sync logs only, no DB writes)
+        print(f"Order sync: {sync_orders(conn, client)}")
         _print_sync(sync_book(conn, client, score_date, dry_run=dry_run))
 
         # 2. Market open check (warn but don't block)
@@ -205,6 +209,9 @@ def main() -> int:
 
         print(f"\nExecution summary for {score_date}:")
         _print_summary(results)
+        if results and all(r.get("reason") == "no_close" for r in results):
+            log.error("No close stored for %s: no orders placed (wrong --date?)", score_date)
+            return 1
 
         # 4. Record fills: the broker is the book of record
         if not dry_run:
