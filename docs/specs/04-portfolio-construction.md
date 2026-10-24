@@ -327,7 +327,7 @@ Primary optimiser. Always produces a valid result.
 
 2. **Equal-weight base:** Long book: each ticker starts at `target_long_gross / num_longs`. Short book: each ticker starts at `target_short_gross / num_shorts`.
 
-3. **Conviction tilt:** Within each book, rank by `combined_score`. Top 5% of positions → multiply weight by `top5_multiplier (1.5×)`. Top 10% (but below 5%) → `top10_multiplier (1.25×)`. Re-normalise each book to its gross target after tilting.
+3. **Conviction tilt:** Within each book, rank by `combined_score`, strongest first: highest score for longs, lowest for shorts (packet 48). Top 5% of positions → multiply weight by `top5_multiplier (1.5×)`. Top 10% (but below 5%) → `top10_multiplier (1.25×)`. Re-normalise each book to its gross target after tilting.
 
 4. **Earnings haircut:** For any ticker with earnings within `earnings_blackout_days` days, halve the weight; redistribute the surplus equally across remaining positions in the same book. Re-normalise again.
 
