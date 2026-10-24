@@ -15,6 +15,27 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** work in absolute shares per direction, and close remaining lots when a ticker drops
   out of the next snapshot; or build lots from `execution_orders` fills instead.
 
+## Execution metrics count only FILLED orders
+
+- **Raised:** 2026-10-24, packet 49 review.
+- **Problem:** `dashboard/page_execution.py` (filled orders, slippage, worst fills, daily
+  notional) and `execution/costs.py` `slippage_stats` filter on `status == "FILLED"`. With
+  queued DAY limits, an order that partly fills and then expires is `CANCELLED` with
+  `filled_shares` > 0 and is left out of every metric. Slippage is measured against the order's
+  own limit, which a limit order cannot breach, so it is almost always <= 0 bps; measuring
+  against the score date's close would say more.
+- **Fix:** count `filled_shares` > 0 in any final status; slippage against the stored close.
+  Natural fit with packet 50 (NAV and turnover from fills).
+
+## Order rows left PENDING after a crash mid-submit
+
+- **Raised:** 2026-10-24, packet 49 review.
+- **Problem:** `execution/executor.py` `_submit_chunk` inserts a `PENDING` row before calling
+  Alpaca. If the process dies between the two, the row has no order id: `sync_orders` never
+  touches it and it shows as open in `--status` and the dashboard.
+- **Fix:** mark rows still `PENDING` without an order id as `FAILED` at the start of the next
+  sync, or insert the row only after Alpaca answers.
+
 ## Turnover from daily snapshots
 
 - **Raised:** 2026-10-24, packet 44 review.

@@ -70,6 +70,12 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Order handling (packet `49-order-handling`): the executor no longer polls and marks unfilled
+  orders CANCELLED in the database while they stay live at Alpaca; queued DAY orders keep
+  Alpaca's status and the next run's order sync records fills, final status and slippage;
+  limits come from the score date's close; no duplicate order for a ticker with an open order
+  (open orders listed at Alpaca's 500 maximum, failing closed); a run with no closes fails.
+  Audit C12.
 - Book of record (packet `44-book-of-record`): `portfolio_positions` is rebuilt from Alpaca
   each night (also in `--whatif`) and after execution, with signed shares and weights and a
   whole-book `portfolio_history` snapshot; rebalance and the executor no longer write

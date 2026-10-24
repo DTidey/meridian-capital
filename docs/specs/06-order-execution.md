@@ -14,7 +14,7 @@ Layer 6 reads APPROVED rows from `position_approvals`, maps them to Alpaca limit
 - AC2: All orders are submitted as day limit orders with a 0.5% slippage buffer above the current price for BUY/COVER actions and 0.5% below for SELL/SHORT actions.
 - AC3: Orders where the absolute share quantity divided by 20-day ADV exceeds 2% are split into chunks of 2% of ADV to limit market impact.
 - AC4: SHORT actions are skipped with a WARNING log entry (not an error) if `short_check.is_shortable()` returns False for the ticker; shortability results are cached for 7 days per ticker.
-- AC5: Partial fills are kept without retry; only zero-fill orders are logged as WARNING and marked CANCELLED in `execution_orders`.
+- AC5: Partial fills are kept without retry; only zero-fill orders are logged as WARNING and marked CANCELLED in `execution_orders`. (Superseded by packet 49: `docs/specs/49-order-handling.md`: orders are not polled; `sync_orders()` records Alpaca's status the next night, and CANCELLED only when Alpaca reports it.)
 - AC6: `reconcile_positions()` diffs broker positions against `portfolio_positions` and auto-corrects any discrepancy greater than 0.5 shares by updating `portfolio_positions` to match the broker, logging a WARNING for each correction. (Superseded by packet 44: `docs/specs/44-book-of-record.md`: `sync_book()` rebuilds `portfolio_positions` from the broker; the executor no longer writes positions.)
 - AC7: A SIGINT signal during execution cancels all open Alpaca orders via `cancel_open_orders()` and exits gracefully without raising an exception.
 - AC8: `run_execution.py --dry-run` logs the orders that would be submitted but makes no Alpaca API calls and writes no rows to `execution_orders`.
@@ -167,6 +167,8 @@ impact. Returns list of chunk sizes (all positive; caller handles sign).
 - Returns Alpaca order UUID on success.
 
 ### `poll_order(client, order_id, timeout_s=120, interval_s=5) -> dict`
+
+Removed by packet 49; replaced by `execution/order_sync.py` `sync_orders()`.
 Polls until status in {filled, cancelled, expired, rejected} or timeout.
 Returns `{status, filled_qty, avg_fill_price}`.
 
@@ -182,6 +184,9 @@ Returns `{status, filled_qty, avg_fill_price}`.
       `poll_order()` -> update row with fill data.
    d. On zero fill: log WARNING, mark CANCELLED.
    e. On partial fill: keep -- do not retry.
+
+   Since packet 49: limits from the score date's stored close; no polling; each row keeps
+   Alpaca's status and `execution/order_sync.py` records fills the next night.
    f. Update `portfolio_positions` to reflect filled quantity.
 4. Return list of result dicts.
 
@@ -250,6 +255,8 @@ execution:
   poll_interval_s: 5
   shortable_cache_days: 7
 ```
+
+`poll_timeout_s` and `poll_interval_s` were removed by packet 49.
 
 ---
 

@@ -220,11 +220,13 @@ signed off as it is fixed.
       morning unrecorded.
     - Their limits are set from a close two sessions old.
   - Root cause: `execution/executor.py:101-107, 153-155, 367-369`.
-  - Fix: packet 49 (planned; split from 44 on 2026-10-24): limit-on-open (OPG) orders after the
-    close, order status synced from Alpaca the next night.
-  - Verify:
+  - Fix: packet 49 (PR pending). DAY limit orders from the nightly run, queued by Alpaca for the
+    next session (owner's choice; Alpaca rejects opening-auction orders submitted 9:28am-7:00pm
+    New York time). No polling; `execution/order_sync.py` records each order's Alpaca status,
+    fills and slippage the next night. Limits from the stored close for the score date.
+  - Verify (amended 2026-10-24: no live quote exists after the close):
     - no order is CANCELLED in the database while open at Alpaca;
-    - limits are set from a live quote.
+    - limits are set from the close of the session that just ended.
   - Signed off: -
 
 ## High: wrong inputs, weaker risk control

@@ -47,3 +47,19 @@
   API that reports short qty signed or unsigned gives the same row.
 - A failed sync stops a real run before Layer 4 (no rebalance against a stale book) but not a
   `--whatif` run.
+
+## Packet 49: order handling
+
+- OPG (limit-on-open) was the agreed plan, but Alpaca rejects OPG orders submitted between
+  9:28am and 7:00pm New York time; the nightly run reaches Layer 6 at about 17:30-18:30 New
+  York. The owner chose queued DAY limits over adding a 00:30 UK execution cron.
+- Record, do not wait: after the close nothing can fill within the old 120-second poll, so
+  polling only produced false CANCELLED rows. The next night's `sync_orders` runs before the
+  book sync, so fills and positions are recorded together.
+- Existing status names kept (dashboard, `--status`); an order that partly fills and expires is
+  CANCELLED with its `filled_shares`, so the slippage stats (FILLED only) exclude it.
+- No close for the score date means no order, rather than trading on an older price.
+- If open orders cannot be listed, nothing is submitted: a duplicate order is worse than a
+  missed day.
+- C12's Verify said "limits from a live quote"; no live quote exists after the close, so it is
+  amended to the close of the session that just ended.
