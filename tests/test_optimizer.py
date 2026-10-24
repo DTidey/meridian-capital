@@ -11,7 +11,7 @@ import pytest
 
 import portfolio.db  # noqa: F401
 from data.db import earnings_calendar
-from portfolio.optimizer import optimise
+from portfolio.optimizer import _apply_conviction_tilt, optimise
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -169,6 +169,96 @@ class TestOptimizerSelection:
         )
         result_shorts = result[result["direction"] == "SHORT"]["ticker"].tolist()
         assert set(result_shorts) == set(short_cands)
+
+
+def _book(scores):
+    return pd.DataFrame(
+        {
+            "ticker": [f"T{i:02d}" for i in range(len(scores))],
+            "combined_score": [float(s) for s in scores],
+            "weight": 0.0,
+        }
+    )
+
+
+def _loose_config():
+    """20-name books with sector, beta and position caps that never bind."""
+    cfg = dict(_CONFIG["portfolio"])
+    cfg.update(
+        {
+            "num_longs": 20,
+            "num_shorts": 20,
+            "max_position_pct": 1.0,
+            "max_beta": 1.0,
+            "max_sector_pct": 1.0,
+            "max_sector_net_pct": 1.0,
+        }
+    )
+    return {"portfolio": cfg}
+
+
+class TestConvictionTilt:
+    def test_strongest_short_gets_top_multiplier(self):
+        # 20 shorts: top 5% = 1 name at 1.5x, next 5% = 1 name at 1.25x.
+        book = _book(range(1, 21))
+        tilted = _apply_conviction_tilt(book, 1.5, 1.25, 0.60, ascending=True)
+        w = tilted.set_index("ticker")["weight"]
+        base = w["T10"]
+        assert w["T00"] == pytest.approx(1.5 * base)
+        assert w["T01"] == pytest.approx(1.25 * base)
+
+    def test_weakest_short_gets_base_weight(self):
+        book = _book(range(1, 21))
+        tilted = _apply_conviction_tilt(book, 1.5, 1.25, 0.60, ascending=True)
+        w = tilted.set_index("ticker")["weight"]
+        assert w["T19"] == pytest.approx(w["T10"])
+        assert w["T19"] < w["T00"]
+
+    def test_strongest_long_gets_top_multiplier(self):
+        book = _book(range(81, 101))
+        tilted = _apply_conviction_tilt(book, 1.5, 1.25, 0.90)
+        w = tilted.set_index("ticker")["weight"]
+        assert w["T19"] == pytest.approx(1.5 * w["T05"])
+        assert w["T18"] == pytest.approx(1.25 * w["T05"])
+        assert w["T00"] == pytest.approx(w["T05"])
+
+    def test_tilted_books_sum_to_gross(self):
+        shorts = _apply_conviction_tilt(_book(range(1, 21)), 1.5, 1.25, 0.60, ascending=True)
+        longs = _apply_conviction_tilt(_book(range(81, 101)), 1.5, 1.25, 0.90)
+        assert shorts["weight"].sum() == pytest.approx(0.60)
+        assert longs["weight"].sum() == pytest.approx(0.90)
+
+    def test_optimise_tilts_strongest_short(self, tmp_db):
+        candidates = _build_candidates()
+        result = optimise(
+            candidates,
+            _build_prices(candidates),
+            _build_betas(candidates),
+            _loose_config(),
+            _SCORE_DATE,
+            tmp_db,
+        )
+        w = result.set_index("ticker")["weight"].abs()
+        # S00 (score 2) is the strongest short, S19 (score 40) the weakest.
+        assert w["S00"] > w["S19"]
+        # Adversarial: the long book keeps rewarding its highest score (L19, 89).
+        assert w["L19"] > w["L00"]
+
+    def test_unsorted_input_short_book(self):
+        # Adversarial: input order must not matter; the lowest score still wins.
+        book = _book([12, 3, 19, 7, 1, 15, 9, 20, 5, 11, 2, 17, 4, 14, 6, 18, 8, 13, 10, 16])
+        tilted = _apply_conviction_tilt(book, 1.5, 1.25, 0.60, ascending=True)
+        top = tilted.sort_values("weight", ascending=False)["combined_score"].head(2).tolist()
+        assert top == [1.0, 2.0]
+
+    def test_single_short(self):
+        # Adversarial: one name takes the whole gross target whatever the multiplier.
+        tilted = _apply_conviction_tilt(_book([7]), 1.5, 1.25, 0.60, ascending=True)
+        assert tilted["weight"].tolist() == pytest.approx([0.60])
+
+    def test_empty_book_unchanged(self):
+        empty = _book([])
+        assert _apply_conviction_tilt(empty, 1.5, 1.25, 0.60, ascending=True).empty
 
 
 class TestEarningsHaircut:

@@ -70,6 +70,8 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Conviction tilt (packet `48-short-conviction-tilt`): the short book's 1.5x and 1.25x
+  multipliers go to the strongest shorts (lowest scores), not the weakest.
 - Combined score (packet `43-combined-score-candidates`): direction is the Layer 2 direction,
   so only AI-reviewed candidates can be LONG or SHORT; within each side, quant and AI ranks are
   blended 60/40 and mapped onto the side's band (longs 80-100, shorts 0-20). Ends unreviewed

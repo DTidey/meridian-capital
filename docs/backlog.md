@@ -3,16 +3,6 @@
 Small items deferred for bundling into a future packet. When an item is
 picked up, give it a spec in `docs/specs/` and remove it from this list.
 
-## Short book conviction tilt favours the weakest shorts
-
-- **Raised:** 2026-10-24, packet 43 scoping.
-- **Problem:** `portfolio/optimizer.py` `_apply_conviction_tilt` sorts each book by
-  `combined_score` descending. For the short book that gives the top-5% and top-10% weight
-  multipliers to the shorts with the highest scores (nearest 20), the weakest, not the
-  strongest. The conviction optimiser is the one the nightly run uses.
-- **Fix:** sort the short book ascending (strongest short first); add a test that the lowest
-  scoring short gets the largest weight. Own packet, agreed 2026-10-24.
-
 ## Risk factors still not found for six 10-Ks
 
 - **Raised:** 2026-10-15, packet 33 universe check.

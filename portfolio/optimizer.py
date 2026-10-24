@@ -78,7 +78,7 @@ def optimise(
 
     # 2. Conviction tilt within each book
     longs = _apply_conviction_tilt(longs, top5_mult, top10_mult, long_gross)
-    shorts = _apply_conviction_tilt(shorts, top5_mult, top10_mult, short_gross)
+    shorts = _apply_conviction_tilt(shorts, top5_mult, top10_mult, short_gross, ascending=True)
 
     # 3. Earnings haircut
     blackout = _earnings_blackout_set(
@@ -144,11 +144,13 @@ def _apply_conviction_tilt(
     top5_mult: float,
     top10_mult: float,
     gross_target: float,
+    ascending: bool = False,
 ) -> pd.DataFrame:
+    """Boost the strongest positions; ascending=True for the short book (low score = strong)."""
     n = len(book)
     if n == 0:
         return book
-    df = book.sort_values("combined_score", ascending=False).copy()
+    df = book.sort_values("combined_score", ascending=ascending).copy()
     top5_cut = max(1, int(np.ceil(n * 0.05)))
     top10_cut = max(1, int(np.ceil(n * 0.10)))
 

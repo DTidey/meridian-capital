@@ -23,3 +23,11 @@
   with no AI result, and a lone candidate ranks 50.
 - Found while scoping: the short book's conviction tilt rewards the weakest shorts. Backlog
   item; own packet.
+
+## Packet 48: short book conviction tilt
+
+- An `ascending` flag on `_apply_conviction_tilt`, matching the selection sort in `optimise`,
+  rather than ranking by distance from 50: the same order on packet 43's bands, but the meaning
+  stays tied to the book rather than to where the score bands sit.
+- Reproduced end to end before the fix: with non-binding caps, the weakest selected short
+  (score 40) got 4.3% against 2.9% for the strongest (score 2).
