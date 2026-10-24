@@ -131,7 +131,7 @@ The system is organised into seven sequential layers, each building on the outpu
 | 3 | `analysis/` | Complete | LLM-driven qualitative analysis of earnings transcripts, SEC filings, and insider signals; 60/40 blend with Layer 2 quantitative scores |
 | 4 | `portfolio/` | Complete | Target portfolio construction (20 longs / 20 shorts, NAV from `portfolio.nav_usd`, set to $100,000 in `config.yaml`) via conviction-tilt or MVO optimisation; sector-neutral, beta-hedged |
 | 5 | `risk/` | Complete | Pre-trade veto gate (8 checks), circuit breakers, tail-risk monitors, Barra-style factor risk model, stress testing |
-| 6 | `execution/` | Complete | Alpaca limit-order routing with chunking, fill tracking, shortability cache, and live position reconciliation |
+| 6 | `execution/` | Complete | Alpaca DAY limit orders queued for the next session, order sync, shortability cache, and book sync of positions and NAV from Alpaca |
 | 7 | `reporting/` + `dashboard/` | Complete | Nightly P&L attribution, tear sheets, LP letters; seven-page Streamlit dashboard (including a per-ticker page with valuation, institutional holdings and a filing reader) with JARVIS AI commentary |
 
 ---
@@ -147,7 +147,7 @@ Each layer has its own entry point script. A unified orchestrator (`run_all.py`)
 | `run_analysis.py` | 3 | AI analysis — LLM enrichment of candidates, combined score |
 | `run_portfolio.py` | 4 | Portfolio construction — target positions via conviction-tilt or MVO |
 | `run_risk_check.py` | 5 | Risk gate — pre-trade veto checks, circuit breakers, stress tests |
-| `run_execution.py` | 6 | Order execution — submit, poll, and reconcile Alpaca orders |
+| `run_execution.py` | 6 | Order execution — submit Alpaca orders, sync order status, book sync of positions and NAV |
 | `run_reporting.py` | 7 | Reporting — P&L attribution, tear sheet, LP letter |
 | `run_all.py` | 1–7 | Full daily run — orchestrates all layers in sequence |
 

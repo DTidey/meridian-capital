@@ -36,6 +36,28 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** mark rows still `PENDING` without an order id as `FAILED` at the start of the next
   sync, or insert the row only after Alpaca answers.
 
+## ADV chunking never applied
+
+- **Raised:** 2026-10-24, paper trading doc review.
+- **Problem:** `execution/executor.py` `_execute_one` calls `_chunk_orders(delta_shares, None,
+  ...)`, so `execution.max_adv_pct` (2%) never splits an order. Pre-existing: before packet 49
+  the ADV was also hard-coded to None ("ADV not stored on approvals"). Spec 06 AC3 and the
+  architecture doc described chunking as working. Also, chunks would all be DAY orders for the
+  same session, so splitting them would not spread the order across days anyway.
+- **Fix:** decide whether to drop chunking (Layer 4 already caps positions at
+  `portfolio.adv_max_pct` of ADV) or pass the 20-day ADV and spread chunks across sessions.
+
+## Unused config and spec drift in Layer 6
+
+- **Raised:** 2026-10-24, paper trading doc review.
+- **Problem:** `execution.alpaca_paper` in `config.yaml` is read by no code; only the
+  `ALPACA_PAPER` environment variable selects paper or live (`execution/broker.py`
+  `get_client`). Spec 06 AC8 says `--dry-run` makes no Alpaca calls and writes no
+  `execution_orders` rows; it connects to Alpaca, runs the order sync (which writes) and
+  inserts `DRY_RUN` rows.
+- **Fix:** remove `alpaca_paper` from `config.yaml` (or read it, with the env var overriding);
+  restate spec 06 AC8 to match, or make dry runs read-only.
+
 ## Research page net exposure with signed weights
 
 - **Raised:** 2026-10-24, packet 44 review.

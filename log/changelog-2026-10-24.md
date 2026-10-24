@@ -114,3 +114,13 @@
 - The tilt's reach under the 5% cap is limited (about 0.08-0.10 of net beta with little
   within-book spread); beyond that the warning and the pre-trade veto take over. Noted rather
   than widened: wider caps are a sizing decision.
+
+## Docs: Alpaca paper trading guide
+
+- Rewritten around the nightly flow packets 44, 49 and 50 created (orders submitted after the
+  close, recorded the next night; Alpaca as book of record and NAV), rather than patched:
+  the old "execute during market hours" step now fails with `no_close`.
+- The supervised path documented is `run_all.py --dry-run` then `run_execution.py --execute`
+  the same evening: `--whatif` commits no approvals, so it cannot be followed by `--execute`.
+- Code mismatches found (ADV chunking never applied, `execution.alpaca_paper` unused, spec 06
+  AC8 versus dry-run behaviour) go to the backlog; this change is docs only.

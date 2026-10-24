@@ -303,7 +303,7 @@ Tests live in `tests/` and run against temporary-file SQLite databases created p
 | File | Subject |
 |------|---------|
 | `test_execution_broker.py` | Alpaca client, position sync, market clock |
-| `test_execution_executor.py` | Order submission, fill polling, partial fills |
+| `test_execution_executor.py` | Order submission, limits from the stored close, skip reasons |
 | `test_execution_order_manager.py` | SIGINT handler, cancel-open-orders |
 | `test_execution_short_check.py` | Shortability cache (7-day TTL) |
 | `test_execution_costs.py` | Slippage statistics |
@@ -348,7 +348,7 @@ Calls the configured LLM (OpenAI models, directly or via OpenRouter) for LONG/SH
 
 ### Layer 4 — Portfolio Construction (`portfolio/`)
 
-Consumes Layer 3 `combined_scores` to build a 20-long / 20-short book against the NAV in `portfolio.nav_usd` (set to $100,000 in `config.yaml`). Two methods: conviction-tilt (default, always converges) and Markowitz MVO (optional, falls back to conviction-tilt on non-convergence). Constraints: 150% gross, 0–10% net, 5% single-name cap, 25% sector gross cap, 0.15 net beta. Output: `portfolio_positions`, `portfolio_history`, `position_approvals` (PENDING).
+Consumes Layer 3 `combined_scores` to build a 20-long / 20-short book against the NAV in `portfolio.nav_usd` (set to $100,000 in `config.yaml`). Two methods: conviction-tilt (default, always converges) and Markowitz MVO (optional, falls back to conviction-tilt on non-convergence). Constraints: 150% gross, 0–10% net, 5% single-name cap, 25% sector gross cap, 0.15 net beta. Reads the broker book from `portfolio_positions` and NAV from `portfolio_nav` (config `nav_usd` before the first sync). Output: `position_approvals` (PENDING).
 
 ### Layer 5 — Risk Management (`risk/`)
 
@@ -356,7 +356,7 @@ Post-optimisation, pre-execution gate. Eight pre-trade veto checks stamp each PE
 
 ### Layer 6 — Execution (`execution/`)
 
-Reads APPROVED rows from `position_approvals`; submits day-limit orders via the Alpaca API with a 0.5% price buffer. Large orders are chunked to ≤2% ADV. Short positions are gated by a 7-day shortability cache. Fills are polled until terminal; live positions are reconciled after each run. Output: `execution_orders`, updated `portfolio_positions` and `portfolio_history`.
+Alpaca is the book of record. The book sync (`run_execution.py --sync`, run nightly between Layers 3 and 4) rebuilds `portfolio_positions` from the broker with signed shares, writes a whole-book `portfolio_history` snapshot and records Alpaca equity as `portfolio_nav`. Execution reads APPROVED rows from `position_approvals` and submits DAY limit orders at the score date's close ±0.5%; submitted after the US close, Alpaca queues them for the next session. Orders are not polled: the next run's order sync records Alpaca's status and fills. Short positions are gated by a 7-day shortability cache. ADV chunking exists but is not applied (no ADV is passed). Output: `execution_orders`, `portfolio_positions`, `portfolio_history`, `portfolio_nav`. See `docs/alpaca_paper_trading.md`.
 
 ### Layer 7 — Reporting and Dashboard (`reporting/`, `dashboard/`)
 
