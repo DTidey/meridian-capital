@@ -1,4 +1,7 @@
-"""Packet 45: pip-audit runs with no ignores; the packet 36 pillow ignores are gone."""
+"""Packet 45: pip-audit runs with no ignores; the packet 36 pillow ignores are gone.
+
+Packet 47: filelock pinned at the version that fixes its October 2026 advisories.
+"""
 
 from __future__ import annotations
 
@@ -66,6 +69,14 @@ class TestPins:
                 package
             )
 
+    def test_filelock_at_fixed_version(self):
+        # Dev-only today (via virtualenv, cachecontrol, python-discovery); a runtime pin counts too.
+        assert _pin_in((_ROOT / "requirements-dev.txt").read_text(), "filelock")
+        for requirements in _REQUIREMENTS:
+            pin = _pin_in((_ROOT / requirements).read_text(), "filelock")
+            if pin:
+                assert _version(pin) >= (4, 2, 1), requirements
+
     def test_certifi_at_fixed_version(self):
         for requirements in _REQUIREMENTS:
             assert _version(_pin(requirements, "certifi")) >= (2026, 10, 19), requirements
@@ -77,6 +88,8 @@ class TestVersionParsing:
         assert _version("2026.9.1") < (2026, 10, 19)
         assert _version("12.3.0") < (13,) <= _version("13.0.0")
         assert _version("21.14.12") >= (21, 14, 9)
+        assert _version("3.29.4") < (4, 2, 1) <= _version("4.2.4")
+        assert _version("4.2.0") < (4, 2, 1) <= _version("4.10.0")
 
 
 class TestAdversarial:

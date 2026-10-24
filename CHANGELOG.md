@@ -58,6 +58,8 @@ Release policy:
   agent rules (packet `14-merge-10rules-into-agents`).
 
 ### Security
+- filelock 3.29.4 -> 4.2.4 (dev only) clears three new advisories that failed `make security`
+  on every PR (packet `47-filelock-4`).
 - pillow 12.3.0 -> 13.0.0 (with streamlit 1.66.1, the first to allow it) and virtualenv
   21.14.5 -> 21.14.12 clear 24 pillow and two virtualenv advisories; the packet 36 pip-audit
   ignores are removed, so `make security` ignores nothing (packet `45-pillow-13-virtualenv`).
