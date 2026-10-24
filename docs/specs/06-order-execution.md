@@ -15,7 +15,7 @@ Layer 6 reads APPROVED rows from `position_approvals`, maps them to Alpaca limit
 - AC3: Orders where the absolute share quantity divided by 20-day ADV exceeds 2% are split into chunks of 2% of ADV to limit market impact.
 - AC4: SHORT actions are skipped with a WARNING log entry (not an error) if `short_check.is_shortable()` returns False for the ticker; shortability results are cached for 7 days per ticker.
 - AC5: Partial fills are kept without retry; only zero-fill orders are logged as WARNING and marked CANCELLED in `execution_orders`.
-- AC6: `reconcile_positions()` diffs broker positions against `portfolio_positions` and auto-corrects any discrepancy greater than 0.5 shares by updating `portfolio_positions` to match the broker, logging a WARNING for each correction.
+- AC6: `reconcile_positions()` diffs broker positions against `portfolio_positions` and auto-corrects any discrepancy greater than 0.5 shares by updating `portfolio_positions` to match the broker, logging a WARNING for each correction. (Superseded by packet 44: `docs/specs/44-book-of-record.md`: `sync_book()` rebuilds `portfolio_positions` from the broker; the executor no longer writes positions.)
 - AC7: A SIGINT signal during execution cancels all open Alpaca orders via `cancel_open_orders()` and exits gracefully without raising an exception.
 - AC8: `run_execution.py --dry-run` logs the orders that would be submitted but makes no Alpaca API calls and writes no rows to `execution_orders`.
 - AC9: Slippage is recorded in basis points per filled order and `slippage_stats()` returns mean, p95, worst ticker, and count over a configurable trailing window.
@@ -125,6 +125,8 @@ Calls Alpaca clock endpoint. Logs a WARNING when closed but does not raise.
 Returns `{ticker: signed_qty}` -- positive for long, negative for short.
 
 ### `reconcile_positions(conn, cache_dir) -> list[dict]`
+
+Removed by packet 44; replaced by `execution/book_sync.py` `sync_book()`.
 1. Fetch broker positions via `get_broker_positions()`.
 2. Read `portfolio_positions` from DB.
 3. Diff: for each ticker where `|broker_qty - db_qty| > 0.5`:

@@ -70,6 +70,11 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Book of record (packet `44-book-of-record`): `portfolio_positions` is rebuilt from Alpaca
+  each night (also in `--whatif`) and after execution, with signed shares and weights and a
+  whole-book `portfolio_history` snapshot; rebalance and the executor no longer write
+  positions; BRK-B is sent to Alpaca as BRK.B; pre-trade checks each trade against the whole
+  proposed book and no longer compares a new ticker with itself. Audit C10 and H5.
 - Conviction tilt (packet `48-short-conviction-tilt`): the short book's 1.5x and 1.25x
   multipliers go to the strongest shorts (lowest scores), not the weakest.
 - Combined score (packet `43-combined-score-candidates`): direction is the Layer 2 direction,

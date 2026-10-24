@@ -7,6 +7,8 @@ import logging
 import time
 from pathlib import Path
 
+from execution.symbols import to_alpaca
+
 log = logging.getLogger(__name__)
 
 _CACHE_TTL_S = 7 * 24 * 3600  # 7 days
@@ -31,7 +33,7 @@ def is_shortable(ticker: str, client, cache_dir: Path, ttl_days: int = 7) -> boo
             pass  # corrupt cache — re-fetch
 
     try:
-        asset = client.get_asset(ticker)
+        asset = client.get_asset(to_alpaca(ticker))
         result = bool(
             getattr(asset, "shortable", False) and getattr(asset, "easy_to_borrow", False)
         )

@@ -119,6 +119,15 @@ def main() -> None:
         return
 
     # ------------------------------------------------------------------
+    # Book sync — positions from Alpaca, the book of record (also in --whatif)
+    # ------------------------------------------------------------------
+    sync_cmd = [_PYTHON, "run_execution.py", "--sync"]
+    synced = run("Book sync", sync_cmd, skip=args.no_execution)
+    if not synced and not args.whatif:
+        _summary(failures, t_start)  # never rebalance against a stale book
+        return
+
+    # ------------------------------------------------------------------
     # Layer 4 — Portfolio construction
     # ------------------------------------------------------------------
     l4_cmd = [_PYTHON, "run_portfolio.py"]

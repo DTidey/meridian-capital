@@ -160,8 +160,8 @@ class TestExecuteApprovalsDryRun:
 
 
 class TestExecuteApprovalsFilled:
-    def test_filled_order_updates_portfolio(self, conn, tmp_path):
-        """A fully filled order should update portfolio_positions shares."""
+    def test_filled_order_leaves_positions_to_book_sync(self, conn, tmp_path):
+        """Packet 44: fills are recorded by the book sync, not by the executor."""
         _insert_position(conn, "GOOG", shares=50.0, current_price=100.0)
         _insert_approval(conn, "GOOG", action="BUY", target=100.0, current=50.0)
 
@@ -186,7 +186,7 @@ class TestExecuteApprovalsFilled:
             sa.select(portfolio_positions).where(portfolio_positions.c.ticker == "GOOG")
         ).fetchone()
         assert row is not None
-        assert row.shares == pytest.approx(100.0)  # 50 + 50 filled
+        assert row.shares == pytest.approx(50.0)  # unchanged until the next book sync
 
     def test_zero_fill_order_cancelled(self, conn, tmp_path):
         """Zero fill should result in CANCELLED execution_order row."""
@@ -225,3 +225,69 @@ class TestExecuteApprovalsFilled:
         assert len(results) == 1
         assert results[0]["status"] == "SKIPPED"
         client.submit_order.assert_not_called()
+
+
+def _filled_client(symbol_positions=()):
+    client = MagicMock()
+    client.get_all_positions.return_value = list(symbol_positions)
+    client.submit_order.return_value = MagicMock(id="order-1")
+    filled = MagicMock(status="filled", filled_qty="5", filled_avg_price="400")
+    client.get_order_by_id.return_value = filled
+    return client
+
+
+def _broker_pos(symbol, qty):
+    return MagicMock(symbol=symbol, qty=str(qty))
+
+
+class TestBookOfRecord:
+    def test_order_uses_alpaca_symbol(self, conn, tmp_path):
+        _insert_approval(conn, "BRK-B", action="BUY", target=5.0, current=0.0)
+        _insert_position(conn, "BRK-B", shares=0.0, current_price=400.0)
+        client = _filled_client()
+        execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        req = client.submit_order.call_args.args[0]
+        assert req.symbol == "BRK.B"
+
+    def test_closing_guard_matches_alpaca_symbol(self, conn, tmp_path):
+        # Adversarial: broker holds BRK.B; a SELL of BRK-B must not be skipped as stale.
+        _insert_position(conn, "BRK-B", shares=5.0, current_price=400.0)
+        _insert_approval(conn, "BRK-B", action="SELL", target=0.0, current=5.0)
+        client = _filled_client([_broker_pos("BRK.B", 5)])
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] != "SKIPPED"
+        client.submit_order.assert_called_once()
+
+    def test_stale_close_skipped_without_touching_positions(self, conn, tmp_path):
+        _insert_position(conn, "GOOG", shares=50.0, current_price=100.0)
+        _insert_approval(conn, "GOOG", action="SELL", target=0.0, current=50.0)
+        client = _filled_client([])
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] == "SKIPPED"
+        row = conn.execute(
+            sa.select(portfolio_positions).where(portfolio_positions.c.ticker == "GOOG")
+        ).fetchone()
+        assert row is not None and row.shares == pytest.approx(50.0)
+
+    def test_filled_short_does_not_delete_position(self, conn, tmp_path):
+        # Adversarial: the old post-fill update deleted every short (new_shares <= 0.5).
+        _insert_position(conn, "TSLA", shares=-10.0, current_price=200.0, direction="SHORT")
+        _insert_approval(conn, "TSLA", action="SHORT", target=-15.0, current=-10.0)
+        client = _filled_client([_broker_pos("TSLA", -10)])
+        with patch("execution.executor.is_shortable", return_value=True):
+            execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        row = conn.execute(
+            sa.select(portfolio_positions).where(portfolio_positions.c.ticker == "TSLA")
+        ).fetchone()
+        assert row is not None and row.shares == pytest.approx(-10.0)
+
+    def test_cover_guard_reads_side_when_qty_unsigned(self, conn, tmp_path):
+        # Adversarial: Alpaca may report a short's qty unsigned; the side decides.
+        _insert_position(conn, "TSLA", shares=-5.0, current_price=200.0, direction="SHORT")
+        _insert_approval(conn, "TSLA", action="COVER", target=0.0, current=-5.0)
+        short = MagicMock(symbol="TSLA", qty="5")
+        short.side = "short"
+        client = _filled_client([short])
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] != "SKIPPED"
+        client.submit_order.assert_called_once()

@@ -6,8 +6,7 @@ from datetime import UTC, datetime
 import pandas as pd
 import sqlalchemy as sa
 
-from portfolio.db import portfolio_positions, position_approvals
-from portfolio.state import save_positions
+from portfolio.db import position_approvals
 from portfolio.transaction_costs import estimate_cost
 
 logger = logging.getLogger(__name__)
@@ -93,8 +92,8 @@ def generate_trades(
     trades = _add_priority_column(trades)
 
     if commit:
+        # Approvals only: positions come from the broker after fills (execution/book_sync.py).
         _write_approvals(conn, trades, score_date)
-        _update_positions(conn, trades, target, score_date, nav)
 
     return trades[
         [
@@ -235,42 +234,3 @@ def _write_approvals(conn, trades: pd.DataFrame, score_date: str) -> None:
         conn.execute(position_approvals.insert(), rows)
         conn.commit()
     logger.info("Rebalance: wrote %d approval rows", len(rows))
-
-
-def _update_positions(
-    conn,
-    trades: pd.DataFrame,
-    target: pd.DataFrame,
-    score_date: str,
-    nav: float,
-) -> None:
-    """Update portfolio_positions only for trades that actually executed (not HOLD).
-
-    - Full closures (target_shares ≈ 0): delete the row from portfolio_positions.
-    - Partial adjustments / new positions: upsert from target.
-    """
-    active = trades[trades["action"] != "HOLD"]
-    if active.empty:
-        return
-
-    closed_tickers = set(active.loc[active["target_shares"].abs() < _HOLD_THRESHOLD, "ticker"])
-    adjusted_tickers = set(active["ticker"]) - closed_tickers
-
-    if closed_tickers:
-        conn.execute(
-            portfolio_positions.delete().where(
-                portfolio_positions.c.ticker.in_(list(closed_tickers))
-            )
-        )
-        conn.commit()
-        logger.debug("Positions: deleted %d closed positions", len(closed_tickers))
-
-    if adjusted_tickers and not target.empty:
-        tgt = target[target["ticker"].isin(adjusted_tickers)].copy()
-        if not tgt.empty:
-            if "entry_price" not in tgt.columns:
-                tgt["entry_price"] = tgt.get("current_price", 0.0)
-            if "entry_date" not in tgt.columns:
-                tgt["entry_date"] = score_date
-            save_positions(conn, tgt, score_date, nav)
-            logger.info("Positions: committed %d new/adjusted positions", len(tgt))
