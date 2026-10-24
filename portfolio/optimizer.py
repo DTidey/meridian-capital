@@ -9,6 +9,7 @@ import sqlalchemy as sa
 
 from data.db import earnings_calendar
 from portfolio.beta import portfolio_beta
+from portfolio.book_targets import book_targets
 from portfolio.transaction_costs import compute_adv
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,7 @@ def optimise(
     nav = float(pcfg.get("nav_usd", 10_000_000))
     num_longs = int(pcfg.get("num_longs", 20))
     num_shorts = int(pcfg.get("num_shorts", 20))
-    long_gross = float(pcfg.get("target_long_gross", 0.90))
-    short_gross = float(pcfg.get("target_short_gross", 0.60))
+    long_gross, short_gross = book_targets(config)
     max_pos = float(pcfg.get("max_position_pct", 0.05))
     min_pos = float(pcfg.get("min_position_pct", 0.005))
     max_sector = float(pcfg.get("max_sector_pct", 0.25))

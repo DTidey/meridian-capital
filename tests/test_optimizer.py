@@ -22,8 +22,8 @@ _CONFIG = {
         "nav_usd": 1_000_000,
         "num_longs": 10,
         "num_shorts": 10,
-        "target_long_gross": 0.90,
-        "target_short_gross": 0.60,
+        "target_long_gross": 0.80,
+        "target_short_gross": 0.70,
         # max_position_pct is set generously so that equal-weight positions (0.09
         # each) clear the cap.  Tests that specifically verify the cap use a
         # dedicated config where the cap is tight enough to bind.
@@ -102,7 +102,7 @@ class TestOptimizerWeights:
         prices = _build_prices(candidates)
         result = optimise(candidates, prices, betas, _CONFIG, _SCORE_DATE, tmp_db)
         longs = result[result["direction"] == "LONG"]
-        assert longs["weight"].abs().sum() == pytest.approx(0.90, abs=0.02)
+        assert longs["weight"].abs().sum() == pytest.approx(0.80, abs=0.02)
 
     def test_short_weights_sum_to_target(self, tmp_db):
         candidates = _build_candidates()
@@ -110,7 +110,7 @@ class TestOptimizerWeights:
         prices = _build_prices(candidates)
         result = optimise(candidates, prices, betas, _CONFIG, _SCORE_DATE, tmp_db)
         shorts = result[result["direction"] == "SHORT"]
-        assert shorts["weight"].abs().sum() == pytest.approx(0.60, abs=0.02)
+        assert shorts["weight"].abs().sum() == pytest.approx(0.70, abs=0.02)
 
     def test_no_position_exceeds_max(self, tmp_db):
         """With 20 LONG and 20 SHORT candidates (all selected), equal-weight is

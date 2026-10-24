@@ -79,3 +79,15 @@
   $100,000 today, so nothing changes on merge.
 - Turnover from fills: since packet 44 a snapshot is written every night, and the old
   market-value-diff method counted price drift as trading.
+
+## Packet 51: book targets
+
+- Owner chose near-neutral 80/70 (net +0.10, the portfolio section's net maximum) over fully
+  neutral 75/75 or widening the limits for the +30% tilt.
+- Targets stay explicit and are validated rather than derived from `gross_exposure` and
+  `net_exposure_max`: they remain readable in the config, and the bounds that nothing read are
+  now enforced, so the three statements cannot drift apart again.
+- MVO falls back to the conviction optimiser on any error; the fallback validates the targets
+  too, so a bad config still stops Layer 4.
+- Dry run on 2026-10-23: gross 150%, net 10%, net beta -0.33 (H3: the beta adjustment has no
+  effect), so H3 lands before the first real run.

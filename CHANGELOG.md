@@ -70,6 +70,10 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Book targets (packet `51-book-targets`): long 0.80 / short 0.70 (net +0.10) instead of
+  0.90 / 0.60 (+0.30, outside the pre-trade net limit); both optimisers take the targets from
+  `portfolio/book_targets.py`, which checks them against every configured exposure bound.
+  Audit H4.
 - NAV from the broker (packet `50-nav-from-broker`): the nightly book sync records Alpaca
   account equity in `portfolio_nav`; the reporting step no longer overwrites it with config NAV
   plus unrealised P&L; circuit breakers use returns on the previous recorded NAV and drawdown

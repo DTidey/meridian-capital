@@ -164,8 +164,8 @@ portfolio:
   num_longs:              20
   num_shorts:             20
   gross_exposure:         1.50
-  target_long_gross:      0.90
-  target_short_gross:     0.60
+  target_long_gross:      0.80    # long + short = gross_exposure; net within both net bounds
+  target_short_gross:     0.70
   net_exposure_min:       0.00
   net_exposure_max:       0.10
   max_position_pct:       0.05

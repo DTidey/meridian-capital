@@ -155,6 +155,8 @@ portfolio:
   gross_exposure:         1.50        # gross NAV multiple (150%)
   target_long_gross:      0.90        # long book as fraction of NAV (90%)
   target_short_gross:     0.60        # short book as fraction of NAV (60%)
+  # Packet 51: now 0.80 / 0.70, checked against gross_exposure, the net bounds and the
+  # pre-trade limits by portfolio/book_targets.py (docs/specs/51-book-targets.md).
   net_exposure_min:       0.00        # net NAV fraction lower bound
   net_exposure_max:       0.10        # net NAV fraction upper bound
   max_position_pct:       0.05        # max single position (5% of NAV)
