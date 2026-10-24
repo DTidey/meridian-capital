@@ -36,8 +36,8 @@ signed off as it is fixed.
 
 | Severity | Items | Signed off |
 |---|---|---|
-| Critical | 12 | 5 |
-| High | 11 | 2 |
+| Critical | 12 | 8 |
+| High | 11 | 6 |
 | Medium / low | 23 | 0 |
 
 ## Critical: wrong trades or broken bookkeeping
@@ -61,7 +61,7 @@ signed off as it is fixed.
     from 2025-10-01) for the 11 sample tickers plus APH, CVNA, KLAC and CRWD. CRWD SHORT to
     NEUTRAL (momentum 14.7 to 94.7); APH momentum 1.3 to 46.7.
 
-- [ ] **C2. Fundamentals: bad share counts.**
+- [x] **C2. Fundamentals: bad share counts.**
   - Evidence:
     - BRK-B is stored as 1.43M shares (the Class A equivalent), giving book/price of 981x and a
       composite of 98.7, LONG.
@@ -70,15 +70,20 @@ signed off as it is fixed.
       fault. MNST split 2:1 on 2026-08-11 and APH on 2026-09-03; the stored counts are
       split-adjusted like our prices, and the cover pages compared predate the splits.
   - Root cause: `data/fundamentals.py:116-127` has no share-class handling and no sanity check.
-  - Fix: packet 42 (PR pending). Fixed differently from the plan: market cap comes from Yahoo's
-    `marketCap` (new `market_caps` table, every share class) with a one-day glitch guard, not
-    from corrected balance-sheet counts. SEC has no single cover-page count for multi-class
-    filers.
+  - Fix: packet 42, PR #99 (merged and deployed 2026-10-22). Fixed differently from the plan:
+    market cap comes from Yahoo's `marketCap` (new `market_caps` table, every share class) with
+    a one-day glitch guard, not from corrected balance-sheet counts. SEC has no single
+    cover-page count for multi-class filers.
   - Verify:
     - after the first nightly `market_caps` snapshot and a rescore, the market cap used for
       BRK-B, CME, MNST and APH is within 5% of Yahoo `marketCap`;
     - BRK-B's book/price and composite are no longer extreme.
-  - Signed off: -
+  - Signed off: 2026-10-24, from the 2026-10-23 nightly run. Stored market caps for 2026-10-23
+    against a fresh Yahoo pull: BRK-B $1,160.7B, MNST $90.5B, APH $182.7B (all 0.00%), CME
+    $109.9B (+0.46%). All 503 universe tickers have a 2026-10-23 snapshot; the 16 balance-sheet
+    fallbacks are non-universe tickers. CME LONG 94.7 to NEUTRAL 67.1 (book/price 98.7 to
+    26.3). BRK-B book/price 100 to 68.4 (981x before); composite 82.9, LONG, accepted as a
+    genuine signal now that its market cap is correct.
 
 - [x] **C3. Insider: a company's own trades in other issuers are booked as insider trades.**
   - Evidence:
@@ -141,16 +146,17 @@ signed off as it is fixed.
     same period ('0y', '+1y'). On 2026-10-21 MU 97/95/92 (genuine: +1y 178.2 to 206.8 in 30
     days), COST 91/74/65 (was 100/100/100 on 2026-10-20), AAPL 11/28/8.
 
-- [ ] **C7. Estimates: the 90-day revision is neutral for every ticker every Friday.**
+- [x] **C7. Estimates: the 90-day revision is neutral for every ticker every Friday.**
   - Evidence: rev_90d = 50 for 503 of 503 tickers on 9 and 16 October, against 8-78 on other
     days.
   - Root cause: `factors/loader.py:26` sets the lookback equal to the 90-day window, and 90 days
     before a Friday is always a Saturday.
   - Fix: packet 40, PR #95 (merged and deployed 2026-10-21).
   - Verify: the count of `rev_90d = 50` on a Friday is in line with other weekdays.
-  - Signed off: - (pending Friday 2026-10-23's run; 8 tickers on Wednesday 2026-10-21.)
+  - Signed off: 2026-10-24. `rev_90d = 50` for 8 of 503 tickers on Friday 2026-10-23, the
+    same as 2026-10-21 and 10-22 (503 of 503 on Friday 2026-10-16).
 
-- [ ] **C8. Earnings calendar: no data since 14 October, and failures are silent.**
+- [x] **C8. Earnings calendar: no data since 14 October, and failures are silent.**
   - Evidence:
     - Every nightly run logged "0 upcoming events stored".
     - 59 tickers have no next date.
@@ -162,11 +168,12 @@ signed off as it is fixed.
     - `max(fetched_at)` is less than one day old after the nightly run;
     - a run storing no events fails loudly;
     - no ticker has more than one future date.
-  - Signed off: - (2026-10-22 partial: `max(fetched_at)` 2026-10-21 22:01, 256 events stored,
-    79 superseded removed. Fails the last check: 55 tickers still have two future dates, all
-    stored by the 2026-10-21 daytime backfill and skipped by the nightly run as already
-    updated, so their old dates were not removed. Recheck after 2026-10-22's run. The
-    loud-failure check has not been exercised in production.)
+  - Signed off: 2026-10-24, from the 2026-10-23 nightly run. `max(fetched_at)` 2026-10-23
+    22:02; 503/503 fetched, 415 upcoming events stored, 1 superseded removed; no ticker has
+    more than one future date (55 on 2026-10-22). Loud failure: coverage below 95% logs an
+    ERROR (`data/yahoo_info.py` `log_low_coverage`), covered by
+    `tests/test_earnings_calendar.py`; not yet exercised in production. 89 universe tickers
+    have no future date, mostly names that have just reported; no check covers this.
 
 - [ ] **C9. Combined score: AI is blended only into AI-covered names, and the scales are mixed.**
   - Evidence:
@@ -266,7 +273,7 @@ signed off as it is fixed.
   - Verify: a BRK-B paper order is accepted and reconciles to `BRK-B`.
   - Signed off: -
 
-- [ ] **H6. Value factor: single-quarter ratios, missing-value bug, wrong EBIT.**
+- [x] **H6. Value factor: single-quarter ratios, missing-value bug, wrong EBIT.**
   - Evidence:
     - Using one quarter instead of trailing twelve months moves 134 tickers more than 20
       percentile points on FCF yield.
@@ -274,22 +281,25 @@ signed off as it is fixed.
       buyback.
     - GOOGL's EBIT exceeds its revenue.
   - Root cause: `factors/value.py:39, 63-69`; `data/fundamentals.py:62`.
-  - Fix: packet 42 (PR pending).
+  - Fix: packet 42, PR #99 (merged and deployed 2026-10-22).
   - Verify:
     - value inputs use four contiguous quarters;
     - shareholder yield is scored when only one component is missing;
     - EV/EBIT uses operating income.
-  - Signed off: -
+  - Signed off: 2026-10-22, after `run_data.py --recompute-ratios` (4,822 of 6,355 rows) and
+    the 2026-10-21 rescore. Tickers with a neutral shareholder yield 150 to 10; GOOGL EV/EBIT
+    rank 81 to 20.
 
-- [ ] **H7. Fundamentals: every stored ROE is the true value minus one.**
+- [x] **H7. Fundamentals: every stored ROE is the true value minus one.**
   - Evidence: AAPL is stored as -0.72, and the sign flips for negative-equity companies. The
     dashboard shows these values.
   - Root cause: `data/fundamentals.py:174`.
-  - Fix: packet 42 (PR pending).
+  - Fix: packet 42, PR #99 (merged and deployed 2026-10-22).
   - Verify: stored ROE equals net income divided by equity (AAPL 2026-06-30 about 0.28).
-  - Signed off: -
+  - Signed off: 2026-10-22. AAPL 2026-06-30 roe 0.2771; no stored row differs from net income
+    divided by equity.
 
-- [ ] **H8. SEC: 29 tickers have no SEC data, and two map to the wrong company.**
+- [x] **H8. SEC: 29 tickers have no SEC data, and two map to the wrong company.**
   - Evidence:
     - GEV, BLK, KVUE, VLTO, XYZ and others have no SEC data.
     - BNY maps to a BlackRock municipal fund.
@@ -299,7 +309,12 @@ signed off as it is fixed.
   - Verify:
     - after the next full SEC run, every universe ticker has stored filings;
     - BNY's filings come from CIK 1390777.
-  - Signed off: -
+  - Signed off: 2026-10-24, from the 2026-10-23 full SEC run (1,822 filings across 227
+    tickers). Every universe ticker has stored filings. BNY: 19 filings from CIK 1390777; one
+    stray Form 4 (accession 0001193125-26-047047, 2026-02-11, issuer CIK 1137390, no insider
+    rows) was left from the old mapping and deleted on 2026-10-24, which also clears the
+    nightly "SEC CIK for BNY changed" warning. XOM: 4 filings from its new CIK 2115436 and
+    52 from predecessor 34088; its CIK-changed warning is expected.
 
 - [ ] **H9. 13F: REITs and renamed names never resolve; GOOGL counts depositary shares.**
   - Evidence:
@@ -312,13 +327,13 @@ signed off as it is fixed.
     - Citadel's GOOGL is 2,990,581 shares.
   - Signed off: -
 
-- [ ] **H10. Estimates: 60-73 tickers drop out of each night's snapshot.**
+- [x] **H10. Estimates: 60-73 tickers drop out of each night's snapshot.**
   - Evidence: mostly tickers late in the alphabet; XOM's latest estimate was from 14 October.
   - Root cause: `data/estimates.py:28-30` has no retry, and failures are logged at debug.
   - Fix: packet 40, PR #95 (merged and deployed 2026-10-21).
   - Verify: `analyst_estimates` covers at least 98% of the universe on each weekday.
-  - Signed off: - (2026-10-21 shows 503/503, but from the daytime backfill; the nightly run
-    fetched 0. First real test is 2026-10-22's run.)
+  - Signed off: 2026-10-24. Nightly runs stored 503/503 tickers on 2026-10-22 and 2026-10-23
+    (433-443 before packet 40).
 
 - [ ] **H11. Transcripts: non-earnings documents are fed to the earnings analyzer.**
   - Evidence:
@@ -378,14 +393,14 @@ Each needs a packet, a backlog entry, or an explicit acceptance.
   - Fix: -
 - [ ] **M12. Fundamentals: negative equity gives a negative D/E.** The most leveraged names rank
   as least leveraged (LOW, MAR, DPZ, YUM). `factors/quality.py:100-105`. Fix: packet 42
-  (PR pending): negative equity with debt ranks as most leveraged.
+  (PR #99, merged 2026-10-22): negative equity with debt ranks as most leveraged.
 - [ ] **M13. Sector-agnostic factors distort banks, insurers and REITs.**
   - Gross margin, D/E, Altman Z and CFO/NI do not suit banks.
   - REIT FCF is null.
   - Fix: -
 - [ ] **M14. Value mixes periods.** `groupby('ticker').last()` takes the last non-null value per
-  column, so one row can mix periods (DPZ). `factors/value.py:39`. Fix: packet 42 (PR pending):
-  TTM flows and one balance-sheet quarter.
+  column, so one row can mix periods (DPZ). `factors/value.py:39`. Fix: packet 42 (PR #99, merged
+  2026-10-22): TTM flows and one balance-sheet quarter.
 - [ ] **M15. Transcripts are wrongly labelled.**
   - Quarter labels are wrong for non-December fiscal years.
   - All rows are press releases, because FMP returns 403.
