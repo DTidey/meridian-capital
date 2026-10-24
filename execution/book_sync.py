@@ -1,4 +1,4 @@
-"""Rebuild portfolio_positions from Alpaca, the book of record, and snapshot it."""
+"""Rebuild portfolio_positions from Alpaca, the book of record, snapshot it, and record NAV."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from data.db import daily_prices, sp500_universe
 from execution.symbols import from_alpaca
 from portfolio.beta import compute_betas
 from portfolio.db import portfolio_history, portfolio_positions
+from reporting.db import portfolio_nav
 
 log = logging.getLogger(__name__)
 
@@ -21,14 +22,16 @@ _SHARE_TOLERANCE = 0.5
 def sync_book(conn, client, score_date: str, dry_run: bool = False) -> dict:
     """Replace portfolio_positions with the broker's positions; snapshot them for score_date.
 
+    Also records Alpaca account equity as score_date's NAV in portfolio_nav.
+
     Shares, market value and weight are signed (shorts negative). Commits (or rolls back) the
     caller's open transaction on conn. Returns
-    {"positions": n, "added": [...], "removed": [...], "changed": [...]}.
+    {"positions": n, "added": [...], "removed": [...], "changed": [...], "equity": float}.
     """
     broker = _broker_book(client)
     equity = float(client.get_account().equity)
     existing = {r.ticker: r for r in conn.execute(sa.select(portfolio_positions)).fetchall()}
-    summary = _diff(existing, broker)
+    summary = {**_diff(existing, broker), "equity": equity}
 
     if dry_run:
         log.info("Book sync (dry run) %s: %s", score_date, summary)
@@ -44,12 +47,27 @@ def sync_book(conn, client, score_date: str, dry_run: bool = False) -> dict:
         )
         if rows:
             conn.execute(portfolio_history.insert(), [_history_row(r, score_date) for r in rows])
+        _record_nav(conn, score_date, equity)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     log.info("Book sync %s: %s", score_date, summary)
     return summary
+
+
+def _record_nav(conn, score_date: str, equity: float) -> None:
+    """Upsert NAV only, keeping spy_close / drawdown_pct that reporting filled."""
+    values = {"nav": equity, "computed_at": _now()}
+    updated = conn.execute(
+        portfolio_nav.update().where(portfolio_nav.c.date == score_date).values(**values)
+    ).rowcount
+    if not updated:
+        conn.execute(portfolio_nav.insert().values(date=score_date, **values))
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _broker_book(client) -> dict[str, dict]:
@@ -89,7 +107,7 @@ def _enrich(conn, broker: dict[str, dict], existing: dict, score_date: str, equi
     scores = _latest_scores(conn, tickers, score_date)
     closes = _latest_closes(conn, tickers, score_date)
     betas = compute_betas(conn, tickers, score_date)
-    now = datetime.now(UTC).isoformat(timespec="seconds")
+    now = _now()
 
     rows = []
     for t in tickers:

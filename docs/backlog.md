@@ -36,14 +36,6 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** mark rows still `PENDING` without an order id as `FAILED` at the start of the next
   sync, or insert the row only after Alpaca answers.
 
-## Turnover from daily snapshots
-
-- **Raised:** 2026-10-24, packet 44 review.
-- **Problem:** `reporting/turnover.py` diffs `market_value` per ticker across
-  `portfolio_history` dates. With a snapshot every night, price drift counts as turnover, and
-  entries and exits count as nothing.
-- **Fix:** packet 50 (NAV): turnover from filled `execution_orders` value over NAV.
-
 ## Research page net exposure with signed weights
 
 - **Raised:** 2026-10-24, packet 44 review.

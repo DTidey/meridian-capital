@@ -222,6 +222,8 @@ def build_nav_series(engine) -> pd.DataFrame:
     Upsert into portfolio_nav.
     Returns DataFrame(date, nav, spy_close, drawdown_pct).
     """
+    # Since packet 50: NAV is Alpaca equity written by the nightly book sync;
+    # build_nav_series(engine) only fills spy_close and drawdown_pct.
 ```
 
 SPY close comes from `daily_prices` where `ticker='SPY'`.

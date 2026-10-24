@@ -63,3 +63,19 @@
   missed day.
 - C12's Verify said "limits from a live quote"; no live quote exists after the close, so it is
   amended to the close of the session that just ended.
+
+## Packet 50: NAV from the broker
+
+- Alpaca equity is NAV: it already includes realised P&L, costs and cash, which no sum of
+  unrealised P&L can. Written in the book-sync transaction so positions and NAV share a date.
+- `build_nav_series` kept as the step that fills SPY and drawdown, but no longer computes NAV;
+  otherwise it would overwrite the recorded equity every night.
+- Circuit breakers measure returns on the previous recorded NAV, not the config NAV, so a fund
+  smaller or larger than configured triggers at the intended percentages. The peak comes from
+  the recorded series, not `risk_state.json`, so it cannot carry a stale config-based peak.
+- No NAV for the score date (sync failed) skips the P&L checks with a warning rather than
+  replaying yesterday's move.
+- Sizing moves to the recorded NAV as well; config `nav_usd` is only the fallback. Both are
+  $100,000 today, so nothing changes on merge.
+- Turnover from fills: since packet 44 a snapshot is written every night, and the old
+  market-value-diff method counted price drift as trading.

@@ -39,7 +39,7 @@ from portfolio.beta import compute_betas, portfolio_beta  # noqa: E402
 from portfolio.factor_exposure import compute_exposures  # noqa: E402
 from portfolio.rebalance import generate_trades  # noqa: E402
 from portfolio.rebalance_schedule import check_events  # noqa: E402
-from portfolio.state import get_nav, load_positions  # noqa: E402
+from portfolio.state import get_nav, load_positions, with_nav  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,8 @@ def run(args) -> None:
         opt_method = args.optimize_method
         logger.info("Running %s optimiser", opt_method)
         optimizer = mvo_opt if opt_method == "mvo" else tilt_opt
-        nav = get_nav(config)
+        nav = get_nav(config, conn, score_date)  # Alpaca equity recorded by the book sync
+        config = with_nav(config, nav)
 
         target = optimizer.optimise(candidates, prices, betas, config, score_date, conn)
         if target.empty:

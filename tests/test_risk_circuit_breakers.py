@@ -12,9 +12,11 @@ import sqlalchemy as sa
 import analysis.db  # noqa: F401
 import factors.db  # noqa: F401
 import portfolio.db  # noqa: F401
+import reporting.db  # noqa: F401
 import risk.db  # noqa: F401
 from data.db import initialise_schema
-from portfolio.db import portfolio_history, portfolio_positions, position_approvals
+from portfolio.db import portfolio_positions, position_approvals
+from reporting.db import portfolio_nav
 from risk.circuit_breakers import run_circuit_breakers
 from risk.risk_state import default_state, is_halted
 
@@ -61,35 +63,14 @@ def _base_config(
     }
 
 
-def _insert_history(
-    conn, snapshot_date, tickers, direction="LONG", market_value=400_000.0, unrealized_pnl=0.0
-):
-    """Insert portfolio_history rows for a snapshot date.
-
-    unrealized_pnl drives NAV estimation: today_nav = nav_usd + sum(unrealized_pnl).
-    Pass a negative value to simulate a portfolio loss.
-    """
-    now = "2026-03-05T00:00:00"
-    rows = []
-    pnl_per_ticker = unrealized_pnl / max(len(tickers), 1)
-    for ticker in tickers:
-        rows.append(
-            {
-                "snapshot_date": snapshot_date,
-                "ticker": ticker,
-                "direction": direction,
-                "shares": 100.0,
-                "price": market_value / 100.0,
-                "market_value": market_value,
-                "weight": market_value / 10_000_000.0,
-                "unrealized_pnl": pnl_per_ticker,
-                "sector": "Technology",
-                "combined_score": 60.0,
-                "recorded_at": now,
-            }
-        )
-    conn.execute(portfolio_history.insert(), rows)
+def _insert_nav(conn, nav_date, nav):
+    """Record a NAV (Alpaca equity, as the nightly book sync does)."""
+    conn.execute(portfolio_nav.insert().values(date=nav_date, nav=nav))
     conn.commit()
+
+
+def _days_before(days):
+    return (date.fromisoformat(_SCORE_DATE) - timedelta(days=days)).isoformat()
 
 
 def _insert_approval(conn, ticker, action="BUY", target=200.0, current=0.0, status="APPROVED"):
@@ -143,10 +124,9 @@ class TestCircuitBreakerNormal:
 class TestCircuitBreakerSizeDown:
     def test_size_down_daily_loss(self, mem_db, tmp_path):
         """Daily loss of -2.0% → SIZE_DOWN_30 fires, target_shares scaled to 70%."""
-        # yesterday: unrealized_pnl=0 → nav=10M; today: pnl=-200k → nav=9.8M (-2.0%); drawdown 2%<8%
-        yesterday = (date.fromisoformat(_SCORE_DATE) - timedelta(days=1)).isoformat()
-        _insert_history(mem_db, yesterday, ["AAPL"], unrealized_pnl=0.0)
-        _insert_history(mem_db, _SCORE_DATE, ["AAPL"], unrealized_pnl=-200_000.0)
+        # yesterday 10M, today 9.8M (-2.0%); drawdown 2% < 8%
+        _insert_nav(mem_db, _days_before(1), 10_000_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 9_800_000.0)
 
         _insert_approval(mem_db, "MSFT", action="BUY", target=200, current=0)
 
@@ -169,10 +149,9 @@ class TestCircuitBreakerSizeDown:
 class TestCircuitBreakerCloseAll:
     def test_close_all_large_daily_loss(self, mem_db, tmp_path):
         """Daily loss of -3.0% → CLOSE_ALL, APPROVED trades become REJECTED."""
-        # yesterday: pnl=0 → nav=10M; today: pnl=-300k → nav=9.7M (-3%); drawdown 3% < 8%
-        yesterday = (date.fromisoformat(_SCORE_DATE) - timedelta(days=1)).isoformat()
-        _insert_history(mem_db, yesterday, ["AAPL"], unrealized_pnl=0.0)
-        _insert_history(mem_db, _SCORE_DATE, ["AAPL"], unrealized_pnl=-300_000.0)
+        # yesterday 10M, today 9.7M (-3%); drawdown 3% < 8%
+        _insert_nav(mem_db, _days_before(1), 10_000_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 9_700_000.0)
 
         _insert_approval(mem_db, "MSFT", action="BUY", target=200, current=0)
         _insert_approval(mem_db, "GOOG", action="BUY", target=100, current=0)
@@ -194,12 +173,12 @@ class TestCircuitBreakerCloseAll:
 
 class TestCircuitBreakerKillSwitch:
     def test_drawdown_kill_switch(self, mem_db, tmp_path):
-        """High peak_nav in risk_state, current nav = 10M → drawdown ~17% > 8% threshold."""
-        # peak_nav=12M set in risk_state; today pnl=0 → nav=10M; drawdown=(12-10)/12≈17%
-        _insert_history(mem_db, _SCORE_DATE, ["AAPL"], unrealized_pnl=0.0)
+        """Recorded peak 12M, today 10M → drawdown ~17% > 8% threshold."""
+        _insert_nav(mem_db, _days_before(30), 12_000_000.0)
+        _insert_nav(mem_db, _days_before(1), 10_000_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 10_000_000.0)
 
         state = default_state()
-        state["peak_nav_usd"] = 12_000_000.0
 
         result = run_circuit_breakers(
             mem_db, _SCORE_DATE, _NAV, _base_config(), state, tmp_path, whatif=False
@@ -237,10 +216,9 @@ class TestCircuitBreakerForceClose:
 class TestCircuitBreakerWhatIf:
     def test_whatif_no_db_changes(self, mem_db, tmp_path):
         """whatif=True with SIZE_DOWN trigger — position_approvals unchanged."""
-        # yesterday: pnl=0 → nav=10M; today: pnl=-200k → nav=9.8M (-2%); drawdown 2%<8%
-        yesterday = (date.fromisoformat(_SCORE_DATE) - timedelta(days=1)).isoformat()
-        _insert_history(mem_db, yesterday, ["AAPL"], unrealized_pnl=0.0)
-        _insert_history(mem_db, _SCORE_DATE, ["AAPL"], unrealized_pnl=-200_000.0)
+        # yesterday 10M, today 9.8M (-2%); drawdown 2% < 8%
+        _insert_nav(mem_db, _days_before(1), 10_000_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 9_800_000.0)
 
         _insert_approval(mem_db, "TSLA", action="BUY", target=300, current=0)
 
@@ -259,3 +237,80 @@ class TestCircuitBreakerWhatIf:
         assert row is not None
         assert row[0] == pytest.approx(300.0)
         assert row[1] == "APPROVED"
+
+
+class TestNavFromBroker:
+    """Packet 50: P&L and drawdown from recorded NAVs (Alpaca equity)."""
+
+    def _state(self, mem_db, tmp_path, nav=_NAV):
+        return run_circuit_breakers(
+            mem_db, _SCORE_DATE, nav, _base_config(), default_state(), tmp_path, whatif=True
+        )
+
+    def test_losing_day_moves_drawdown(self, mem_db, tmp_path):
+        _insert_nav(mem_db, _days_before(1), 100_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 99_000.0)
+        state = self._state(mem_db, tmp_path, nav=99_000.0)
+        assert state["daily_pnl_pct"] == pytest.approx(-0.01)
+        assert state["daily_pnl_usd"] == pytest.approx(-1_000.0)
+        assert state["drawdown_pct"] == pytest.approx(0.01)
+        assert state["peak_nav_usd"] == pytest.approx(100_000.0)
+        assert state["nav_usd"] == pytest.approx(99_000.0)
+
+    def test_returns_on_previous_nav_not_config(self, mem_db, tmp_path):
+        # Adversarial: a fund half the configured size must not halve its losses.
+        _insert_nav(mem_db, _days_before(1), 5_000_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 4_900_000.0)
+        state = self._state(mem_db, tmp_path, nav=10_000_000.0)
+        assert state["daily_pnl_pct"] == pytest.approx(-0.02)
+        assert state["circuit_breaker_state"] == "SIZE_DOWN"
+
+    def test_weekly_against_nav_seven_days_back(self, mem_db, tmp_path):
+        _insert_nav(mem_db, _days_before(8), 100_000.0)
+        _insert_nav(mem_db, _days_before(1), 97_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 96_000.0)
+        state = self._state(mem_db, tmp_path)
+        assert state["weekly_pnl_pct"] == pytest.approx(-0.04)
+
+    def test_weekly_falls_back_to_daily(self, mem_db, tmp_path):
+        _insert_nav(mem_db, _days_before(1), 100_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 99_500.0)
+        state = self._state(mem_db, tmp_path)
+        assert state["weekly_pnl_pct"] == pytest.approx(state["daily_pnl_pct"])
+
+    def test_first_recorded_day_is_flat(self, mem_db, tmp_path):
+        _insert_nav(mem_db, _SCORE_DATE, 100_000.0)
+        state = self._state(mem_db, tmp_path)
+        assert state["daily_pnl_pct"] == 0.0 and state["drawdown_pct"] == 0.0
+
+    def test_no_nav_today_warns_and_does_not_trigger(self, mem_db, tmp_path, caplog):
+        # Adversarial: yesterday's loss must not be replayed when today's sync is missing.
+        _insert_nav(mem_db, _days_before(2), 100_000.0)
+        _insert_nav(mem_db, _days_before(1), 90_000.0)
+        with caplog.at_level("WARNING"):
+            state = self._state(mem_db, tmp_path)
+        assert state["circuit_breaker_state"] == "NORMAL"
+        assert "no NAV recorded" in caplog.text
+
+    def test_later_navs_ignored(self, mem_db, tmp_path):
+        # Adversarial: a rerun for an old date must not see later peaks.
+        _insert_nav(mem_db, _SCORE_DATE, 100_000.0)
+        _insert_nav(mem_db, "2026-04-01", 150_000.0)
+        state = self._state(mem_db, tmp_path)
+        assert state["drawdown_pct"] == 0.0
+
+    def test_weekly_uses_nav_exactly_seven_days_back(self, mem_db, tmp_path):
+        _insert_nav(mem_db, _days_before(7), 100_000.0)
+        _insert_nav(mem_db, _days_before(1), 99_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 97_000.0)
+        assert self._state(mem_db, tmp_path)["weekly_pnl_pct"] == pytest.approx(-0.03)
+
+    def test_wiped_out_account_trips_kill_switch(self, mem_db, tmp_path):
+        # Adversarial: zero equity is a recorded NAV, not a missing one.
+        _insert_nav(mem_db, _days_before(1), 100_000.0)
+        _insert_nav(mem_db, _SCORE_DATE, 0.0)
+        state = run_circuit_breakers(
+            mem_db, _SCORE_DATE, _NAV, _base_config(), default_state(), tmp_path, whatif=True
+        )
+        assert state["drawdown_pct"] == pytest.approx(1.0)
+        assert state["circuit_breaker_state"] == "KILL_SWITCH"

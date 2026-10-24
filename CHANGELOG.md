@@ -70,6 +70,11 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- NAV from the broker (packet `50-nav-from-broker`): the nightly book sync records Alpaca
+  account equity in `portfolio_nav`; the reporting step no longer overwrites it with config NAV
+  plus unrealised P&L; circuit breakers use returns on the previous recorded NAV and drawdown
+  from the recorded peak; sizing, pre-trade and stress tests use the recorded NAV; turnover
+  comes from filled orders. Audit C11.
 - Order handling (packet `49-order-handling`): the executor no longer polls and marks unfilled
   orders CANCELLED in the database while they stay live at Alpaca; queued DAY orders keep
   Alpaca's status and the next run's order sync records fills, final status and slippage;
