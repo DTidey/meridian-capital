@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import portfolio.db  # noqa: F401
 from data.db import daily_prices, get_engine, initialise_schema
-from portfolio.mvo_optimizer import optimise
+from portfolio.mvo_optimizer import _build_cov, optimise
 
 
 @pytest.fixture
@@ -166,3 +166,26 @@ class TestMvoOptimiser:
         result = optimise(cands, prices, betas, _CONFIG, "2024-03-30", tmp_db)
         max_pos = _CONFIG["portfolio"]["max_position_pct"]
         assert (result["weight"].abs() <= max_pos + 1e-4).all()
+
+
+def test_cov_keeps_days_with_gaps(tmp_db):
+    """Packet 52 (H3): a ticker missing days must not drop those days for every ticker."""
+    from datetime import date, timedelta
+
+    rng = np.random.default_rng(7)
+    start = date(2026, 1, 1)
+    rows = []
+    for ticker in ("AAA", "BBB", "GAP"):
+        price = 100.0
+        for i in range(90):
+            price *= float(np.exp(rng.normal(0, 0.01)))
+            if ticker == "GAP" and i % 5 == 0:
+                continue  # GAP misses every 5th day: partial gaps, filled per ticker
+            d = str(start + timedelta(days=i))
+            rows.append({"ticker": ticker, "date": d, "adj_close": price, "close": price})
+    tmp_db.execute(daily_prices.insert(), rows)
+    tmp_db.commit()
+    # Old behaviour: ~70 complete days, but the window of 80 shrinks below 60 -> ValueError.
+    sigma = _build_cov(["AAA", "BBB", "GAP"], "2026-03-31", 80, tmp_db)
+    assert sigma.shape == (3, 3)
+    assert np.isfinite(sigma).all()

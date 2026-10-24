@@ -91,3 +91,26 @@
   too, so a bad config still stops Layer 4.
 - Dry run on 2026-10-23: gross 150%, net 10%, net beta -0.33 (H3: the beta adjustment has no
   effect), so H3 lands before the first real run.
+
+## Packet 52: betas
+
+- On 2026-10-23 the -0.33 net beta was real, not the day-dropping bug: all 40 names had full
+  history, and the shorts average beta 1.35 against 0.77 for the longs. Shrinkage alone gave
+  -0.19, so a working adjustment was needed regardless.
+- Owner chose reweighting within books (no SPY hedge, limits unchanged) and Blume shrinkage.
+- The old `_adjust_beta` multiplied the short book by one factor and renormalised it to the
+  short target, an exact no-op.
+- The tilt needed its own bounded scaling: the existing clamp-then-renormalise step makes every
+  weight equal once a strong tilt pushes them all to a bound, so net beta was not monotone in
+  the tilt and bisection failed. Bounded scaling fixes names at a bound (one side per pass) and
+  shares the rest of the gross among the others.
+- Returns are computed on the shared calendar, so a gap leaves the day empty instead of a
+  multi-day return being compared with SPY's one-day return.
+- Dry run on 2026-10-23: gross 150%, net 10%, net beta -0.150; read-only pre-trade simulation of
+  the whole target book: 24 pass, 16 resized for earnings blackout, none rejected (H4 Verify).
+- Review: a book with fewer names than gross / max_pos (e.g. 10 shorts at a 5% cap for 0.70)
+  was silently shrunk by the tilt's bounded scaling, and the one-sided check could accept an
+  overshoot; now such books skip the tilt with a warning and |net beta| is checked both ways.
+- The tilt's reach under the 5% cap is limited (about 0.08-0.10 of net beta with little
+  within-book spread); beyond that the warning and the pre-trade veto take over. Noted rather
+  than widened: wider caps are a sizing decision.

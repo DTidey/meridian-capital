@@ -11,6 +11,8 @@ from data.db import daily_prices
 logger = logging.getLogger(__name__)
 
 _BENCHMARK = "SPY"
+_MIN_RETURNS = 20  # shared daily returns with SPY needed for an estimate
+_BLUME_WEIGHT = 0.67
 
 
 def compute_betas(
@@ -19,9 +21,11 @@ def compute_betas(
     score_date: str,
     lookback_days: int = 60,
 ) -> pd.Series:
-    """Return Series[ticker → beta vs SPY] using OLS on adj_close log-returns.
+    """Return Series[ticker → Blume-adjusted beta vs SPY] from adj_close log-returns.
 
-    Tickers with insufficient history default to beta = 1.0.
+    Each ticker is regressed on SPY over the last lookback_days SPY returns, using only the
+    days it shares with SPY, so other tickers' gaps never change its beta. Fewer than
+    _MIN_RETURNS shared returns, or no SPY data, gives 1.0.
     """
     all_tickers = list(set(tickers) | {_BENCHMARK})
     rows = conn.execute(
@@ -34,30 +38,39 @@ def compute_betas(
         logger.debug("Beta: no price data found")
         return pd.Series(dict.fromkeys(tickers, 1.0), name="beta")
 
-    prices = (
-        pd.DataFrame(rows, columns=["ticker", "date", "adj_close"])
-        .pivot(index="date", columns="ticker", values="adj_close")
-        .tail(lookback_days + 1)
+    prices = pd.DataFrame(rows, columns=["ticker", "date", "adj_close"]).pivot(
+        index="date", columns="ticker", values="adj_close"
     )
-
-    returns = np.log(prices / prices.shift(1)).dropna()
-
-    if _BENCHMARK not in returns.columns or len(returns) < 10:
+    # Day-on-day returns on SPY's trading days: a ticker's gap leaves NaN (dropped pairwise
+    # below), and a peer's off-calendar row cannot break SPY's own returns
+    if _BENCHMARK in prices.columns:
+        prices = prices[prices[_BENCHMARK].notna()]
+    returns = np.log(prices / prices.shift(1))
+    spy_col = returns.get(_BENCHMARK, pd.Series(dtype=float))
+    spy_ret = spy_col.dropna().tail(lookback_days)
+    if len(spy_ret) < _MIN_RETURNS:
         logger.warning("Beta: insufficient SPY data, defaulting all to 1.0")
         return pd.Series(dict.fromkeys(tickers, 1.0), name="beta")
 
-    spy_ret = returns[_BENCHMARK]
-    spy_var = spy_ret.var()
-
-    betas: dict[str, float] = {}
-    for ticker in tickers:
-        if ticker not in returns.columns or returns[ticker].dropna().shape[0] < 10:
-            betas[ticker] = 1.0
-        else:
-            cov = returns[ticker].cov(spy_ret)
-            betas[ticker] = cov / spy_var if spy_var > 0 else 1.0
-
+    betas = {t: _blume(_raw_beta(returns.get(t), spy_ret)) for t in tickers}
     return pd.Series(betas, name="beta")
+
+
+def _raw_beta(ret: pd.Series | None, spy_ret: pd.Series) -> float:
+    """OLS beta on the days shared with spy_ret; 1.0 with too few of them."""
+    if ret is None:
+        return 1.0
+    shared = ret.reindex(spy_ret.index).dropna()
+    if len(shared) < _MIN_RETURNS:
+        return 1.0
+    spy = spy_ret.loc[shared.index]
+    var = spy.var()
+    return float(shared.cov(spy) / var) if var > 0 else 1.0
+
+
+def _blume(raw: float) -> float:
+    """Blume adjustment: shrink towards the market beta of 1."""
+    return _BLUME_WEIGHT * raw + (1.0 - _BLUME_WEIGHT)
 
 
 def portfolio_beta(weights: pd.Series, betas: pd.Series) -> float:
