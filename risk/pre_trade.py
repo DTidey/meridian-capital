@@ -61,6 +61,8 @@ def run_pre_trade(
     )
 
     halted = is_halted(cache_dir)
+    # Each trade is checked against the whole proposed book, not the broker book plus one trade.
+    target_book = _target_book(positions_df, pending, latest_prices, nav)
 
     results = []
     approval_updates = []
@@ -69,7 +71,7 @@ def run_pre_trade(
         result, reason, updated_row = _evaluate_trade(
             row=row,
             halted=halted,
-            positions_df=positions_df,
+            positions_df=target_book,
             latest_prices=latest_prices,
             adv_map=adv_map,
             sector_map=sector_map,
@@ -276,6 +278,7 @@ def _check_pairwise_corr(
         if not positions_df.empty and "direction" in positions_df.columns
         else []
     )
+    same_book = [t for t in same_book if t != new_ticker]  # the target book includes it
 
     if not same_book:
         return False, ""
@@ -328,6 +331,34 @@ def _check_pairwise_corr(
 # ---------------------------------------------------------------------------
 
 
+def _target_book(
+    positions_df: pd.DataFrame,
+    pending: pd.DataFrame,
+    latest_prices: dict[str, float],
+    nav: float,
+) -> pd.DataFrame:
+    """Current book with every PENDING target applied: ticker, direction, weight (signed)."""
+    book: dict[str, float] = {}
+    if not positions_df.empty:
+        for _, pos in positions_df.iterrows():
+            w = abs(float(pos.get("weight") or 0.0))
+            book[pos["ticker"]] = w if pos.get("direction", "LONG") == "LONG" else -w
+    for _, row in pending.iterrows():
+        target = float(row["target_shares"] or 0.0)
+        price = latest_prices.get(row["ticker"])
+        if abs(target) < _SHARE_ZERO_THRESHOLD:
+            book.pop(row["ticker"], None)
+        elif price and nav > 0:
+            book[row["ticker"]] = target * price / nav
+    return pd.DataFrame(
+        [
+            {"ticker": t, "direction": "LONG" if w >= 0 else "SHORT", "weight": w}
+            for t, w in book.items()
+        ],
+        columns=["ticker", "direction", "weight"],
+    )
+
+
 def _build_proforma_weights(
     ticker: str,
     action: str,
@@ -343,7 +374,7 @@ def _build_proforma_weights(
         for _, pos in positions_df.iterrows():
             t = pos["ticker"]
             direction = pos.get("direction", "LONG")
-            w = float(pos.get("weight", 0.0))
+            w = float(pos.get("weight") or 0.0)
             # Ensure sign convention: LONG positive, SHORT negative
             weights[t] = abs(w) if direction == "LONG" else -abs(w)
 

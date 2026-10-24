@@ -195,9 +195,11 @@ signed off as it is fixed.
     - Rows the reconcile creates have no sector or weight, so pre-trade checks reject them.
   - Root cause: `portfolio/rebalance.py:95-97, 240-276`; `execution/broker.py:126-146`;
     `execution/executor.py:403-419`.
-  - Fix: packet 44 (planned). Must also write the full book to `portfolio_history` on every
-    commit; today `_update_positions` stores only new and adjusted tickers. The packet 46 factor
-    monitor baseline reads those snapshots as whole books.
+  - Fix: packet 44 (PR pending). Alpaca is the book of record: `execution/book_sync.py`
+    rebuilds `portfolio_positions` from broker positions (signed shares, full metadata) and
+    writes a whole-book `portfolio_history` snapshot, before Layer 4 every night and after
+    execution. Rebalance and the executor no longer write positions. The end-to-end Verify
+    needs packet 49 (order handling) first.
   - Verify: an end-to-end rebalance, execute and reconcile on the paper account leaves
     `portfolio_positions` equal to Alpaca's positions, with signed shares.
   - Signed off: -
@@ -206,7 +208,7 @@ signed off as it is fixed.
   - Evidence: unrealised P&L is always 0, realised P&L is never booked, and NAV stays at
     100,000.
   - Root cause: `reporting/nav_series.py:49-50`; `portfolio/state.py:47`.
-  - Fix: packet 44 (planned).
+  - Fix: packet 50 (planned; split from 44 on 2026-10-24).
   - Verify: `portfolio_nav` updates daily from Alpaca account equity, and drawdown moves on a
     losing day.
   - Signed off: -
@@ -218,7 +220,8 @@ signed off as it is fixed.
       morning unrecorded.
     - Their limits are set from a close two sessions old.
   - Root cause: `execution/executor.py:101-107, 153-155, 367-369`.
-  - Fix: packet 44 (planned).
+  - Fix: packet 49 (planned; split from 44 on 2026-10-24): limit-on-open (OPG) orders after the
+    close, order status synced from Alpaca the next night.
   - Verify:
     - no order is CANCELLED in the database while open at Alpaca;
     - limits are set from a live quote.
@@ -271,7 +274,8 @@ signed off as it is fixed.
     separate tickers.
   - Root cause: `execution/executor.py:102`, `execution/short_check.py:34`,
     `execution/broker.py:68-75`.
-  - Fix: packet 44 (planned).
+  - Fix: packet 44 (PR pending): `execution/symbols.py` maps BRK-B to BRK.B for orders and the
+    shortability check, and back for broker positions.
   - Verify: a BRK-B paper order is accepted and reconciles to `BRK-B`.
   - Signed off: -
 

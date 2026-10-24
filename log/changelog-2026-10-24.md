@@ -31,3 +31,19 @@
   stays tied to the book rather than to where the score bands sit.
 - Reproduced end to end before the fix: with non-binding caps, the weakest selected short
   (score 40) got 4.3% against 2.9% for the strongest (score 2).
+
+## Packet 44: book of record
+
+- Owner's decisions: Alpaca is the book of record; the sync runs in `--whatif` runs too
+  (reading the broker is bookkeeping); 44/49/50 split, with order handling (C12) in 49 as
+  limit-on-open orders and NAV (C11) in 50.
+- Replace, not reconcile: the old reconcile patched discrepancies and had three writers
+  (rebalance, executor, reconcile) that disagreed on sign. One writer rebuilt from the broker
+  cannot drift.
+- Signed shares, because Layer 4 (`generate_trades`, optimiser) and the risk model already
+  assumed them; only the tear sheet's sector net needed changing. Signed shares also fix
+  FORCE_CLOSE's `delta_shares` for shorts.
+- Sign taken from the position side, and market value / P&L computed from signed shares, so an
+  API that reports short qty signed or unsigned gives the same row.
+- A failed sync stops a real run before Layer 4 (no rebalance against a stale book) but not a
+  `--whatif` run.

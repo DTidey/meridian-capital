@@ -3,6 +3,43 @@
 Small items deferred for bundling into a future packet. When an item is
 picked up, give it a spec in `docs/specs/` and remove it from this list.
 
+## Position attribution with signed shorts
+
+- **Raised:** 2026-10-24, packet 44 review.
+- **Problem:** `reporting/position_attribution.py` (FIFO lots, around lines 159-196) compares
+  share counts as if unsigned: a short growing from -5 to -8 takes the "shrank" branch and books
+  a closed trade with the wrong sign. Whole-book snapshots never hold a zero row, so a position
+  that closes is never closed in FIFO. Pre-existing (target books were already signed); packet
+  44's daily snapshots make it visible. `tests/test_reporting_fifo.py` still uses unsigned
+  shorts.
+- **Fix:** work in absolute shares per direction, and close remaining lots when a ticker drops
+  out of the next snapshot; or build lots from `execution_orders` fills instead.
+
+## Turnover from daily snapshots
+
+- **Raised:** 2026-10-24, packet 44 review.
+- **Problem:** `reporting/turnover.py` diffs `market_value` per ticker across
+  `portfolio_history` dates. With a snapshot every night, price drift counts as turnover, and
+  entries and exits count as nothing.
+- **Fix:** packet 50 (NAV): turnover from filled `execution_orders` value over NAV.
+
+## Research page net exposure with signed weights
+
+- **Raised:** 2026-10-24, packet 44 review.
+- **Problem:** `dashboard/page_research.py` around line 363 negates the weight of SHORT rows,
+  turning signed (already negative) short weights positive; around line 356 `abs(None)` fails
+  when a weight is NULL. Pre-existing.
+- **Fix:** sum signed weights; treat NULL as 0.
+
+## Factor monitor baseline: pre-packet-44 snapshot
+
+- **Raised:** 2026-10-24, packet 44 review.
+- **Problem:** `portfolio_history` holds one partial target-book snapshot from 2026-05-21,
+  written before packet 44. The factor monitor baseline (`risk/factor_monitor.py`) treats every
+  snapshot date as a whole book. One date out of the 10 required has little effect.
+- **Fix:** ignore snapshots before the first packet 44 sync, or delete the 2026-05-21 rows (with
+  the owner's go-ahead).
+
 ## Risk factors still not found for six 10-Ks
 
 - **Raised:** 2026-10-15, packet 33 universe check.

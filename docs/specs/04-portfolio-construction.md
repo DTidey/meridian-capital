@@ -17,7 +17,7 @@ Layer 4 consumes the ranked long/short candidate list produced by Layer 3 (`comb
 - AC5: Sector neutrality is enforced so that the net sector weight (long minus short) for any GICS sector does not exceed `max_sector_net_pct` (default 5% of NAV); the portfolio net beta is kept within `max_beta` (default 0.15) by scaling the short book.
 - AC6: The MVO optimiser uses SLSQP to maximise `mu^T w - lambda * w^T Sigma w` subject to long/short gross targets, position bounds, beta constraint, and per-sector caps; if `result.success == False` or any exception occurs, it falls back to conviction-tilt and logs a warning.
 - AC7: The rebalance generator diffs the current `portfolio_positions` against the target, maps deltas to BUY/SELL/SHORT/COVER/HOLD actions, respects the `turnover_budget_pct` (default 30%) by trimming the smallest-delta-score trades first (full closures are never trimmed), and estimates transaction costs for each trade.
-- AC8: When `--rebalance` is run without `--whatif`, the system writes proposed trades to `position_approvals` (status PENDING), upserts `portfolio_positions`, and appends a snapshot row to `portfolio_history`.
+- AC8: When `--rebalance` is run without `--whatif`, the system writes proposed trades to `position_approvals` (status PENDING), upserts `portfolio_positions`, and appends a snapshot row to `portfolio_history`. (Superseded by packet 44: `docs/specs/44-book-of-record.md`: rebalance writes approvals only; positions and history come from the broker.)
 - AC9: The rebalance schedule checker returns advisory warning strings (never blocks execution) for: earnings within 2 days, FOMC meeting within 5 days, and options expiration within 3 days.
 - AC10: The entry point `run_portfolio.py` supports `--rebalance`, `--whatif`, `--current`, and `--optimize-method mvo|conviction` flags, and prints a portfolio summary including gross/net exposure, sector breakdown, and net beta.
 
@@ -87,7 +87,7 @@ ls_equity_fund/
 Three new tables registered on the shared SQLAlchemy metadata (same pattern as `factors/db.py` and `analysis/db.py`). All are PostgreSQL-backed in production; SQLite is used in tests.
 
 ### 3.1 `portfolio_positions`
-Current open positions — one row per ticker, updated on each rebalance commit.
+Current open positions — one row per ticker, updated on each rebalance commit. Since packet 44: rebuilt from Alpaca by `execution/book_sync.py`, with signed shares, market value and weight (shorts negative).
 
 | Column | Type | Description |
 |--------|------|-------------|

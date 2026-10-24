@@ -330,6 +330,10 @@ Closing/covering trades skip checks 2-8 (only check 1 applies).
 | 7 | **Net beta** | Resulting |net beta| > 0.20 |
 | 8 | **Pairwise correlation** | Correlation of new ticker vs any existing same-book position over 60 days > 0.80 |
 
+"Resulting" (packet 44): the current book, synced from Alpaca, with every PENDING target for
+the date applied, so each trade is checked against the whole proposed book. Check 8 compares
+the new ticker with the other same-book names, not with itself.
+
 Note on check 2: The earnings blackout applies a **50% size reduction** rather than a
 full rejection. The trade is modified (delta_shares halved, target_shares adjusted) and
 marked APPROVED with a `BLACKOUT_REDUCED` note in the reason column.

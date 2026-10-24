@@ -224,3 +224,30 @@ class TestPriorityColumn:
         trades = _run(current, target, prices=prices, conn=tmp_db)
         prio = sorted(trades["priority"].tolist())
         assert prio == list(range(1, len(trades) + 1))
+
+
+# ---------------------------------------------------------------------------
+# Commit (packet 44): approvals only
+# ---------------------------------------------------------------------------
+
+
+class TestCommit:
+    def test_commit_writes_approvals_only(self, tmp_db):
+        import sqlalchemy as sa
+
+        from portfolio.db import portfolio_history, portfolio_positions, position_approvals
+
+        target = _target_df([{"ticker": "AAPL", "shares": 100.0}])
+        generate_trades(
+            _empty_current(),
+            target,
+            _prices_for("AAPL"),
+            _CONFIG,
+            conn=tmp_db,
+            score_date="2026-03-01",
+            commit=True,
+        )
+        assert tmp_db.execute(sa.select(sa.func.count()).select_from(position_approvals)).scalar()
+        for table in (portfolio_positions, portfolio_history):
+            count = tmp_db.execute(sa.select(sa.func.count()).select_from(table)).scalar()
+            assert count == 0, table.name

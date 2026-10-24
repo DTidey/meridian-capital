@@ -236,3 +236,41 @@ class TestPreTradeWhatIf:
         ).fetchone()
         assert row is not None
         assert row[0] == "PENDING"
+
+
+class TestTargetBook:
+    """Packet 44: each trade is checked against the whole proposed book."""
+
+    def _setup(self, conn, trades):
+        # Prices end at 112.0; 8,000 shares = $896,000 = 8.96% of the $10M NAV.
+        for i, (ticker, action, target) in enumerate(trades):
+            _insert_prices(conn, ticker)
+            _insert_factor_score(conn, ticker, sector=f"Sector{i}")
+            _insert_approval(conn, ticker, action=action, target=target)
+
+    def test_net_check_sees_whole_proposed_book(self, mem_db, tmp_path):
+        # Four longs at ~9% each: net ~0.36 > 0.30. One at a time against an empty broker
+        # book each would pass; against the proposed book each is over the limit.
+        self._setup(mem_db, [(t, "BUY", 8000) for t in ("A", "B", "C", "D")])
+        result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
+        assert result["reason"].str.startswith("NET_EXPOSURE").all()
+
+    def test_offsetting_shorts_count_toward_net(self, mem_db, tmp_path):
+        trades = [(t, "BUY", 8000) for t in ("A", "B", "C", "D")]
+        trades += [(t, "SHORT", -8000) for t in ("E", "F")]
+        self._setup(mem_db, trades)
+        result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
+        assert not result["reason"].str.startswith("NET_EXPOSURE").any()
+
+    def test_new_position_not_correlated_with_itself(self, mem_db, tmp_path):
+        # Adversarial: the proposed book contains the trade's own ticker.
+        self._setup(mem_db, [("A", "BUY", 8000)])
+        result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
+        assert result.iloc[0]["result"] == "APPROVED", result.iloc[0]["reason"]
+
+    def test_null_position_weight_does_not_crash(self, mem_db, tmp_path):
+        # Adversarial: a synced position with no weight (zero equity) counts as 0.
+        _insert_position(mem_db, "HELD", weight=None)
+        self._setup(mem_db, [("A", "BUY", 8000)])
+        result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
+        assert len(result) == 1

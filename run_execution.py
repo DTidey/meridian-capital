@@ -6,7 +6,7 @@ Usage examples:
   python run_execution.py --dry-run          # Print orders, no Alpaca calls
   python run_execution.py --execute          # Submit today's approved orders
   python run_execution.py --status           # Show open execution_orders rows
-  python run_execution.py --sync             # Reconcile positions with broker
+  python run_execution.py --sync             # Rebuild positions from the broker (book sync)
   python run_execution.py --slippage         # Print 30-day slippage stats
   python run_execution.py --cancel-pending   # Cancel all open Alpaca orders
 """
@@ -68,12 +68,19 @@ def _print_summary(results: list[dict]) -> None:
         )
 
 
+def _print_sync(summary: dict) -> None:
+    print(
+        f"Book sync: {summary['positions']} position(s); added {summary['added'] or '-'}, "
+        f"removed {summary['removed'] or '-'}, changed {summary['changed'] or '-'}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Meridian Layer 6 — Execution")
     parser.add_argument("--dry-run", action="store_true", help="Log orders; no Alpaca calls")
     parser.add_argument("--execute", action="store_true", help="Submit approved orders")
     parser.add_argument("--status", action="store_true", help="Show open execution_orders")
-    parser.add_argument("--sync", action="store_true", help="Reconcile positions")
+    parser.add_argument("--sync", action="store_true", help="Rebuild positions from Alpaca")
     parser.add_argument("--slippage", action="store_true", help="Print 30-day slippage stats")
     parser.add_argument("--cancel-pending", action="store_true", help="Cancel all open orders")
     parser.add_argument("--date", default=date.today().isoformat(), metavar="DATE")
@@ -137,7 +144,7 @@ def main() -> int:
     # All other modes need Alpaca client
     # -----------------------------------------------------------------------
     try:
-        from execution.broker import get_account, get_client, market_is_open, reconcile_positions
+        from execution.broker import get_account, get_client, market_is_open
 
         client = get_client()
         acct = get_account(client)
@@ -160,18 +167,15 @@ def main() -> int:
         print(f"Cancelled {n} open orders.")
         return 0
 
+    from execution.book_sync import sync_book
+
     # -----------------------------------------------------------------------
-    # --sync: reconcile positions
+    # --sync: rebuild positions from the broker
     # -----------------------------------------------------------------------
     if args.sync:
         with engine.connect() as conn:
-            corrections = reconcile_positions(conn, client, cache_dir, dry_run=False)
-        if not corrections:
-            print("Positions are in sync — no corrections needed.")
-        else:
-            print(f"{len(corrections)} position(s) corrected:")
-            for c in corrections:
-                print(f"  {c['ticker']}: broker={c['broker_qty']:.2f}  db={c['db_qty']:.2f}")
+            summary = sync_book(conn, client, score_date)
+        _print_sync(summary)
         return 0
 
     # -----------------------------------------------------------------------
@@ -184,11 +188,8 @@ def main() -> int:
     dry_run = args.dry_run
 
     with engine.connect() as conn:
-        # 1. Reconcile positions (dry-run: log only, no DB writes)
-        corrections = reconcile_positions(conn, client, cache_dir, dry_run=dry_run)
-        if corrections:
-            verb = "would be corrected" if dry_run else "auto-corrected"
-            log.warning("%d position(s) %s before execution.", len(corrections), verb)
+        # 1. Book sync (dry-run: log only, no DB writes)
+        _print_sync(sync_book(conn, client, score_date, dry_run=dry_run))
 
         # 2. Market open check (warn but don't block)
         market_is_open(client)
@@ -202,8 +203,12 @@ def main() -> int:
                 conn, client, score_date, config, cache_dir, dry_run=dry_run
             )
 
-    print(f"\nExecution summary for {score_date}:")
-    _print_summary(results)
+        print(f"\nExecution summary for {score_date}:")
+        _print_summary(results)
+
+        # 4. Record fills: the broker is the book of record
+        if not dry_run:
+            _print_sync(sync_book(conn, client, score_date))
     return 0
 
 

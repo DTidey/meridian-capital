@@ -61,3 +61,12 @@ class TestIsShortable:
         result = is_shortable("NVDA", client, tmp_path, ttl_days=7)
         assert result is True
         client.get_asset.assert_called_once()
+
+
+def test_uses_alpaca_symbol(tmp_path):
+    # Packet 44 (H5): Alpaca knows Berkshire as BRK.B; the cache stays under the db ticker.
+    client = MagicMock()
+    client.get_asset.return_value = _make_asset()
+    assert is_shortable("BRK-B", client, tmp_path) is True
+    client.get_asset.assert_called_once_with("BRK.B")
+    assert (tmp_path / "shortable" / "BRK-B.json").exists()

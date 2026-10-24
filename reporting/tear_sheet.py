@@ -223,7 +223,7 @@ def write(
             sub = pos_df[pos_df["sector"] == s]
             lw = sub[sub["direction"] == "LONG"]["weight"].sum()
             sw = sub[sub["direction"] == "SHORT"]["weight"].sum()
-            net = lw - sw
+            net = lw + sw  # short weights are negative
             lines.append(f"| {s} | {lw:.2%} | {sw:.2%} | {net:+.2%} |")
         lines += ["", "---", ""]
 
