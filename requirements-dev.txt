@@ -61,7 +61,7 @@ defusedxml==0.7.1
     # via py-serializable
 distlib==0.4.3
     # via virtualenv
-filelock==3.29.4
+filelock==4.2.4
     # via
     #   cachecontrol
     #   python-discovery
