@@ -14,11 +14,13 @@ import analysis.db  # noqa: F401
 import execution.db  # noqa: F401
 import factors.db  # noqa: F401
 import portfolio.db  # noqa: F401
+import reporting.db  # noqa: F401
 import risk.db  # noqa: F401
 from analysis.db import combined_scores
 from data.db import daily_prices, initialise_schema, sp500_universe
 from execution.book_sync import sync_book
 from portfolio.db import portfolio_history, portfolio_positions
+from reporting.db import portfolio_nav
 
 _DATE = "2026-10-26"
 
@@ -78,7 +80,13 @@ class TestSyncBook:
         book = _positions(conn)
         assert set(book) == {"AAPL", "MSFT"}
         assert book["AAPL"].shares == pytest.approx(12.0)
-        assert summary == {"positions": 2, "added": ["MSFT"], "removed": [], "changed": ["AAPL"]}
+        assert summary == {
+            "positions": 2,
+            "added": ["MSFT"],
+            "removed": [],
+            "changed": ["AAPL"],
+            "equity": 100_000.0,
+        }
 
     def test_short_is_signed(self, conn):
         sync_book(conn, _client([_pos("BRK.B", 5, "short", entry=400.0, price=380.0)]), _DATE)
@@ -213,3 +221,55 @@ class TestSyncBook:
         with pytest.raises(RuntimeError):
             sync_book(conn, _client([_pos("MSFT", 1)]), _DATE)
         assert set(_positions(conn)) == {"AAPL"}
+
+
+def _nav_rows(conn):
+    return {r.date: r.nav for r in conn.execute(sa.select(portfolio_nav)).fetchall()}
+
+
+class TestSyncNav:
+    """Packet 50: the book sync records Alpaca equity as the day's NAV."""
+
+    def test_equity_recorded_as_nav(self, conn):
+        sync_book(conn, _client([_pos("AAPL", 1)], equity=101_234.5), _DATE)
+        assert _nav_rows(conn) == {_DATE: pytest.approx(101_234.5)}
+
+    def test_flat_book_still_records_nav(self, conn):
+        sync_book(conn, _client([], equity=100_000.0), _DATE)
+        assert _nav_rows(conn) == {_DATE: pytest.approx(100_000.0)}
+
+    def test_resync_replaces_nav(self, conn):
+        sync_book(conn, _client([], equity=100_000.0), _DATE)
+        sync_book(conn, _client([], equity=99_000.0), _DATE)
+        assert _nav_rows(conn) == {_DATE: pytest.approx(99_000.0)}
+
+    def test_dry_run_records_no_nav(self, conn):
+        sync_book(conn, _client([], equity=100_000.0), _DATE, dry_run=True)
+        assert _nav_rows(conn) == {}
+
+    def test_failed_commit_records_no_nav(self, conn, monkeypatch):
+        # Adversarial: NAV and positions are written together or not at all; fail after the
+        # NAV insert, at commit.
+        def boom():
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(conn, "commit", boom)
+        with pytest.raises(RuntimeError):
+            sync_book(conn, _client([_pos("MSFT", 1)]), _DATE)
+        monkeypatch.undo()
+        assert _nav_rows(conn) == {}
+        assert _positions(conn) == {}
+
+    def test_resync_keeps_reporting_columns(self, conn):
+        # A manual re-sync after reporting must not blank that night's drawdown.
+        sync_book(conn, _client([], equity=100_000.0), _DATE)
+        conn.execute(
+            portfolio_nav.update()
+            .where(portfolio_nav.c.date == _DATE)
+            .values(spy_close=480.0, drawdown_pct=0.02)
+        )
+        conn.commit()
+        sync_book(conn, _client([], equity=99_000.0), _DATE)
+        row = conn.execute(sa.select(portfolio_nav)).fetchone()
+        assert row.nav == pytest.approx(99_000.0)
+        assert row.spy_close == pytest.approx(480.0) and row.drawdown_pct == pytest.approx(0.02)

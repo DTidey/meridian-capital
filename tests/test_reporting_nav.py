@@ -19,8 +19,6 @@ from portfolio.db import portfolio_history
 from reporting.db import portfolio_nav
 from reporting.nav_series import build_nav_series
 
-_NAV_BASE = 10_000_000.0
-
 
 @pytest.fixture
 def engine(tmp_path):
@@ -32,153 +30,69 @@ def engine(tmp_path):
     eng.dispose()
 
 
-def _insert_history(conn, rows):
-    conn.execute(portfolio_history.insert(), rows)
+def _insert_navs(conn, navs):
+    """navs: {date: nav}, as recorded by the nightly book sync."""
+    conn.execute(portfolio_nav.insert(), [{"date": d, "nav": n} for d, n in navs.items()])
 
 
 def _insert_spy(conn, rows):
     conn.execute(daily_prices.insert(), rows)
 
 
+def _navs(engine):
+    with engine.connect() as conn:
+        rows = conn.execute(sa.select(portfolio_nav).order_by(portfolio_nav.c.date)).fetchall()
+    return {r.date: r for r in rows}
+
+
 def test_build_nav_series_empty(engine):
-    """Empty portfolio_history → empty DataFrame, no crash."""
-    df = build_nav_series(engine, nav_usd=_NAV_BASE)
+    """No recorded NAV → empty DataFrame, no crash."""
+    df = build_nav_series(engine)
     assert df.empty
 
 
-def test_build_nav_series_known_values(engine):
-    """Three snapshot dates → NAV = nav_usd + sum(unrealized_pnl) per day."""
-    hist_rows = [
-        {
-            "snapshot_date": "2026-01-01",
-            "ticker": "AAPL",
-            "direction": "LONG",
-            "shares": 100.0,
-            "price": 100.0,
-            "market_value": 10000.0,
-            "weight": 0.10,
-            "unrealized_pnl": 500.0,
-            "sector": "Technology",
-            "combined_score": 80.0,
-            "recorded_at": "2026-01-01T00:00:00",
-        },
-        {
-            "snapshot_date": "2026-01-02",
-            "ticker": "AAPL",
-            "direction": "LONG",
-            "shares": 100.0,
-            "price": 101.0,
-            "market_value": 10100.0,
-            "weight": 0.10,
-            "unrealized_pnl": 600.0,
-            "sector": "Technology",
-            "combined_score": 80.0,
-            "recorded_at": "2026-01-02T00:00:00",
-        },
-        {
-            "snapshot_date": "2026-01-03",
-            "ticker": "AAPL",
-            "direction": "LONG",
-            "shares": 100.0,
-            "price": 99.0,
-            "market_value": 9900.0,
-            "weight": 0.10,
-            "unrealized_pnl": 400.0,
-            "sector": "Technology",
-            "combined_score": 80.0,
-            "recorded_at": "2026-01-03T00:00:00",
-        },
-    ]
+def test_recorded_nav_never_changed(engine):
+    """Packet 50: NAV is Alpaca equity; the series step must not recompute it."""
     with engine.begin() as conn:
-        _insert_history(conn, hist_rows)
-
-    df = build_nav_series(engine, nav_usd=_NAV_BASE)
-
-    assert len(df) == 3
-    assert abs(df.loc[df["date"] == "2026-01-01", "nav"].iloc[0] - (_NAV_BASE + 500.0)) < 0.01
-    assert abs(df.loc[df["date"] == "2026-01-02", "nav"].iloc[0] - (_NAV_BASE + 600.0)) < 0.01
-    assert abs(df.loc[df["date"] == "2026-01-03", "nav"].iloc[0] - (_NAV_BASE + 400.0)) < 0.01
+        _insert_navs(conn, {"2026-01-01": 100_000.0, "2026-01-02": 101_500.0})
+        # Adversarial: history P&L used to be added to a config NAV; it must be ignored.
+        conn.execute(
+            portfolio_history.insert().values(
+                snapshot_date="2026-01-02", ticker="AAPL", unrealized_pnl=-50_000.0
+            )
+        )
+    df = build_nav_series(engine)
+    assert df["nav"].tolist() == [100_000.0, 101_500.0]
+    stored = _navs(engine)
+    assert stored["2026-01-02"].nav == pytest.approx(101_500.0)
 
 
 def test_drawdown_calculation(engine):
-    """Drawdown is correctly computed as (peak - nav) / peak."""
-    hist_rows = [
-        {
-            "snapshot_date": "2026-01-01",
-            "ticker": "AAPL",
-            "direction": "LONG",
-            "shares": 100.0,
-            "price": 100.0,
-            "market_value": 10000.0,
-            "weight": 0.10,
-            "unrealized_pnl": 0.0,
-            "sector": "Technology",
-            "combined_score": 80.0,
-            "recorded_at": "2026-01-01T00:00:00",
-        },
-        {
-            "snapshot_date": "2026-01-02",
-            "ticker": "AAPL",
-            "direction": "LONG",
-            "shares": 100.0,
-            "price": 110.0,
-            "market_value": 11000.0,
-            "weight": 0.10,
-            "unrealized_pnl": 1000.0,
-            "sector": "Technology",
-            "combined_score": 80.0,
-            "recorded_at": "2026-01-02T00:00:00",
-        },
-        {
-            "snapshot_date": "2026-01-03",
-            "ticker": "AAPL",
-            "direction": "LONG",
-            "shares": 100.0,
-            "price": 90.0,
-            "market_value": 9000.0,
-            "weight": 0.10,
-            "unrealized_pnl": -1000.0,
-            "sector": "Technology",
-            "combined_score": 80.0,
-            "recorded_at": "2026-01-03T00:00:00",
-        },
-    ]
+    """Drawdown = (running peak - nav) / running peak."""
     with engine.begin() as conn:
-        _insert_history(conn, hist_rows)
-
-    df = build_nav_series(engine, nav_usd=_NAV_BASE)
-
-    # Peak NAV is on day 2: _NAV_BASE + 1000
-    peak_nav = _NAV_BASE + 1000.0
-    nav_d3 = _NAV_BASE - 1000.0
-    expected_dd = (peak_nav - nav_d3) / peak_nav
-
-    actual_dd = float(df.loc[df["date"] == "2026-01-03", "drawdown_pct"].iloc[0])
-    assert abs(actual_dd - expected_dd) < 1e-9
+        _insert_navs(conn, {"2026-01-01": 100.0, "2026-01-02": 110.0, "2026-01-03": 99.0})
+    build_nav_series(engine)
+    stored = _navs(engine)
+    assert stored["2026-01-01"].drawdown_pct == pytest.approx(0.0)
+    assert stored["2026-01-02"].drawdown_pct == pytest.approx(0.0)
+    assert stored["2026-01-03"].drawdown_pct == pytest.approx((110.0 - 99.0) / 110.0)
 
 
-def test_nav_persisted_to_table(engine):
-    """build_nav_series writes rows to portfolio_nav table."""
-    hist_rows = [
-        {
-            "snapshot_date": "2026-02-01",
-            "ticker": "MSFT",
-            "direction": "LONG",
-            "shares": 50.0,
-            "price": 200.0,
-            "market_value": 10000.0,
-            "weight": 0.10,
-            "unrealized_pnl": 250.0,
-            "sector": "Technology",
-            "combined_score": 75.0,
-            "recorded_at": "2026-02-01T00:00:00",
-        },
-    ]
+def test_spy_close_filled(engine):
     with engine.begin() as conn:
-        _insert_history(conn, hist_rows)
+        _insert_navs(conn, {"2026-01-01": 100.0, "2026-01-02": 101.0})
+        _insert_spy(conn, [{"ticker": "SPY", "date": "2026-01-02", "adj_close": 480.5}])
+    build_nav_series(engine)
+    stored = _navs(engine)
+    assert stored["2026-01-02"].spy_close == pytest.approx(480.5)
+    assert stored["2026-01-01"].spy_close is None
 
-    build_nav_series(engine, nav_usd=_NAV_BASE)
 
+def test_no_rows_added(engine):
+    """History snapshots without a recorded NAV do not create NAV rows."""
+    with engine.begin() as conn:
+        conn.execute(portfolio_history.insert().values(snapshot_date="2026-02-01", ticker="MSFT"))
+    build_nav_series(engine)
     with engine.connect() as conn:
         count = conn.execute(sa.select(sa.func.count()).select_from(portfolio_nav)).scalar()
-    assert count == 1
+    assert count == 0

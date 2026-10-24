@@ -12,13 +12,14 @@ FORCE_CLOSE checks are independent and always evaluated.
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import sqlalchemy as sa
 
-from portfolio.db import portfolio_history, portfolio_positions, position_approvals
+from portfolio.db import portfolio_positions, position_approvals
+from reporting.db import portfolio_nav
 from risk.db import risk_events, risk_log
 from risk.risk_state import set_halt
 
@@ -49,15 +50,12 @@ def run_circuit_breakers(
     """
     cfg = _load_config(config)
 
-    daily_pnl_pct, weekly_pnl_pct, drawdown_pct, peak_nav_usd = _compute_pnl(
-        conn, score_date, nav_usd, risk_state
+    today_nav, daily_pnl_usd, daily_pnl_pct, weekly_pnl_pct, drawdown_pct, peak_nav_usd = (
+        _compute_pnl(conn, score_date)
     )
 
-    today_nav = nav_usd * (1.0 + daily_pnl_pct)
-    daily_pnl_usd = today_nav - nav_usd
-
     risk_state = dict(risk_state)
-    risk_state["nav_usd"] = nav_usd
+    risk_state["nav_usd"] = today_nav or nav_usd
     risk_state["daily_pnl_usd"] = daily_pnl_usd
     risk_state["daily_pnl_pct"] = daily_pnl_pct
     risk_state["weekly_pnl_pct"] = weekly_pnl_pct
@@ -259,113 +257,50 @@ def run_circuit_breakers(
 def _compute_pnl(
     conn: sa.engine.Connection,
     score_date: str,
-    nav_usd: float,
-    risk_state: dict,
-) -> tuple[float, float, float, float]:
-    """Return (daily_pnl_pct, weekly_pnl_pct, drawdown_pct, peak_nav_usd)."""
+) -> tuple[float, float, float, float, float, float]:
+    """Return (today_nav, daily_pnl_usd, daily_pct, weekly_pct, drawdown_pct, peak_nav).
 
-    today_nav = _nav_from_history(conn, score_date, nav_usd)
-
-    if today_nav is None:
-        # Fall back to portfolio_positions (nav_usd + unrealized P&L)
-        today_nav = _nav_from_positions(conn, nav_usd)
-
-    if today_nav is None or today_nav == 0.0:
-        # No data at all — all metrics are zero, no triggers fire
-        peak_nav = float(risk_state.get("peak_nav_usd", nav_usd) or nav_usd)
-        peak_nav = max(peak_nav, nav_usd)
-        return 0.0, 0.0, 0.0, peak_nav
-
-    # Daily P&L
-    yesterday_nav = _latest_nav_before(conn, score_date, nav_usd)
-    if yesterday_nav is not None and nav_usd > 0:
-        daily_pnl_pct = (today_nav - yesterday_nav) / nav_usd
-    else:
-        daily_pnl_pct = 0.0
-
-    # Weekly P&L
-    week_ago_nav = _nav_before_days_ago(conn, score_date, days=7, nav_usd=nav_usd)
-    if week_ago_nav is not None and nav_usd > 0:
-        weekly_pnl_pct = (today_nav - week_ago_nav) / nav_usd
-    else:
-        weekly_pnl_pct = daily_pnl_pct
-
-    # Peak NAV and drawdown
-    peak_nav = max(
-        float(risk_state.get("peak_nav_usd", nav_usd) or nav_usd),
-        today_nav,
-        nav_usd,
-    )
-    drawdown_pct = max((peak_nav - today_nav) / peak_nav, 0.0) if peak_nav > 0 else 0.0
-
-    return daily_pnl_pct, weekly_pnl_pct, drawdown_pct, peak_nav
-
-
-def _total_unrealised_pnl_from_history(
-    conn: sa.engine.Connection, snapshot_date: str
-) -> float | None:
-    """Return sum(unrealized_pnl) for a given portfolio_history snapshot, or None."""
-    rows = conn.execute(
-        sa.select(portfolio_history.c.unrealized_pnl).where(
-            portfolio_history.c.snapshot_date == snapshot_date
-        )
-    ).fetchall()
-    if not rows:
-        return None
-    return sum(float(r[0] or 0.0) for r in rows)
-
-
-def _nav_from_history(
-    conn: sa.engine.Connection, snapshot_date: str, nav_usd: float
-) -> float | None:
-    """Return estimated NAV = nav_usd + sum(unrealized_pnl) for snapshot_date, or None."""
-    pnl = _total_unrealised_pnl_from_history(conn, snapshot_date)
-    return (nav_usd + pnl) if pnl is not None else None
-
-
-def _nav_from_positions(conn: sa.engine.Connection, nav_usd: float) -> float | None:
-    """Estimate NAV from portfolio_positions as nav_usd + sum(unrealized_pnl).
-
-    This avoids the net-long-minus-short distortion that occurs when gross exposure
-    is much larger than net exposure. Returns None if no positions exist.
+    From portfolio_nav (Alpaca equity recorded by the nightly book sync); returns are on the
+    previous recorded NAV. All zero, with a warning, when score_date has no recorded NAV; a
+    recorded NAV of zero or below is used as is (a wiped-out account must trip the breakers).
     """
-    rows = conn.execute(sa.select(portfolio_positions.c.unrealized_pnl)).fetchall()
+    today = _nav_on(conn, score_date)
+    if today is None:
+        logger.warning("circuit_breakers: no NAV recorded for %s — P&L checks skipped", score_date)
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
-    if not rows:
-        return None
-    total_pnl = sum(float(r[0] or 0.0) for r in rows)
-    return nav_usd + total_pnl
+    prev = _nav_latest(conn, portfolio_nav.c.date < score_date)
+    daily_pct = today / prev - 1.0 if prev else 0.0
+    daily_usd = today - prev if prev else 0.0
 
+    week_cutoff = (date.fromisoformat(score_date) - timedelta(days=7)).isoformat()
+    week_ago = _nav_latest(conn, portfolio_nav.c.date <= week_cutoff)
+    weekly_pct = today / week_ago - 1.0 if week_ago else daily_pct
 
-def _latest_nav_before(conn: sa.engine.Connection, score_date: str, nav_usd: float) -> float | None:
-    """Return NAV for the most recent snapshot_date strictly before score_date."""
-    row = conn.execute(
-        sa.select(sa.func.max(portfolio_history.c.snapshot_date)).where(
-            portfolio_history.c.snapshot_date < score_date
-        )
+    peak = conn.execute(
+        sa.select(sa.func.max(portfolio_nav.c.nav)).where(portfolio_nav.c.date <= score_date)
     ).scalar()
+    peak = max(float(peak or 0.0), today)
+    drawdown_pct = (peak - today) / peak if peak > 0 else 0.0
+    return today, daily_usd, daily_pct, weekly_pct, drawdown_pct, peak
 
-    if row is None:
-        return None
-    return _nav_from_history(conn, row, nav_usd)
 
-
-def _nav_before_days_ago(
-    conn: sa.engine.Connection, score_date: str, days: int, nav_usd: float
-) -> float | None:
-    """Return NAV for most recent snapshot on or before (score_date - days)."""
-    from datetime import date, timedelta
-
-    cutoff = (date.fromisoformat(score_date) - timedelta(days=days)).isoformat()
-    row = conn.execute(
-        sa.select(sa.func.max(portfolio_history.c.snapshot_date)).where(
-            portfolio_history.c.snapshot_date <= cutoff
-        )
+def _nav_on(conn: sa.engine.Connection, nav_date: str) -> float | None:
+    nav = conn.execute(
+        sa.select(portfolio_nav.c.nav).where(portfolio_nav.c.date == nav_date)
     ).scalar()
+    return float(nav) if nav is not None else None
 
-    if row is None:
-        return None
-    return _nav_from_history(conn, row, nav_usd)
+
+def _nav_latest(conn: sa.engine.Connection, condition) -> float | None:
+    """Most recent positive recorded NAV matching condition."""
+    nav = conn.execute(
+        sa.select(portfolio_nav.c.nav)
+        .where(condition & (portfolio_nav.c.nav > 0))
+        .order_by(portfolio_nav.c.date.desc())
+        .limit(1)
+    ).scalar()
+    return float(nav) if nav is not None else None
 
 
 # ---------------------------------------------------------------------------

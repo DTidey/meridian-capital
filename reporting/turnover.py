@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import sqlalchemy as sa
 
-from portfolio.db import portfolio_history
+from execution.db import execution_orders
 from reporting.db import portfolio_nav, position_trades
 
 if TYPE_CHECKING:
@@ -43,14 +43,16 @@ def compute(
             .order_by(portfolio_nav.c.date)
         ).fetchall()
 
-        hist_rows = conn.execute(
+        fill_rows = conn.execute(
             sa.select(
-                portfolio_history.c.snapshot_date,
-                portfolio_history.c.ticker,
-                portfolio_history.c.market_value,
+                execution_orders.c.rebalance_date,
+                execution_orders.c.filled_shares,
+                execution_orders.c.avg_fill_price,
+            ).where(
+                (execution_orders.c.rebalance_date >= cutoff_90)
+                & (execution_orders.c.filled_shares > 0)
+                & execution_orders.c.avg_fill_price.isnot(None)
             )
-            .where(portfolio_history.c.snapshot_date >= cutoff_90)
-            .order_by(portfolio_history.c.snapshot_date, portfolio_history.c.ticker)
         ).fetchall()
 
         trade_rows = conn.execute(
@@ -65,13 +67,13 @@ def compute(
         ).fetchall()
 
     nav_df = pd.DataFrame(nav_rows, columns=["date", "nav"])
-    hist_df = pd.DataFrame(hist_rows, columns=["date", "ticker", "market_value"])
+    fills_df = pd.DataFrame(fill_rows, columns=["date", "filled_shares", "avg_fill_price"])
 
     avg_nav_30 = _avg_nav(nav_df, cutoff_30)
     avg_nav_90 = _avg_nav(nav_df, cutoff_90)
 
-    turnover_30 = _turnover_pct(hist_df, cutoff_30, avg_nav_30)
-    turnover_90 = _turnover_pct(hist_df, cutoff_90, avg_nav_90)
+    turnover_30 = _turnover_pct(fills_df, cutoff_30, avg_nav_30)
+    turnover_90 = _turnover_pct(fills_df, cutoff_90, avg_nav_90)
     turnover_ann = turnover_30 * 12 if turnover_30 else 0.0
 
     # Tax estimate on all profitable closed trades
@@ -104,15 +106,12 @@ def _avg_nav(nav_df: pd.DataFrame, cutoff: str) -> float:
     return float(sub["nav"].mean())
 
 
-def _turnover_pct(hist_df: pd.DataFrame, cutoff: str, avg_nav: float) -> float:
-    """Turnover = sum of |daily change in market value per ticker| / 2 / avg_nav."""
+def _turnover_pct(fills_df: pd.DataFrame, cutoff: str, avg_nav: float) -> float:
+    """Turnover = filled order value / 2 / avg_nav (fills of any final status count)."""
     if avg_nav <= 0:
         return 0.0
-    sub = hist_df[hist_df["date"] >= cutoff].copy()
+    sub = fills_df[fills_df["date"] >= cutoff]
     if sub.empty:
         return 0.0
-
-    sub = sub.sort_values(["ticker", "date"])
-    sub["mv_change"] = sub.groupby("ticker")["market_value"].diff().abs()
-    total_change = sub["mv_change"].sum()
-    return float((total_change / 2) / avg_nav)
+    traded = (sub["filled_shares"].abs() * sub["avg_fill_price"]).sum()
+    return float((traded / 2) / avg_nav)

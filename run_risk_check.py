@@ -35,7 +35,7 @@ import factors.db  # noqa: F401, E402
 import portfolio.db  # noqa: F401, E402
 import risk.db  # noqa: F401, E402  — registers tables
 from data.db import database_url, get_engine, initialise_schema  # noqa: E402
-from portfolio.state import load_positions  # noqa: E402
+from portfolio.state import get_nav, load_positions, with_nav  # noqa: E402
 from risk.circuit_breakers import run_circuit_breakers  # noqa: E402
 from risk.correlation_monitor import run_correlation_monitor  # noqa: E402
 from risk.factor_monitor import run_factor_monitor  # noqa: E402
@@ -270,9 +270,9 @@ def run(args) -> None:
     db_url = database_url()
     engine = get_engine(db_url)
     initialise_schema(engine)
-    nav_usd = float(config.get("portfolio", {}).get("nav_usd", 10_000_000))
-
     with engine.connect() as conn:
+        nav_usd = get_nav(config, conn, score_date)  # Alpaca equity recorded by the book sync
+        config = with_nav(config, nav_usd)
         logger.info("=== Layer 5 Risk Management — %s ===", score_date)
 
         if is_halted(cache_dir) and not args.whatif:

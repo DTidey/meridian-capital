@@ -68,8 +68,6 @@ def main() -> None:
     engine = get_engine(db_url)
     initialise_schema(engine)
 
-    cfg_port = cfg.get("portfolio", {})
-    nav_usd = float(cfg_port.get("nav_usd", 10_000_000))
     etf_map = cfg.get("scoring", {}).get("sector_etf_map") or {}
     output_dir = Path(
         cfg.get("reporting", {}).get("attribution_csv", "output/daily_attribution.csv")
@@ -78,7 +76,7 @@ def main() -> None:
 
     # Step 1 — NAV series
     log.info("=== Step 1/3: Building NAV series ===")
-    build_nav_series(engine, nav_usd=nav_usd)
+    build_nav_series(engine)
 
     # Step 2 — P&L attribution
     log.info("=== Step 2/3: P&L attribution ===")

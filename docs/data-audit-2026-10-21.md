@@ -208,7 +208,10 @@ signed off as it is fixed.
   - Evidence: unrealised P&L is always 0, realised P&L is never booked, and NAV stays at
     100,000.
   - Root cause: `reporting/nav_series.py:49-50`; `portfolio/state.py:47`.
-  - Fix: packet 50 (planned; split from 44 on 2026-10-24).
+  - Fix: packet 50 (PR pending). The nightly book sync records Alpaca account equity in
+    `portfolio_nav`; `build_nav_series` no longer recomputes it; circuit breakers take returns
+    on the previous recorded NAV and drawdown from the highest recorded NAV; sizing, pre-trade
+    and stress tests use the recorded NAV (config `nav_usd` only before the first sync).
   - Verify: `portfolio_nav` updates daily from Alpaca account equity, and drawdown moves on a
     losing day.
   - Signed off: -

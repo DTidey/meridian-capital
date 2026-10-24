@@ -387,6 +387,12 @@ drawdown = (peak_nav - current_nav) / peak_nav
 
 If `portfolio_history` has no prior data, P&L is 0 and drawdown is 0.
 
+Since packet 50 (`docs/specs/50-nav-from-broker.md`): NAV is Alpaca account equity recorded in
+`portfolio_nav` by the nightly book sync. Daily and weekly P&L are returns on the previous
+recorded NAV and on the latest NAV at least 7 days back; the peak is the highest recorded NAV
+on or before the date (not `risk_state.json`). With no NAV recorded for the date, P&L checks
+are skipped with a warning.
+
 ### Trigger Table
 
 | Trigger | Action | DB event_type |
