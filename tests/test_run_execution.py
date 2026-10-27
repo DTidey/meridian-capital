@@ -28,7 +28,7 @@ def run(monkeypatch, tmp_path):
     monkeypatch.setattr(
         execution.broker,
         "get_account",
-        lambda c: {"equity": 1.0, "buying_power": 1.0, "day_trade_count": 0, "status": "x"},
+        lambda c: {"equity": 1.0, "buying_power": 1.0, "status": "x"},
     )
 
     def sync_orders(conn, c):

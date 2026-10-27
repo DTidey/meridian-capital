@@ -70,6 +70,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Alpaca account read (packet `53-alpaca-null-daytrade-count`): `get_account` no longer
+  reads the day-trade count, which Alpaca now returns as null; every `run_execution.py` mode,
+  including the nightly Book sync, crashed on it.
 - Betas (packet `52-betas`): each ticker's beta is estimated pairwise against SPY (other
   tickers' gaps no longer drop days) and Blume-shrunk towards 1; the optimiser's beta
   adjustment, which scaled the short book and then renormalised it back, now reweights within
