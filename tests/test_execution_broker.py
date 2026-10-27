@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from unittest.mock import MagicMock
@@ -15,7 +16,7 @@ import factors.db  # noqa: F401
 import portfolio.db  # noqa: F401
 import risk.db  # noqa: F401
 from data.db import initialise_schema
-from execution.broker import get_broker_positions, market_is_open
+from execution.broker import get_account, get_broker_positions, market_is_open
 
 
 @pytest.fixture
@@ -80,3 +81,51 @@ class TestMarketIsOpen:
             result = market_is_open(client)
         assert result is False
         assert "CLOSED" in caplog.text
+
+
+def _mock_account(**overrides):
+    fields = {
+        "equity": "100000",
+        "buying_power": "200000",
+        "status": "ACTIVE",
+        "daytrade_count": None,
+        "pattern_day_trader": None,
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+class TestGetAccount:
+    """Packet 53: Alpaca returns null day-trade fields; get_account must not depend on them."""
+
+    def test_null_daytrade_count_is_accepted(self):
+        client = MagicMock()
+        client.get_account.return_value = _mock_account()
+        acct = get_account(client)
+        assert acct["equity"] == pytest.approx(100000.0)
+        assert acct["buying_power"] == pytest.approx(200000.0)
+        assert acct["status"] == "ACTIVE"
+
+    def test_day_trade_count_not_returned(self):
+        client = MagicMock()
+        client.get_account.return_value = _mock_account(daytrade_count=3)
+        assert "day_trade_count" not in get_account(client)
+
+    def test_missing_daytrade_attribute_is_accepted(self):
+        client = MagicMock()
+        acct = _mock_account()
+        del acct.daytrade_count
+        client.get_account.return_value = acct
+        assert get_account(client)["equity"] == pytest.approx(100000.0)
+
+    def test_null_equity_still_fails(self):
+        client = MagicMock()
+        client.get_account.return_value = _mock_account(equity=None)
+        with pytest.raises(TypeError):
+            get_account(client)
+
+    def test_null_buying_power_still_fails(self):
+        client = MagicMock()
+        client.get_account.return_value = _mock_account(buying_power=None)
+        with pytest.raises(TypeError):
+            get_account(client)

@@ -33,7 +33,6 @@ def get_account(client) -> dict:
     return {
         "equity": float(acct.equity),
         "buying_power": float(acct.buying_power),
-        "day_trade_count": int(acct.daytrade_count),
         "status": str(acct.status),
     }
 
