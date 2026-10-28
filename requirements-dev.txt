@@ -269,7 +269,7 @@ rpds-py==2026.5.1
     # via
     #   jsonschema
     #   referencing
-ruff==0.17.1
+ruff==0.17.2
     # via -r requirements-dev.in
 scipy==1.18.1
     # via -r requirements.in
