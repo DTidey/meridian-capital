@@ -108,7 +108,7 @@ packaging==26.3
     #   matplotlib
     #   plotly
     #   streamlit
-pandas==3.0.6
+pandas==3.1.0
     # via
     #   -r requirements.in
     #   alpaca-py
