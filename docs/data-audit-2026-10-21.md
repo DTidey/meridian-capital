@@ -36,8 +36,8 @@ signed off as it is fixed.
 
 | Severity | Items | Signed off |
 |---|---|---|
-| Critical | 12 | 8 |
-| High | 11 | 6 |
+| Critical | 12 | 12 |
+| High | 11 | 8 |
 | Medium / low | 23 | 0 |
 
 ## Critical: wrong trades or broken bookkeeping
@@ -175,19 +175,22 @@ signed off as it is fixed.
     `tests/test_earnings_calendar.py`; not yet exercised in production. 89 universe tickers
     have no future date, mostly names that have just reported; no check covers this.
 
-- [ ] **C9. Combined score: AI is blended only into AI-covered names, and the scales are mixed.**
+- [x] **C9. Combined score: AI is blended only into AI-covered names, and the scales are mixed.**
   - Evidence:
     - 27 of 108 LONGs and 41 of 97 SHORTs were quant-NEUTRAL names with no AI review.
     - PLD went from 23 to 3 (SHORT) and NEE from 23 to 3 (SHORT) with no AI.
   - Root cause: `analysis/combined_score.py:106-107`.
-  - Fix: packet 43 (PR pending). Direction is the Layer 2 direction, so only AI-reviewed
+  - Fix: packet 43, PR #103 (merged 2026-10-24). Direction is the Layer 2 direction, so only AI-reviewed
     candidates can be LONG or SHORT; within each side, quant and AI ranks are blended 60/40
     and mapped onto the side's band. The sector re-rank is gone.
   - Verify: no ticker becomes LONG or SHORT only because it lacks AI coverage; recheck PLD and
     NEE.
-  - Signed off: -
+  - Signed off: 2026-10-29, from the 2026-10-26 and 2026-10-28 nightly runs. Combined and
+    Layer 2 directions match for all 503 tickers (108 LONG, 97 SHORT on 10-28); every LONG and
+    SHORT has an AI score. PLD (SHORT 19.5) and NEE (SHORT 7.8) are Layer 2 SHORTs with AI
+    composites of 7.0 and 5.4.
 
-- [ ] **C10. Positions: position tracking cannot follow a real book.**
+- [x] **C10. Positions: position tracking cannot follow a real book.**
   - Evidence:
     - The target book is written as positions before any fill.
     - Reconcile then deletes those rows, so fills are never recorded.
@@ -195,42 +198,51 @@ signed off as it is fixed.
     - Rows the reconcile creates have no sector or weight, so pre-trade checks reject them.
   - Root cause: `portfolio/rebalance.py:95-97, 240-276`; `execution/broker.py:126-146`;
     `execution/executor.py:403-419`.
-  - Fix: packet 44 (PR pending). Alpaca is the book of record: `execution/book_sync.py`
+  - Fix: packet 44, PR #105 (merged 2026-10-24). Alpaca is the book of record: `execution/book_sync.py`
     rebuilds `portfolio_positions` from broker positions (signed shares, full metadata) and
     writes a whole-book `portfolio_history` snapshot, before Layer 4 every night and after
     execution. Rebalance and the executor no longer write positions. The end-to-end Verify
     needs packet 49 (order handling) first.
   - Verify: an end-to-end rebalance, execute and reconcile on the paper account leaves
     `portfolio_positions` equal to Alpaca's positions, with signed shares.
-  - Signed off: -
+  - Signed off: 2026-10-29. First real rebalance: 8 orders from the 2026-10-27 run filled on
+    10-28; the 10-28 nightly order sync recorded all 8 FILLED, and book sync left
+    `portfolio_positions` equal to Alpaca (AIZ 14, AVY 6, CSGP 51, URI 2; AKAM -32, BA -6,
+    CLX -43, COIN -5), shorts signed, with sector, weight and beta filled.
 
-- [ ] **C11. NAV: never marked to market, so the circuit breakers cannot fire.**
+- [x] **C11. NAV: never marked to market, so the circuit breakers cannot fire.**
   - Evidence: unrealised P&L is always 0, realised P&L is never booked, and NAV stays at
     100,000.
   - Root cause: `reporting/nav_series.py:49-50`; `portfolio/state.py:47`.
-  - Fix: packet 50 (PR pending). The nightly book sync records Alpaca account equity in
+  - Fix: packet 50, PR #107 (merged 2026-10-24). The nightly book sync records Alpaca account equity in
     `portfolio_nav`; `build_nav_series` no longer recomputes it; circuit breakers take returns
     on the previous recorded NAV and drawdown from the highest recorded NAV; sizing, pre-trade
     and stress tests use the recorded NAV (config `nav_usd` only before the first sync).
   - Verify: `portfolio_nav` updates daily from Alpaca account equity, and drawdown moves on a
     losing day.
-  - Signed off: -
+  - Signed off: 2026-10-29. `portfolio_nav` has Alpaca equity for 10-26 and 10-27 (100,000)
+    and 10-28 (99,961.21); 10-28 was the first losing day and drawdown moved to 0.04%;
+    circuit breakers logged daily -0.04%, weekly -0.04%, drawdown 0.04%.
 
-- [ ] **C12. Execution: orders are marked cancelled but left live at Alpaca.**
+- [x] **C12. Execution: orders are marked cancelled but left live at Alpaca.**
   - Evidence:
     - Orders go in at 18:00 ET as DAY limit orders.
     - After 120 seconds they are marked CANCELLED in the database only, so they fill the next
       morning unrecorded.
     - Their limits are set from a close two sessions old.
   - Root cause: `execution/executor.py:101-107, 153-155, 367-369`.
-  - Fix: packet 49 (PR pending). DAY limit orders from the nightly run, queued by Alpaca for the
+  - Fix: packet 49, PR #106 (merged 2026-10-24). DAY limit orders from the nightly run, queued by Alpaca for the
     next session (owner's choice; Alpaca rejects opening-auction orders submitted 9:28am-7:00pm
     New York time). No polling; `execution/order_sync.py` records each order's Alpaca status,
     fills and slippage the next night. Limits from the stored close for the score date.
   - Verify (amended 2026-10-24: no live quote exists after the close):
     - no order is CANCELLED in the database while open at Alpaca;
     - limits are set from the close of the session that just ended.
-  - Signed off: -
+  - Signed off: 2026-10-29. The 8 orders from the 2026-10-27 run stayed open at Alpaca
+    overnight, filled in the 10-28 session, and the 10-28 order sync recorded them FILLED with
+    fill price and slippage; no order is CANCELLED in the database while open at Alpaca.
+    Limits are the score date's close plus or minus 0.5% (CSGP buy 32.17 on a 10-27 close of
+    32.01; AIZ sell 283.57 on a 10-28 close of 284.99).
 
 ## High: wrong inputs, weaker risk control
 
@@ -254,42 +266,49 @@ signed off as it is fixed.
     for 10 tickers no longer in the universe (AVB, BLDR, CTRA, CTVA, EA, EQR, PSKY, SATS,
     TAP, WBD), which are neither fetched nor scored. Accepted.
 
-- [ ] **H3. Beta and covariance: one missing ticker drops that day for every ticker.**
+- [x] **H3. Beta and covariance: one missing ticker drops that day for every ticker.**
   - Evidence:
     - A universe-wide beta used 12 of 60 days.
     - JPM's beta is 0.55 alone and -0.80 in the universe call.
     - `_adjust_beta` has no effect, and betas are not shrunk (range -0.6 to 4.4).
   - Root cause: `portfolio/beta.py:37-43`, `portfolio/mvo_optimizer.py:186`,
     `portfolio/optimizer.py:309-316`.
-  - Fix: packet 52 (PR pending). Betas pairwise against SPY and Blume-shrunk (owner's choice);
+  - Fix: packet 52, PR #109 (merged 2026-10-24). Betas pairwise against SPY and Blume-shrunk (owner's choice);
     the beta adjustment reweights within each book (owner's choice over a SPY hedge); MVO
     covariance keeps days with gaps. Dry run on 2026-10-23: net beta -0.33 to -0.15; the whole
     target book passes pre-trade (24 pass, 16 resized for earnings blackout), which also meets
     H4's Verify.
   - Verify: a ticker's beta is the same whether computed alone or with the universe.
-  - Signed off: -
+  - Signed off: 2026-10-29. For all 503 universe tickers on 2026-10-28, `compute_betas` gives
+    the same beta alone as in the universe call (largest difference 0.0); JPM 0.57. Betas range
+    -0.64 to 4.59. Target book net beta 0.002 on 10-28 (-0.150 on 10-27).
 
-- [ ] **H4. Portfolio: the target book breaches the pre-trade net limit.**
+- [x] **H4. Portfolio: the target book breaches the pre-trade net limit.**
   - Evidence:
     - Targets are 0.90 long and 0.60 short (net +0.30) against a 0.15 limit.
     - The configured net and gross bounds are never read.
   - Root cause: `config.yaml:162-166` vs `204-206`; `portfolio/optimizer.py:230-276`.
-  - Fix: packet 51 (PR pending). Targets 0.80 long / 0.70 short (owner's choice: gross 1.50,
+  - Fix: packet 51, PR #108 (merged 2026-10-24). Targets 0.80 long / 0.70 short (owner's choice: gross 1.50,
     net +0.10), and `portfolio/book_targets.py` rejects targets outside `gross_exposure`, the
     portfolio net bounds or the pre-trade limits. Dry run on 2026-10-23: gross 150%, net 10%;
     net beta -0.33 is H3 (next packet), so Verify waits for H3.
   - Verify: the simulated target book passes every pre-trade check.
-  - Signed off: -
+  - Signed off: 2026-10-29. Target book on 2026-10-27 and 10-28: 20 long / 20 short, gross
+    150%, net 10%; pre-trade approved all 8 trades on 10-27 and all 11 on 10-28, none rejected.
+    Separate finding on 10-28: the circuit breaker's 3% single-name cap sat below the 5%
+    sizing cap and force-closed AIZ, AKAM and CLX (orders cancelled before the 10-29 open);
+    fixed in packet 54, PR #117.
 
 - [ ] **H5. Execution: BRK-B is never converted to Alpaca's BRK.B.**
   - Evidence: orders and shortability checks fail; reconcile would treat the two spellings as
     separate tickers.
   - Root cause: `execution/executor.py:102`, `execution/short_check.py:34`,
     `execution/broker.py:68-75`.
-  - Fix: packet 44 (PR pending): `execution/symbols.py` maps BRK-B to BRK.B for orders and the
-    shortability check, and back for broker positions.
+  - Fix: packet 44, PR #105 (merged 2026-10-24): `execution/symbols.py` maps BRK-B to BRK.B
+    for orders and the shortability check, and back for broker positions.
   - Verify: a BRK-B paper order is accepted and reconciles to `BRK-B`.
-  - Signed off: -
+  - Signed off: - (2026-10-29: no BRK-B order yet; BRK-B was not in the 10-27 or 10-28 trade
+    lists.)
 
 - [x] **H6. Value factor: single-quarter ratios, missing-value bug, wrong EBIT.**
   - Evidence:
