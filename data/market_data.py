@@ -1,6 +1,7 @@
 """Daily OHLCV price ingestion — incremental updates via yfinance or Polygon."""
 
 import logging
+import warnings
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from datetime import datetime, time, timedelta
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import sqlalchemy as sa
 import yfinance as yf
+from pandas.errors import Pandas4Warning
 
 from data._utils import utc_now
 
@@ -23,6 +25,20 @@ _SESSION_CLOSED = time(16, 30)  # US daily bar complete from this New York time
 _ADJ_TOL = 1e-4  # relative close/adj_close change that means the history was re-adjusted
 _REASONS = ("adjustment", "gap", "refresh")
 _OHLC = {"open": "Open", "high": "High", "low": "Low", "close": "Close"}
+
+
+def ignore_yfinance_inplace_warnings() -> None:
+    """Hide yfinance's pandas 3.1 `inplace` deprecation noise (see docs/backlog.md)."""
+    warnings.filterwarnings(
+        "ignore",
+        message="The inplace keyword",
+        category=Pandas4Warning,
+        module=r"yfinance(\.|$)",
+    )
+
+
+# After `import yfinance`, which adds its own filter that shows these
+ignore_yfinance_inplace_warnings()
 
 
 def _last_stored_date(conn: sa.engine.Connection, ticker: str) -> str | None:

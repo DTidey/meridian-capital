@@ -172,3 +172,12 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   could never reach its 10-value minimum.
 - **Fix:** delete both, or rebuild them on the packet 46 portfolio-history baseline if a Layer 4
   exposure flag is wanted.
+
+## pandas 4 and yfinance inplace
+
+- **Raised:** 2026-10-29, packet 55.
+- **Problem:** yfinance 1.7.0 calls pandas `sort_index`, `rename` and `set_index` with
+  `inplace=True`, deprecated in pandas 3.1 (`Pandas4Warning`). Packet 55 hides these warnings
+  in Layer 1. pandas 4 is expected to remove the keyword, which would break price downloads.
+- **Fix:** do not merge a pandas 4.x bump until a yfinance release no longer uses `inplace`;
+  then drop the filter in `data/market_data.py`.
