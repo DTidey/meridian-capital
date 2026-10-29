@@ -218,7 +218,7 @@ risk:
     daily_close_all:        0.025
     daily_size_down:        0.015
     weekly_size_down:       0.040
-    max_single_position_pct: 0.030
+    max_single_position_pct: 0.060   # above portfolio.max_position_pct: catches drift only
 
   tail_risk:
     vix_caution:            25

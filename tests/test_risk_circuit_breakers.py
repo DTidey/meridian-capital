@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 import pytest
 import sqlalchemy as sa
+import yaml
 
 import analysis.db  # noqa: F401
 import factors.db  # noqa: F401
@@ -48,9 +49,11 @@ def _base_config(
     daily_close_all=0.025,
     daily_size_down=0.015,
     weekly_size_down=0.040,
-    max_single_position_pct=0.03,
+    max_single_position_pct=0.06,
+    max_position_pct=0.05,
 ):
     return {
+        "portfolio": {"max_position_pct": max_position_pct},
         "risk": {
             "circuit_breakers": {
                 "drawdown_kill": drawdown_kill,
@@ -59,7 +62,7 @@ def _base_config(
                 "weekly_size_down": weekly_size_down,
                 "max_single_position_pct": max_single_position_pct,
             }
-        }
+        },
     }
 
 
@@ -187,30 +190,104 @@ class TestCircuitBreakerKillSwitch:
         assert is_halted(tmp_path)
 
 
-class TestCircuitBreakerForceClose:
-    def test_force_close_oversized(self, mem_db, tmp_path):
-        """Position with market_value = 4% of NAV triggers FORCE_CLOSE."""
-        # max_single_position_pct=0.03; inserting a position at 4% of NAV
-        _insert_position(mem_db, "BIGG", direction="LONG", shares=100, market_value=400_000.0)
-
-        state = default_state()
-        _result = run_circuit_breakers(
-            mem_db,
-            _SCORE_DATE,
-            _NAV,
-            _base_config(max_single_position_pct=0.03),
-            state,
-            tmp_path,
-            whatif=False,
+def _approvals(conn, ticker):
+    return conn.execute(
+        sa.select(
+            position_approvals.c.action,
+            position_approvals.c.target_shares,
+            position_approvals.c.delta_shares,
+            position_approvals.c.status,
         )
-        # FORCE_CLOSE fires independently; state may still be NORMAL if no P&L triggers
-        # Verify a closing SELL trade was inserted
-        rows = mem_db.execute(
-            sa.select(position_approvals.c.action, position_approvals.c.status).where(
-                position_approvals.c.ticker == "BIGG"
-            )
-        ).fetchall()
-        assert any(r[0] == "SELL" and r[1] == "APPROVED" for r in rows)
+        .where(position_approvals.c.ticker == ticker)
+        .order_by(position_approvals.c.id)
+    ).fetchall()
+
+
+def _run(conn, tmp_path, config=None, whatif=False):
+    return run_circuit_breakers(
+        conn,
+        _SCORE_DATE,
+        _NAV,
+        config or _base_config(),
+        default_state(),
+        tmp_path,
+        whatif=whatif,
+    )
+
+
+class TestCircuitBreakerForceClose:
+    def test_force_close_trims_long(self, mem_db, tmp_path):
+        """7% long (price 700) is trimmed to floor(5% x 10M / 700) = 714 shares."""
+        _insert_position(mem_db, "BIGG", direction="LONG", shares=1000, market_value=700_000.0)
+        _run(mem_db, tmp_path)
+        rows = _approvals(mem_db, "BIGG")
+        assert len(rows) == 1
+        action, target, delta, status = rows[0]
+        assert (action, status) == ("SELL", "APPROVED")
+        assert target == pytest.approx(714.0)
+        assert delta == pytest.approx(-286.0)
+
+    def test_force_close_trims_short(self, mem_db, tmp_path):
+        """7% short keeps its sign: COVER to -714 shares."""
+        _insert_position(mem_db, "SHRT", direction="SHORT", shares=-1000, market_value=-700_000.0)
+        _run(mem_db, tmp_path)
+        rows = _approvals(mem_db, "SHRT")
+        assert len(rows) == 1
+        action, target, delta, status = rows[0]
+        assert (action, status) == ("COVER", "APPROVED")
+        assert target == pytest.approx(-714.0)
+        assert delta == pytest.approx(286.0)
+
+    def test_trim_rejects_other_trades_for_ticker(self, mem_db, tmp_path):
+        """Opening and closing trades for the trimmed ticker are rejected; others untouched."""
+        _insert_position(mem_db, "SHRT", direction="SHORT", shares=-1000, market_value=-700_000.0)
+        _insert_approval(mem_db, "SHRT", action="COVER", target=-500, current=-1000)
+        _insert_approval(mem_db, "SHRT", action="SHORT", target=-1200, current=-1000)
+        _insert_approval(mem_db, "OTHR", action="BUY", target=100, current=0)
+        _run(mem_db, tmp_path)
+        rows = _approvals(mem_db, "SHRT")
+        assert [r[3] for r in rows] == ["REJECTED", "REJECTED", "APPROVED"]
+        assert rows[2][1] == pytest.approx(-714.0)
+        assert _approvals(mem_db, "OTHR")[0][3] == "APPROVED"
+
+    def test_non_approved_rows_left_alone(self, mem_db, tmp_path):
+        """A PENDING row for the trimmed ticker keeps its status."""
+        _insert_position(mem_db, "BIGG", direction="LONG", shares=1000, market_value=700_000.0)
+        _insert_approval(mem_db, "BIGG", action="BUY", target=1100, current=1000, status="PENDING")
+        _run(mem_db, tmp_path)
+        assert [r[3] for r in _approvals(mem_db, "BIGG")] == ["PENDING", "APPROVED"]
+
+    def test_share_above_sizing_cap_closes_fully(self, mem_db, tmp_path):
+        """One share worth more than 5% of NAV: target 0, a full close."""
+        _insert_position(mem_db, "HUGE", direction="LONG", shares=1, market_value=700_000.0)
+        _run(mem_db, tmp_path)
+        ((action, target, delta, _status),) = _approvals(mem_db, "HUGE")
+        assert action == "SELL"
+        assert target == pytest.approx(0.0)
+        assert delta == pytest.approx(-1.0)
+
+    def test_cap_below_sizing_cap_raises(self, mem_db, tmp_path):
+        """A breaker cap under the sizing cap fails before any change."""
+        _insert_position(mem_db, "BIGG", direction="LONG", shares=1000, market_value=400_000.0)
+        with pytest.raises(ValueError, match="max_single_position_pct"):
+            _run(mem_db, tmp_path, _base_config(max_single_position_pct=0.03))
+        assert _approvals(mem_db, "BIGG") == []
+
+    def test_production_config_caps_consistent(self):
+        """config.yaml breaker cap sits above the Layer 4 and pre-trade sizing caps."""
+        cfg = yaml.safe_load((Path(__file__).parent.parent / "config.yaml").read_text())
+        cap = cfg["risk"]["circuit_breakers"]["max_single_position_pct"]
+        assert cap == pytest.approx(0.06)
+        assert cap > cfg["portfolio"]["max_position_pct"]
+        assert cap > cfg["risk"]["pre_trade"]["max_position_pct"]
+
+    def test_position_at_cap_not_trimmed(self, mem_db, tmp_path):
+        """Exactly 6% (and a 5.9% short) is within the cap: no trade."""
+        _insert_position(mem_db, "EDGE", direction="LONG", shares=1000, market_value=600_000.0)
+        _insert_position(mem_db, "NEAR", direction="SHORT", shares=-1000, market_value=-590_000.0)
+        _run(mem_db, tmp_path)
+        assert _approvals(mem_db, "EDGE") == []
+        assert _approvals(mem_db, "NEAR") == []
 
 
 class TestCircuitBreakerWhatIf:
@@ -237,6 +314,13 @@ class TestCircuitBreakerWhatIf:
         assert row is not None
         assert row[0] == pytest.approx(300.0)
         assert row[1] == "APPROVED"
+
+    def test_whatif_trim_no_db_changes(self, mem_db, tmp_path):
+        """whatif=True with an oversized position writes no approval rows."""
+        _insert_position(mem_db, "BIGG", direction="LONG", shares=1000, market_value=700_000.0)
+        _insert_approval(mem_db, "BIGG", action="BUY", target=1100, current=1000)
+        _run(mem_db, tmp_path, whatif=True)
+        assert [r[3] for r in _approvals(mem_db, "BIGG")] == ["APPROVED"]
 
 
 class TestNavFromBroker:

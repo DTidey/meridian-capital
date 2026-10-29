@@ -4,7 +4,8 @@ Triggers are evaluated in priority order (most severe first):
   1. KILL_SWITCH   — drawdown > 8%
   2. CLOSE_ALL     — daily P&L < -2.5%
   3. SIZE_DOWN_30  — daily P&L < -1.5% (or weekly < -4%)
-  4. FORCE_CLOSE   — individual LONG position > max_single_position_pct of NAV
+  4. FORCE_CLOSE   — position > max_single_position_pct of NAV: trimmed to
+                     portfolio.max_position_pct
 
 At most one SIZE_DOWN action fires; KILL_SWITCH overrides all.
 FORCE_CLOSE checks are independent and always evaluated.
@@ -12,6 +13,7 @@ FORCE_CLOSE checks are independent and always evaluated.
 
 import json
 import logging
+import math
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -208,14 +210,16 @@ def run_circuit_breakers(
             pos_pct = abs(mv) / nav_usd
 
             if pos_pct > cfg["max_single_position_pct"]:
+                target = _trim_target(row, nav_usd, cfg["max_position_pct"])
                 logger.warning(
-                    "FORCE_CLOSE triggered for %s: position %.2f%% > max %.2f%%",
+                    "FORCE_CLOSE triggered for %s: position %.2f%% > max %.2f%%, trim to %.0f",
                     ticker,
                     pos_pct * 100,
                     cfg["max_single_position_pct"] * 100,
+                    target,
                 )
                 if not whatif:
-                    _apply_force_close(conn, score_date, ticker, direction)
+                    _apply_force_close(conn, score_date, ticker, direction, target)
                     _log_event(
                         conn,
                         score_date,
@@ -226,6 +230,7 @@ def run_circuit_breakers(
                             "position_pct": round(pos_pct, 6),
                             "market_value": round(mv, 2),
                             "max_single_position_pct": cfg["max_single_position_pct"],
+                            "target_shares": target,
                         },
                     )
                     _log_check(
@@ -385,37 +390,35 @@ def _apply_size_down(
     return count
 
 
+def _trim_target(row: pd.Series, nav_usd: float, max_position_pct: float) -> float:
+    """Signed whole shares worth at most max_position_pct of NAV (0 if one share is more)."""
+    shares = float(row["shares"])
+    price = abs(float(row["market_value"])) / abs(shares)
+    # + 0.0 turns a short's -0.0 into 0.0
+    return math.copysign(math.floor(max_position_pct * nav_usd / price), shares) + 0.0
+
+
 def _apply_force_close(
     conn: sa.engine.Connection,
     score_date: str,
     ticker: str,
     direction: str,
+    target_shares: float,
 ) -> None:
-    """Reject any APPROVED BUY/SHORT trade for ticker; insert a target_shares=0 row."""
+    """Reject every APPROVED trade for ticker; insert a trim row to target_shares."""
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    open_actions = {"BUY", "SHORT"}
 
-    # Reject existing APPROVED opening trades for this ticker
-    rows = conn.execute(
-        sa.select(position_approvals).where(
+    # The trim replaces the night's trades: two orders would compete for the same shares
+    conn.execute(
+        position_approvals.update()
+        .where(
             (position_approvals.c.rebalance_date == score_date)
             & (position_approvals.c.ticker == ticker)
             & (position_approvals.c.status == "APPROVED")
         )
-    ).fetchall()
+        .values(status="REJECTED", reviewed_at=now)
+    )
 
-    cols = [c.name for c in position_approvals.columns]
-    for row in rows:
-        d = dict(zip(cols, row, strict=False))
-        action = str(d.get("action", "") or "")
-        if action in open_actions:
-            conn.execute(
-                position_approvals.update()
-                .where(position_approvals.c.id == d["id"])
-                .values(status="REJECTED", reviewed_at=now)
-            )
-
-    # Insert a closing trade targeting zero shares
     close_action = "SELL" if direction == "LONG" else "COVER"
 
     # Determine current_shares from portfolio_positions
@@ -429,9 +432,9 @@ def _apply_force_close(
             rebalance_date=score_date,
             ticker=ticker,
             action=close_action,
-            target_shares=0.0,
+            target_shares=target_shares,
             current_shares=current_shares,
-            delta_shares=-current_shares,
+            delta_shares=target_shares - current_shares,
             estimated_cost_usd=None,
             status="APPROVED",
             created_at=now,
@@ -440,10 +443,11 @@ def _apply_force_close(
     )
     conn.commit()
     logger.info(
-        "circuit_breakers: force_close inserted %s trade for %s (current_shares=%.0f)",
+        "circuit_breakers: force_close inserted %s trade for %s (current_shares=%.0f, target=%.0f)",
         close_action,
         ticker,
         current_shares,
+        target_shares,
     )
 
 
@@ -503,12 +507,21 @@ def _log_check(
 
 def _load_config(config: dict) -> dict:
     cb = config.get("risk", {}).get("circuit_breakers", {})
+    cap = float(cb.get("max_single_position_pct", 0.06))
+    sizing = float(config.get("portfolio", {}).get("max_position_pct", 0.05))
+    if cap < sizing:
+        # A cap under the sizing cap closes positions Layer 4 just bought, every night
+        raise ValueError(
+            f"risk.circuit_breakers.max_single_position_pct {cap} < "
+            f"portfolio.max_position_pct {sizing}"
+        )
     return {
         "drawdown_kill": float(cb.get("drawdown_kill", 0.08)),
         "daily_close_all": float(cb.get("daily_close_all", 0.025)),
         "daily_size_down": float(cb.get("daily_size_down", 0.015)),
         "weekly_size_down": float(cb.get("weekly_size_down", 0.040)),
-        "max_single_position_pct": float(cb.get("max_single_position_pct", 0.03)),
+        "max_single_position_pct": cap,
+        "max_position_pct": sizing,
     }
 
 
