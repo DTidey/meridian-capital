@@ -13,3 +13,12 @@
   (all shares held for the first order).
 - A breaker cap below the sizing cap now raises: a silent mismatch churns the book nightly.
 - Event name stays FORCE_CLOSE so risk_events history and the dashboard keep working.
+
+## Packet 55: yfinance inplace warnings
+
+- The 2026-10-28 run (first on pandas 3.1.0) logged ~540 `Pandas4Warning` lines, all from
+  yfinance 1.7.0 (latest) calling pandas with `inplace=True`; our code has none.
+- Filtered narrowly (category, message and yfinance module) rather than pinning pandas: 3.1
+  works, and the backlog note blocks a pandas 4 bump until yfinance drops `inplace`.
+- The filter is added after `import yfinance`: yfinance adds a `default` filter for its own
+  deprecation warnings on import, which would otherwise take precedence.

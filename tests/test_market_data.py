@@ -1,6 +1,7 @@
 """Market data ingestion — unit tests for helpers and DB round-trips."""
 
 import logging
+import warnings
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 import sqlalchemy as sa
+from pandas.errors import Pandas4Warning
 
 from data.db import daily_prices
 from data.market_data import (
@@ -15,6 +17,7 @@ from data.market_data import (
     _float,
     _last_stored_date,
     _upsert_prices,
+    ignore_yfinance_inplace_warnings,
     update_prices,
 )
 from data.providers import PriceProvider
@@ -495,3 +498,30 @@ class TestFullRedownload:
             summary = _run(tmp_db, ["NEW"])
         assert summary == {"NEW": 5}
         assert "1 empty rows dropped" in caplog.text
+
+
+_INPLACE = "The inplace keyword in DataFrame.sort_index is deprecated"
+
+
+def _shown(message, module):
+    """Warnings recorded for one warning raised from module, under pytest's 'always' filters."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ignore_yfinance_inplace_warnings()
+        warnings.warn_explicit(message, Pandas4Warning, "x.py", 1, module=module, registry={})
+    return caught
+
+
+class TestYfinanceInplaceWarnings:
+    def test_yfinance_inplace_hidden(self):
+        assert _shown(_INPLACE, "yfinance.utils") == []
+        assert _shown(_INPLACE, "yfinance.multi") == []
+
+    def test_own_code_inplace_shown(self):
+        assert len(_shown(_INPLACE, "data.market_data")) == 1
+
+    def test_module_named_like_yfinance_shown(self):
+        assert len(_shown(_INPLACE, "notyfinance.utils")) == 1
+
+    def test_other_yfinance_pandas4_shown(self):
+        assert len(_shown("Some other pandas 4 change", "yfinance.utils")) == 1
