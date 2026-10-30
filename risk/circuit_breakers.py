@@ -21,6 +21,7 @@ import pandas as pd
 import sqlalchemy as sa
 
 from portfolio.db import portfolio_positions, position_approvals
+from portfolio.rebalance import map_action
 from reporting.db import portfolio_nav
 from risk.db import risk_events, risk_log
 from risk.risk_state import set_halt
@@ -332,7 +333,7 @@ def _load_approved_non_closing(conn: sa.engine.Connection, score_date: str) -> l
         d = dict(zip(cols, row, strict=False))
         action = str(d.get("action", "") or "")
         target_shares = float(d.get("target_shares", 0.0) or 0.0)
-        if not _is_closing(action, target_shares):
+        if action != "HOLD" and not _is_closing(action, target_shares):
             result.append(d)
     return result
 
@@ -378,6 +379,7 @@ def _apply_size_down(
             position_approvals.update()
             .where(position_approvals.c.id == row["id"])
             .values(
+                action=map_action(current, new_target, new_delta),
                 target_shares=new_target,
                 delta_shares=new_delta,
                 reviewed_at=now,

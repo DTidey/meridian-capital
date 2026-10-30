@@ -372,3 +372,55 @@ class TestSubmission:
         with pytest.raises(RuntimeError):
             execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
         client.submit_order.assert_not_called()
+
+
+class TestTradeDirectionGuard:
+    """Packet 56: no zero-share or wrong-side orders reach Alpaca."""
+
+    def test_hold_skipped(self, conn, tmp_path):
+        _insert_approval(conn, "ZTS", action="HOLD", target=-51.0, current=-51.0)
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert (results[0]["status"], results[0]["reason"]) == ("SKIPPED", "no_change")
+        client.submit_order.assert_not_called()
+        assert _order_rows(conn, "ZTS") == []
+
+    def test_zero_delta_skipped(self, conn, tmp_path):
+        # 2026-10-29 TXN: stored delta 0.0 was read as missing and a qty 0 order was sent.
+        _insert_approval(conn, "TXN", action="BUY", target=13.0, current=13.0)
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert (results[0]["status"], results[0]["reason"]) == ("SKIPPED", "no_change")
+        client.submit_order.assert_not_called()
+
+    def test_action_mismatch_refused(self, conn, tmp_path, caplog):
+        # 2026-10-29 BA: SHORT with delta +3 was sent as SHORT 3.
+        _insert_approval(conn, "BA", action="SHORT", target=-11.0, current=-14.0)
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert (results[0]["status"], results[0]["reason"]) == ("SKIPPED", "action_mismatch")
+        client.submit_order.assert_not_called()
+        assert any(r.levelname == "ERROR" and "BA" in r.getMessage() for r in caplog.records)
+
+    def test_buy_with_negative_delta_refused(self, conn, tmp_path):
+        # Adversarial: the long-side mirror (2026-10-28 and 10-29 AVY).
+        _insert_approval(conn, "AVY", action="BUY", target=6.0, current=7.0)
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["reason"] == "action_mismatch"
+        client.submit_order.assert_not_called()
+
+    def test_sub_share_delta_skipped(self, conn, tmp_path):
+        # Adversarial: 0.4 shares rounds to a qty 0 order at submission.
+        _insert_approval(conn, "AKAM", action="COVER", target=-25.6, current=-26.0)
+        client = _filled_client([_broker_pos("AKAM", -26)])
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["reason"] == "no_change"
+        client.submit_order.assert_not_called()
+
+    def test_consistent_cover_submitted(self, conn, tmp_path):
+        _insert_approval(conn, "BA", action="COVER", target=-11.0, current=-14.0)
+        client = _filled_client([_broker_pos("BA", -14)])
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] == "SUBMITTED"
+        assert client.submit_order.call_args.args[0].qty == 3

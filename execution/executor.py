@@ -186,14 +186,20 @@ def execute_approvals(
 def _execute_one(conn, client, appr, score_date, config, ctx, dry_run) -> dict:
     ex_cfg = config.get("execution", {})
     ticker, action = appr.ticker, appr.action
-    reason = _skip_reason(client, ticker, action, ctx, ex_cfg)
+    target_shares = float(appr.target_shares or 0)
+    delta_shares = (
+        float(appr.delta_shares)
+        if appr.delta_shares is not None
+        else target_shares - ctx["cur_shares"].get(ticker, 0)
+    )
+    reason = _direction_skip_reason(ticker, action, delta_shares) or _skip_reason(
+        client, ticker, action, ctx, ex_cfg
+    )
     if reason:
         log.warning("%s %s skipped: %s", action, ticker, reason)
         return {"ticker": ticker, "action": action, "status": "SKIPPED", "reason": reason}
 
     price = ctx["closes"][ticker]
-    target_shares = float(appr.target_shares or 0)
-    delta_shares = float(appr.delta_shares or (target_shares - ctx["cur_shares"].get(ticker, 0)))
     chunks = _chunk_orders(delta_shares, None, ex_cfg.get("max_adv_pct", 0.02))
     statuses = [
         _submit_chunk(conn, client, score_date, ticker, action, chunk, price, config, dry_run)
@@ -212,6 +218,16 @@ def _execute_one(conn, client, appr, score_date, config, ctx, dry_run) -> dict:
         "filled_shares": 0.0,
         "status": status,
     }
+
+
+def _direction_skip_reason(ticker: str, action: str, delta_shares: float) -> str | None:
+    """Refuse no-op rows and rows whose action disagrees with the delta sign."""
+    if action == "HOLD" or round(abs(delta_shares)) == 0:
+        return "no_change"
+    if (action in ("BUY", "COVER")) != (delta_shares > 0):
+        log.error("%s %s has delta %+.2f: action and delta disagree", action, ticker, delta_shares)
+        return "action_mismatch"
+    return None
 
 
 def _skip_reason(client, ticker: str, action: str, ctx: dict, ex_cfg: dict) -> str | None:

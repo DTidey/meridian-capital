@@ -16,6 +16,7 @@ from data.db import daily_prices, earnings_calendar
 from factors.db import factor_scores as factor_scores_table
 from portfolio.beta import compute_betas, portfolio_beta
 from portfolio.db import portfolio_positions, position_approvals
+from portfolio.rebalance import map_action
 from risk.db import risk_log
 from risk.risk_state import is_halted
 
@@ -144,6 +145,7 @@ def _evaluate_trade(
         new_target = round(target_shares * 0.50)
         new_delta = new_target - current_shares
         updated_row = {
+            "action": map_action(current_shares, new_target, new_delta),
             "target_shares": new_target,
             "delta_shares": new_delta,
             "status": "APPROVED",
