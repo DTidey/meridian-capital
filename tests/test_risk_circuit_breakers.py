@@ -149,6 +149,30 @@ class TestCircuitBreakerSizeDown:
         assert row[0] == pytest.approx(140.0, abs=1.0)
 
 
+class TestSizeDownAction:
+    """Packet 56: SIZE_DOWN re-derives the action from the new target."""
+
+    def _size_down(self, conn, tmp_path):
+        _insert_nav(conn, _days_before(1), 10_000_000.0)
+        _insert_nav(conn, _SCORE_DATE, 9_800_000.0)
+        run_circuit_breakers(
+            conn, _SCORE_DATE, _NAV, _base_config(), default_state(), tmp_path, whatif=False
+        )
+
+    def test_size_down_below_holding_sells(self, mem_db, tmp_path):
+        _insert_approval(mem_db, "AVY", action="BUY", target=12.0, current=10.0)
+        self._size_down(mem_db, tmp_path)
+        [row] = _approvals(mem_db, "AVY")
+        assert (row.action, row.target_shares, row.delta_shares) == ("SELL", 8, -2)
+
+    def test_hold_row_not_sized_down(self, mem_db, tmp_path):
+        # Adversarial: a blackout HOLD (target == book) must not become a 30% reduction.
+        _insert_approval(mem_db, "BA", action="HOLD", target=-14.0, current=-14.0)
+        self._size_down(mem_db, tmp_path)
+        [row] = _approvals(mem_db, "BA")
+        assert (row.action, row.target_shares) == ("HOLD", -14)
+
+
 class TestCircuitBreakerCloseAll:
     def test_close_all_large_daily_loss(self, mem_db, tmp_path):
         """Daily loss of -3.0% → CLOSE_ALL, APPROVED trades become REJECTED."""

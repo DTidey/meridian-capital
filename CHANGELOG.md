@@ -70,6 +70,10 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Resized trade direction (packet `56-resize-trade-direction`): the earnings-blackout,
+  tail-risk and breaker size-down resizes re-derive BUY / SELL / SHORT / COVER / HOLD from the new target, so a
+  resize below current holdings trims instead of adding; the executor skips no-change rows
+  and refuses a row whose action disagrees with its delta; rebalance targets are whole shares.
 - Alpaca account read (packet `53-alpaca-null-daytrade-count`): `get_account` no longer
   reads the day-trade count, which Alpaca now returns as null; every `run_execution.py` mode,
   including the nightly Book sync, crashed on it.

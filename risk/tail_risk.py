@@ -27,6 +27,7 @@ import sqlalchemy as sa
 
 from data.db import daily_prices
 from portfolio.db import position_approvals
+from portfolio.rebalance import map_action
 from risk.db import risk_events, risk_log
 
 logger = logging.getLogger(__name__)
@@ -372,6 +373,7 @@ def _apply_reduce_gross(
             position_approvals.update()
             .where(position_approvals.c.id == d["id"])
             .values(
+                action=map_action(current_shares, new_target, new_delta),
                 target_shares=new_target,
                 delta_shares=new_delta,
                 reviewed_at=now,

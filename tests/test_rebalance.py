@@ -251,3 +251,32 @@ class TestCommit:
         for table in (portfolio_positions, portfolio_history):
             count = tmp_db.execute(sa.select(sa.func.count()).select_from(table)).scalar()
             assert count == 0, table.name
+
+
+# ---------------------------------------------------------------------------
+# Whole-share targets (packet 56)
+# ---------------------------------------------------------------------------
+
+
+class TestWholeShareTargets:
+    def test_new_position_target_rounded(self, tmp_db):
+        target = _target_df([{"ticker": "AAPL", "shares": 19.6}])
+        row = _run(_empty_current(), target, conn=tmp_db).iloc[0]
+        assert row["target_shares"] == 20
+        assert row["delta_shares"] == 20
+
+    def test_cover_target_rounded(self, tmp_db):
+        # 2026-10-29 CLX: book -43, optimiser target -19.95.
+        current = _current_df([("CLX", -43)])
+        target = _target_df([{"ticker": "CLX", "shares": -19.95, "direction": "SHORT"}])
+        row = _run(current, target, conn=tmp_db).iloc[0]
+        assert row["target_shares"] == -20
+        assert row["delta_shares"] == 23
+        assert row["action"] == "COVER"
+
+    def test_sub_share_target_is_full_close(self, tmp_db):
+        # Adversarial: a 0.4-share target becomes a clean full close, not a 0.4 residue.
+        current = _current_df([("AAPL", 10)])
+        target = _target_df([{"ticker": "AAPL", "shares": 0.4}])
+        row = _run(current, target, conn=tmp_db).iloc[0]
+        assert (row["action"], row["target_shares"], row["delta_shares"]) == ("SELL", 0, -10)

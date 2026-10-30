@@ -156,6 +156,38 @@ class TestTailRiskClosingTrades:
         assert row[0] == pytest.approx(0.0, abs=0.01)
 
 
+def _approval(conn, ticker):
+    return conn.execute(
+        sa.select(position_approvals).where(position_approvals.c.ticker == ticker)
+    ).fetchone()
+
+
+class TestReduceGrossAction:
+    """Packet 56: the 20% cut re-derives the action from the new target."""
+
+    def test_cut_below_holding_sells(self, mem_db, tmp_path):
+        _insert_vix(mem_db, 28.0)
+        _insert_approval(mem_db, "AVY", action="BUY", target=11.0, current=10.0)
+        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        row = _approval(mem_db, "AVY")
+        assert (row.action, row.target_shares, row.delta_shares) == ("SELL", 9, -1)
+
+    def test_cut_to_holding_is_hold(self, mem_db, tmp_path):
+        _insert_vix(mem_db, 28.0)
+        _insert_approval(mem_db, "COIN", action="SHORT", target=-6.0, current=-5.0)
+        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        row = _approval(mem_db, "COIN")
+        assert (row.action, row.target_shares, row.delta_shares) == ("HOLD", -5, 0)
+
+    def test_hold_row_not_cut_again(self, mem_db, tmp_path):
+        # Adversarial: a blackout HOLD (target == book) must not become a 20% reduction.
+        _insert_vix(mem_db, 28.0)
+        _insert_approval(mem_db, "ZTS", action="HOLD", target=-51.0, current=-51.0)
+        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        row = _approval(mem_db, "ZTS")
+        assert (row.action, row.target_shares) == ("HOLD", -51)
+
+
 class TestTailRiskWhatIf:
     def test_whatif_does_not_modify_db(self, mem_db, tmp_path):
         """VIX=38 but whatif=True, DB unchanged."""

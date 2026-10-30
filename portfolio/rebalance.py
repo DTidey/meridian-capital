@@ -51,10 +51,10 @@ def generate_trades(
     for ticker in all_tickers:
         cur_shares = cur_map.get(ticker, 0.0)
         tgt_info = tgt_map.get(ticker, {})
-        tgt_shares = tgt_info.get("shares", 0.0)
+        tgt_shares = round(tgt_info.get("shares", 0.0))  # Alpaca limit orders are whole shares
         direction = tgt_info.get("direction") or _infer_direction(cur_shares)
         delta = tgt_shares - cur_shares
-        action = _map_action(cur_shares, tgt_shares, delta)
+        action = map_action(cur_shares, tgt_shares, delta)
 
         price_df = prices.get(ticker, pd.DataFrame())
         close_col = "close" if (not price_df.empty and "close" in price_df.columns) else "adj_close"
@@ -115,7 +115,7 @@ def generate_trades(
 # ---------------------------------------------------------------------------
 
 
-def _map_action(cur: float, tgt: float, delta: float) -> str:
+def map_action(cur: float, tgt: float, delta: float) -> str:
     if abs(delta) < _HOLD_THRESHOLD:
         return "HOLD"
     if tgt > 0 and cur <= 0:

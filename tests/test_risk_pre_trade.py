@@ -201,6 +201,47 @@ class TestPreTradeEarningsBlackout:
         assert "BLACKOUT_REDUCED" in row["reason"]
 
 
+def _approval_row(conn, approval_id):
+    return conn.execute(
+        sa.select(position_approvals).where(position_approvals.c.id == approval_id)
+    ).fetchone()
+
+
+def _insert_earnings_soon(conn, ticker):
+    earnings_date = (date.fromisoformat(_SCORE_DATE) + timedelta(days=3)).isoformat()
+    conn.execute(earnings_calendar.insert().values(ticker=ticker, earnings_date=earnings_date))
+    conn.commit()
+
+
+class TestBlackoutResizeAction:
+    """Packet 56: the 50% resize re-derives the action from the new target."""
+
+    def _resize(self, conn, tmp_path, action, target, current):
+        _insert_prices(conn, "AVY")
+        _insert_factor_score(conn, "AVY")
+        _insert_earnings_soon(conn, "AVY")
+        approval_id = _insert_approval(conn, "AVY", action=action, target=target, current=current)
+        run_pre_trade(conn, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        return _approval_row(conn, approval_id)
+
+    def test_resize_below_holding_sells(self, mem_db, tmp_path):
+        row = self._resize(mem_db, tmp_path, "BUY", target=10, current=7)
+        assert (row.action, row.target_shares, row.delta_shares) == ("SELL", 5, -2)
+
+    def test_resize_to_holding_is_hold(self, mem_db, tmp_path):
+        row = self._resize(mem_db, tmp_path, "BUY", target=14, current=7)
+        assert (row.action, row.target_shares, row.delta_shares) == ("HOLD", 7, 0)
+
+    def test_short_resize_above_holding_covers(self, mem_db, tmp_path):
+        # Adversarial: the short-side mirror (2026-10-29 BA-style add halved past the book).
+        row = self._resize(mem_db, tmp_path, "SHORT", target=-20, current=-14)
+        assert (row.action, row.target_shares, row.delta_shares) == ("COVER", -10, 4)
+
+    def test_new_position_keeps_action(self, mem_db, tmp_path):
+        row = self._resize(mem_db, tmp_path, "SHORT", target=-40, current=0)
+        assert (row.action, row.target_shares, row.delta_shares) == ("SHORT", -20, -20)
+
+
 class TestPreTradeNoPending:
     def test_no_pending_returns_empty(self, mem_db, tmp_path):
         """Returns empty DataFrame if no PENDING rows."""
