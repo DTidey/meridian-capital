@@ -231,7 +231,7 @@ python-dotenv==1.2.4
     # via -r requirements.in
 python-multipart==0.0.32
     # via streamlit
-pytz==2026.5
+pytz==2026.6
     # via
     #   -r requirements.in
     #   alpaca-py
