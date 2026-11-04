@@ -181,3 +181,28 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   in Layer 1. pandas 4 is expected to remove the keyword, which would break price downloads.
 - **Fix:** do not merge a pandas 4.x bump until a yfinance release no longer uses `inplace`;
   then drop the filter in `data/market_data.py`.
+
+## Earnings blackout halves the whole target, and REDUCED is never counted
+
+- **Raised:** 2026-11-04, nightly run review (2026-10-30 to 2026-11-03).
+- **Problem:** `risk/pre_trade.py` (around line 144) resizes an opening trade in an earnings
+  blackout to 50% of its target, then `risk/tail_risk.py` `_apply_reduce_gross` scales the
+  target again by 0.8 in CAUTION, so the target ends at 0.4x the Layer 4 plan (2026-11-03: KIM
+  +200 planned, 80 sent; CLX -53 target, -21 sent). Halving the whole target rather than the
+  trade can turn an add into a cut: AKAM was planned as a short add from -14 to -19 and was sent
+  as a cover to -10. The blackout resize returns result `APPROVED`, so the `REDUCED` count in
+  `run_risk_check.py` (around line 144) stays 0 and the summary hides it.
+- **Fix:** decide whether a blackout should hold the existing position and halve only the
+  opening delta (never flipping the direction); return `REDUCED` for resized trades so the
+  summary counts them.
+
+## Back-and-forth trading across consecutive nights
+
+- **Raised:** 2026-11-04, nightly run review (2026-10-30 to 2026-11-03).
+- **Problem:** some names are bought and then fully exited, or covered and re-shorted, on
+  consecutive nights: CSGP +4 (10-30), +60 to 122 (11-02), then sold to 0 (11-03); ALLE +3
+  (11-02), sold to 0 (11-03); CLX covered (10-30, 11-02), then shorted again (11-03). Costs are
+  small (a few dollars per trade) but the churn points to unstable signals or no hysteresis
+  (holding a position until the signal moves by more than a set margin) in Layer 4.
+- **Fix:** measure turnover and round-trips over a few weeks first; if they persist, add a
+  minimum holding period or a hysteresis band on entry and exit ranks in Layer 4.
