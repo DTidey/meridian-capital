@@ -223,8 +223,8 @@ risk:
   tail_risk:
     vix_caution:            25
     vix_stress:             35
-    credit_spread_sigma:    1.0
-    credit_lookback_days:   252
+    credit_spread_sigma:    2.0     # packet 59: 1.0 fired on 25 of 30 nights (2026-09-24..11-04)
+    credit_lookback_days:   252     # observations (business days), not calendar days
 
   factor_monitor:
     alert_z_threshold:      1.5

@@ -70,6 +70,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Credit-spread lookback (packet `59-credit-spread-lookback`): the FRED HY spread z-score
+  uses a true 252 observations (it held about 205), and `credit_spread_sigma` is 2.0 (was 1.0,
+  which fired tail-risk CAUTION on 25 of the 30 nights to 2026-11-04).
 - Resized trade direction (packet `56-resize-trade-direction`): the earnings-blackout,
   tail-risk and breaker size-down resizes re-derive BUY / SELL / SHORT / COVER / HOLD from the new target, so a
   resize below current holdings trims instead of adding; the executor skips no-change rows

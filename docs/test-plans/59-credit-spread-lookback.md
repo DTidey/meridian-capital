@@ -2,9 +2,9 @@
 
 Path: `docs/test-plans/59-credit-spread-lookback.md`
 Spec: `docs/specs/59-credit-spread-lookback.md`
-Status: planned (phase 1). The threshold in AC5 is the owner's D1 value (2.0 recommended).
+Status: implemented. AC5 uses the owner's D1 value, `credit_spread_sigma: 2.0`.
 
-## What changes (planned)
+## What changed
 - `risk/tail_risk.py` `_get_credit_spread_z_fred`: observation-based start date, short-window
   WARNING, INFO summary line.
 - `config.yaml` `credit_spread_sigma` per D1.
@@ -20,8 +20,9 @@ Status: planned (phase 1). The threshold in AC5 is the owner's D1 value (2.0 rec
   WARNING with "200")
 - AC4: `TestCreditLookback::test_missing_values_not_counted` (`"."` rows interleaved; 252
   numeric observations used)
-- AC5: `tests/test_risk_tail_risk.py::TestTailRiskCaution::test_credit_threshold_boundary`
-  (z = sigma -> CAUTION; z = sigma - 0.01 -> NORMAL with VIX below caution)
+- AC5: `tests/test_risk_tail_risk.py::TestCreditThreshold::test_credit_threshold_boundary`
+  (z = sigma -> CAUTION), `test_just_below_threshold_normal` (z = sigma - 0.01 -> NORMAL
+  with VIX below caution), `test_config_sigma_is_two`
 - AC6: `TestCreditLookback::test_info_line_without_api_key` (caplog: INFO contains count,
   mean, std, latest, z; no record contains the key string)
 - AC7: documentation review of the spec 05 diff
@@ -31,7 +32,8 @@ Status: planned (phase 1). The threshold in AC5 is the owner's D1 value (2.0 rec
   - Fewer rows than requested (AC3 test)
   - `score_date` on a weekend: last observation before it is the latest
     (`TestCreditLookback::test_weekend_score_date`)
-  - Latest value `"."`: previous numeric value is latest (`test_latest_missing_uses_previous`)
+  - Latest value `"."`: previous numeric value is latest
+    (`TestCreditLookback::test_latest_missing_uses_previous`)
   - std near 0 returns 0.0 (existing behaviour; `test_flat_series_zero`)
 - Additional adversarial cases:
   - Observations dated after `score_date` (FRED revision or a future-dated row) are excluded

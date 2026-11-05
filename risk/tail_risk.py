@@ -17,6 +17,7 @@ fallback is used on any error or when the API key is absent.
 
 import json
 import logging
+import math
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -221,7 +222,9 @@ def _get_credit_spread_z_fred(
     import requests  # noqa: PLC0415
 
     lookback = cfg["credit_lookback_days"]
-    start_date_dt = datetime.fromisoformat(score_date) - timedelta(days=lookback + 30)
+    # lookback counts observations (business days); fetch enough calendar days, plus holidays.
+    fetch_days = math.ceil(lookback * 7 / 5) + 30
+    start_date_dt = datetime.fromisoformat(score_date) - timedelta(days=fetch_days)
     start_str = start_date_dt.strftime("%Y-%m-%d")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -264,6 +267,12 @@ def _get_credit_spread_z_fred(
 
     if len(fred_df) < 10:
         raise ValueError(f"Insufficient FRED observations: {len(fred_df)}")
+    if len(fred_df) < lookback:
+        logger.warning(
+            "tail_risk: FRED returned %d observations, fewer than the %d-observation lookback",
+            len(fred_df),
+            lookback,
+        )
 
     latest = float(fred_df["spread"].iloc[-1])
     hist_arr = fred_df["spread"].values.astype(float)
@@ -273,7 +282,16 @@ def _get_credit_spread_z_fred(
     if std_val < 1e-9:
         return 0.0
 
-    return float((latest - mean_val) / std_val)
+    z = float((latest - mean_val) / std_val)
+    logger.info(
+        "tail_risk: FRED HY OAS obs=%d mean=%.3f std=%.3f latest=%.2f z=%.2f",
+        len(fred_df),
+        mean_val,
+        std_val,
+        latest,
+        z,
+    )
+    return z
 
 
 def _get_credit_spread_z_hyg(

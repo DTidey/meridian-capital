@@ -32,3 +32,15 @@ validation run to report.
   (BUY/SELL).
 - 59 could not compute the true 252-observation z in phase 1 (the cache holds 205 points and
   this session had no network access); phase 2 reports it before the threshold is merged.
+
+## Packet 59 implemented (phase 2)
+
+- FRED history fetched read-only through the app's FRED endpoint into /tmp (not the app cache,
+  not the DB). The old window reproduced the logged z values (11-04 2.42, 10-29 1.32), which
+  validates the replay.
+- The lookback fix alone moves z by only -0.2 to +0.15 on the last 30 nights; the threshold
+  does the work (CAUTION nights: 25 at 1.0, 18 at 1.5, 13 at 2.0).
+- 2.0 kept as approved: the nights it still fires (10-02, 10-15..10-27, 11-02..11-04) follow a
+  real ~70bp OAS widening since late September, which is what the control is for.
+- The z is still computed from a short window (with a WARNING) rather than failing over to
+  HYG: a 200-observation FRED z is closer to the intended signal than the HYG price proxy.

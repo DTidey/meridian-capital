@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/59-credit-spread-lookback.md`
 **Spec slug:** credit-spread-lookback
-**Status:** Draft (phase 1: awaiting owner decision D1 before implementation)
+**Status:** Done
 **Owner:** DTidey
 **Date:** 2026-11-05
 
@@ -32,6 +32,53 @@ network access from this session; the cache holds only 205 points).
 
 Packet 58 changes what CAUTION does (book gross 150% -> 120% instead of churn on traded
 names), which makes a false CAUTION much cheaper. This packet makes the signal correct.
+
+## Evidence for the threshold (phase 2, 2026-11-05)
+FRED `BAMLH0A0HYM2` fetched read-only through the app's FRED endpoint (637 observations,
+2024-06-03 to 2026-11-04). For each of the last 30 nightly score dates, the run sees
+observations up to the previous business day (as the 11-04 cache did). "Old z" is the
+shipped window (282 calendar days, 201-205 observations) and reproduces the logged values
+(11-04 2.42, 10-29 1.32); "new z" uses exactly 252 observations. C = CAUTION.
+
+| Score date | Latest obs | OAS % | Old n | Old z | New z | 1.0 | 1.5 | 2.0 |
+|---|---|---|---|---|---|---|---|---|
+| 2026-09-24 | 09-23 | 2.73 | 203 | -0.60 | -0.77 | - | - | - |
+| 2026-09-25 | 09-24 | 2.80 | 203 | -0.17 | -0.36 | - | - | - |
+| 2026-09-28 | 09-25 | 2.93 | 201 | 0.61 | 0.40 | - | - | - |
+| 2026-09-29 | 09-28 | 3.02 | 202 | 1.15 | 0.94 | - | - | - |
+| 2026-09-30 | 09-29 | 3.08 | 203 | 1.49 | 1.29 | C | - | - |
+| 2026-10-01 | 09-30 | 3.12 | 203 | 1.71 | 1.52 | C | C | - |
+| 2026-10-02 | 10-01 | 3.24 | 203 | 2.38 | 2.20 | C | C | C |
+| 2026-10-05 | 10-02 | 3.10 | 202 | 1.54 | 1.38 | C | - | - |
+| 2026-10-06 | 10-05 | 3.12 | 203 | 1.64 | 1.49 | C | - | - |
+| 2026-10-07 | 10-06 | 3.03 | 204 | 1.11 | 0.97 | - | - | - |
+| 2026-10-08 | 10-07 | 3.09 | 204 | 1.45 | 1.31 | C | - | - |
+| 2026-10-09 | 10-08 | 3.15 | 204 | 1.77 | 1.64 | C | C | - |
+| 2026-10-12 | 10-09 | 3.11 | 203 | 1.52 | 1.40 | C | - | - |
+| 2026-10-13 | 10-12 | 3.11 | 204 | 1.51 | 1.39 | C | - | - |
+| 2026-10-14 | 10-13 | 3.16 | 205 | 1.77 | 1.66 | C | C | - |
+| 2026-10-15 | 10-14 | 3.25 | 205 | 2.23 | 2.14 | C | C | C |
+| 2026-10-16 | 10-15 | 3.23 | 205 | 2.09 | 2.00 | C | C | C |
+| 2026-10-19 | 10-16 | 3.31 | 203 | 2.46 | 2.41 | C | C | C |
+| 2026-10-20 | 10-19 | 3.29 | 204 | 2.32 | 2.28 | C | C | C |
+| 2026-10-21 | 10-20 | 3.33 | 205 | 2.48 | 2.47 | C | C | C |
+| 2026-10-22 | 10-21 | 3.27 | 205 | 2.13 | 2.13 | C | C | C |
+| 2026-10-23 | 10-22 | 3.40 | 205 | 2.74 | 2.79 | C | C | C |
+| 2026-10-26 | 10-23 | 3.38 | 203 | 2.57 | 2.65 | C | C | C |
+| 2026-10-27 | 10-26 | 3.30 | 204 | 2.14 | 2.20 | C | C | C |
+| 2026-10-28 | 10-27 | 3.18 | 205 | 1.53 | 1.57 | C | C | - |
+| 2026-10-29 | 10-28 | 3.14 | 205 | 1.32 | 1.35 | C | - | - |
+| 2026-10-30 | 10-29 | 3.26 | 205 | 1.89 | 1.96 | C | C | - |
+| 2026-11-02 | 10-30 | 3.44 | 203 | 2.70 | 2.84 | C | C | C |
+| 2026-11-03 | 11-02 | 3.43 | 204 | 2.60 | 2.75 | C | C | C |
+| 2026-11-04 | 11-03 | 3.40 | 205 | 2.42 | 2.57 | C | C | C |
+
+CAUTION nights out of 30 on the corrected window: 25 at 1.0, 18 at 1.5, 13 at 2.0. The
+252-observation window (2025-11-19 to 2026-11-03) has mean 2.883% and std 0.201%, so 2.0
+fires at about 40bp above the one-year mean. At 2.0 CAUTION still holds on the last three
+nights (11-02 to 11-04): OAS has widened about 70bp since late September, which is the kind
+of move the control exists for. The lookback fix alone barely changes the z (it moves it by
+-0.2 to +0.15).
 
 ## Design choices (owner decision needed)
 
@@ -139,7 +186,8 @@ Out of scope / non-goals:
 - AC2 -> `TestCreditLookback::test_observation_start_covers_business_days`
 - AC3 -> `TestCreditLookback::test_short_window_warns_and_computes`
 - AC4 -> `TestCreditLookback::test_missing_values_not_counted`
-- AC5 -> `tests/test_risk_tail_risk.py::TestTailRiskCaution::test_credit_threshold_boundary`
+- AC5 -> `tests/test_risk_tail_risk.py::TestCreditThreshold::test_credit_threshold_boundary`,
+  `test_just_below_threshold_normal`, `test_config_sigma_is_two`
 - AC6 -> `TestCreditLookback::test_info_line_without_api_key`
 - AC7 -> review of the spec 05 diff (documentation AC)
 
@@ -149,3 +197,7 @@ Out of scope / non-goals:
   FRED; CAUTION values were only reported (284a3bba 2026-10-30T07:34Z, f1142635
   2026-11-04T11:56Z). Raising the threshold is therefore a new policy decision, left to the
   owner (D1).
+- 2026-11-05: Owner approved D1 option B (`credit_spread_sigma: 2.0`) conditional on the
+  30-night evidence above; implemented with it. At 2.0, CAUTION still fires on 13 of the 30
+  nights, including 11-02 to 11-04; the evidence does not make 2.0 look wrong (those nights
+  follow a real ~70bp widening).

@@ -14,7 +14,7 @@ Layer 5 is a post-optimisation, pre-execution risk gate that sits between Layer 
 - AC2: The pre-trade veto evaluates all 8 checks in order for each PENDING trade and stamps each row APPROVED or REJECTED in `position_approvals`; closing/covering trades skip checks 2-8 and are always APPROVED.
 - AC3: The earnings blackout check (check 2) resizes the trade to 50% of target shares and marks it APPROVED with reason `BLACKOUT_REDUCED` rather than rejecting it.
 - AC4: The circuit breaker triggers SIZE_DOWN_30, CLOSE_ALL, or KILL_SWITCH based on daily/weekly P&L and drawdown thresholds, evaluated in priority order (drawdown first), and writes `cache/halt.lock` on KILL_SWITCH.
-- AC5: The tail risk monitor reduces APPROVED non-closure target shares by 50% when VIX >= 35, by 20% when VIX >= 25, and by 20% on credit spread z-score >= 1.0 sigma; VIX >= 35 dominates if both fire simultaneously.
+- AC5: The tail risk monitor reduces APPROVED non-closure target shares by 50% when VIX >= 35, by 20% when VIX >= 25, and by 20% on credit spread z-score >= `credit_spread_sigma` (2.0 since packet 59; z over the last 252 FRED observations); VIX >= 35 dominates if both fire simultaneously.
 - AC6: The factor risk model decomposes portfolio variance into factor and specific components, computes MCTR per position, flags tickers where `|MCTR_pct| > 1.5 * |weight_pct|`, and writes `cache/predicted_cov_<date>.parquet`.
 - AC7: The correlation monitor computes per-book average pairwise correlation over 60 days, raises an alert when either exceeds 0.60, and computes effective number of bets via eigendecomposition of the combined correlation matrix.
 - AC8: The factor monitor raises a HIGH-priority alert when a long-minus-short factor z-score exceeds 1.5 in magnitude and that factor also has an active crowding flag from Layer 2.
@@ -523,15 +523,17 @@ VIX prices are already in `daily_prices` under ticker `^VIX`. Pull today's close
 Two sources in priority order:
 
 1. **FRED** (`FRED_API_KEY` env var): pull `BAMLH0A0HYM2` (ICE BofA US High Yield
-   Option-Adjusted Spread) for the last 252 trading days. Cache response to
+   Option-Adjusted Spread) for the last 252 observations (business days; the request
+   covers ceil(252 x 7 / 5) + 30 calendar days, packet 59). Cache response to
    `cache/fred_hy_spread.parquet`, refresh daily.
 2. **Fallback -- HYG proxy**: HYG price is already in `daily_prices`. Use
    `z_score = (today_hyg - mean_60d_hyg) / std_60d_hyg`. Widen signal: negative HYG
    z-score (HYG falling = spreads widening) maps to positive spread z-score.
 
-Alert when spread z-score (vs 252-day mean/std) >= +1.0 sigma. Action: `REDUCE_GROSS_20`.
+Alert when spread z-score (vs 252-observation mean/std) >= `credit_spread_sigma` (2.0 since
+packet 59; 1.0 fired on 25 of the 30 nights to 2026-11-04). Action: `REDUCE_GROSS_20`.
 
-If both VIX >= 35 AND spread >= 1 sigma simultaneously, the VIX action dominates
+If both VIX >= 35 AND spread >= the sigma threshold simultaneously, the VIX action dominates
 (already 50% reduction). Do not double-reduce.
 
 ### Output
@@ -713,7 +715,7 @@ risk:
   tail_risk:
     vix_caution:               25
     vix_stress:                35
-    credit_spread_sigma:       1.0
+    credit_spread_sigma:       2.0
     credit_lookback_days:      252
   factor_monitor:
     alert_z_threshold:         1.5
