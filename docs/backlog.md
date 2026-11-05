@@ -214,15 +214,23 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** round toward zero for positions at the cap, or give the pre-trade limit a small
   tolerance above the sizing cap.
 
-## A short that leaves the target is never covered
+## A held name with no stored close cannot be closed by the pipeline
 
-- **Raised:** 2026-11-05, packet 57 (found by a closure test; out of scope there).
-- **Problem:** `portfolio/rebalance.py` `map_action` has no branch for `cur < 0` and
-  `tgt == 0`, so a short position whose name drops out of the target book maps to HOLD and is
-  never covered by Layer 4 (a long dropping out correctly maps to SELL). No harm yet: every
-  short held on 2026-11-04 is still in the target, and the only cover-to-zero approvals ever
-  written (AKAM, CLX on 2026-10-28) came from the circuit breaker. Pinned by
-  `tests/test_rebalance.py::TestBuildUpAllowance::test_short_dropped_from_target_is_covered`
-  (strict xfail).
-- **Fix:** add `if tgt == 0 and cur < 0 and delta > 0: return "COVER"` (with a spec), and
-  remove the xfail marker. Priority: high, before the first short leaves the target.
+- **Raised:** 2026-11-05, packet 61 (out of scope there).
+- **Problem:** Layer 4 loads prices for SHORT/LONG candidates only, so a held name that left
+  the scored universe gets price 0 (closure still planned, now correctly COVER/SELL). The
+  executor then needs the stored close for the score date (`_closes_on`); a name dropped from
+  price ingestion (e.g. removed from the S&P 500) is skipped as `no_close` every night and the
+  position is never closed. Not seen yet: all 18 positions on 2026-11-05 are in the universe.
+- **Fix:** keep ingesting prices for every held ticker, or fall back to the broker's last
+  price for closing orders only.
+
+## Direction flip in one order (BUY_TO_OPEN over an open short)
+
+- **Raised:** 2026-11-05, packet 61 (out of scope there).
+- **Problem:** a name that moves from short to long in one night is one BUY row for the whole
+  delta (cover plus open), submitted with position intent `BUY_TO_OPEN` (SELL_TO_OPEN for long
+  to short). Not verified whether Alpaca accepts an opening intent larger than the open
+  opposite position, or fills only part of it.
+- **Fix:** check Alpaca's behaviour on paper; if rejected, split into a closing order for the
+  held quantity and an opening order for the rest.

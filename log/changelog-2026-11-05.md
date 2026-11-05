@@ -87,3 +87,18 @@ validation run to report.
   including a quoted "0.015", is refused rather than coerced, so a YAML typo fails loudly.
 - The check runs before approvals are read, so it fails even on a night with nothing to trade
   (a bad config is caught on the first run, not on the first night with orders).
+
+## Packet 61: short cover when the target drops to zero
+
+- Fixed by widening the COVER branch to `tgt <= 0` (mirror of the SELL branch) rather than a
+  separate `tgt == 0` branch, so one rule decides "buy back part or all of a short".
+- Duplicate tickers in the current book raise rather than sum: `portfolio_positions.ticker` is
+  the primary key, so two rows mean an inconsistent book, and summing would hide it.
+- Sweep for the same pattern: pre-trade (`_target_book`, closing check), the turnover budget
+  (closures by `target_shares`), the executor (COVER side/intent, closing guard), the circuit
+  breaker force-close and `book_targets` (gross numbers only) all handle a target-0 short. Two
+  related gaps were backlogged, not fixed: a held name with no stored close is skipped by the
+  executor, and a one-night direction flip is one opening order over an open position.
+- Read-only check of the current book (Alpaca GET, DB SELECTs in READ ONLY): all 10 shorts
+  are SHORT candidates on the 11-04 scores (ranks 1-15 of 97). Tonight's target depends on
+  tonight's scores, so this is a likelihood, not a guarantee.

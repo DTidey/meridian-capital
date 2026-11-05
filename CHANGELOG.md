@@ -82,6 +82,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Short cover to zero (packet `61-short-cover-target-zero`): a held short whose target drops to
+  0 now maps to COVER for the full quantity (it was HOLD, so a short leaving the target book
+  was never covered); `generate_trades` refuses duplicate tickers in the current book.
 - Credit-spread lookback (packet `59-credit-spread-lookback`): the FRED HY spread z-score
   uses a true 252 observations (it held about 205), and `credit_spread_sigma` is 2.0 (was 1.0,
   which fired tail-risk CAUTION on 25 of the 30 nights to 2026-11-04).
