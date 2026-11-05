@@ -5,7 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
-import pytest
 
 import portfolio.db  # noqa: F401
 from portfolio.rebalance import generate_trades
@@ -271,12 +270,8 @@ class TestBuildUpAllowance:
         trades = _run(current, _empty_current(), conn=tmp_db)
         assert (trades["action"] == "SELL").all()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="map_action has no branch for cur < 0, tgt == 0: a short that leaves the "
-        "target is HOLD, never covered (pre-existing; docs/backlog.md, found by packet 57)",
-    )
     def test_short_dropped_from_target_is_covered(self, tmp_db):
+        # Packet 61: was a strict xfail (map_action returned HOLD for cur < 0, tgt == 0).
         trades = _run(_current_df([("S0", -2000)]), _empty_current(), conn=tmp_db)
         assert trades["action"].tolist() == ["COVER"]
 

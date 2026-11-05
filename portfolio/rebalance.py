@@ -33,6 +33,11 @@ def generate_trades(
     nav = float(pcfg.get("nav_usd", 10_000_000))
     turnover = float(pcfg.get("turnover_budget_pct", 0.30))
 
+    if not current.empty and current["ticker"].duplicated().any():
+        # Last-wins would size the trade from one lot only (e.g. cover 5 of a -15 short).
+        dupes = sorted(current.loc[current["ticker"].duplicated(), "ticker"].unique())
+        raise ValueError(f"duplicate tickers in current positions: {dupes}")
+
     cur_map = (
         current.set_index("ticker")["shares"].to_dict()
         if not current.empty and "shares" in current.columns
@@ -127,7 +132,7 @@ def map_action(cur: float, tgt: float, delta: float) -> str:
         return "SELL"
     if tgt < 0 and cur >= 0:
         return "SHORT"
-    if tgt < 0 and cur < 0 and delta > 0:
+    if tgt <= 0 and cur < 0 and delta > 0:
         return "COVER"
     if tgt > 0 and cur > 0 and delta > 0:
         return "BUY"
