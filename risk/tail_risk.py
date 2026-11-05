@@ -7,9 +7,9 @@ Logic
 * CAUTION (credit_spread_z >= sigma)   → REDUCE_GROSS_20
 * NORMAL                               → no action
 
-When an action is triggered (and whatif=False), all APPROVED opening trades in
-position_approvals are scaled back proportionally.  Results are persisted to
-risk_events and risk_log.
+Layer 4 applies the reduction to the whole target book's gross (packet 58, via
+``evaluate_tail_risk``). Layer 5 (``run_tail_risk``) records the regime in risk_events and
+risk_log and never edits position_approvals.
 
 FRED API (HY spread series BAMLH0A0HYM2) is attempted first; HYG price-level
 fallback is used on any error or when the API key is absent.
@@ -17,6 +17,7 @@ fallback is used on any error or when the API key is absent.
 
 import json
 import logging
+import math
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -26,15 +27,10 @@ import pandas as pd
 import sqlalchemy as sa
 
 from data.db import daily_prices
-from portfolio.db import position_approvals
-from portfolio.rebalance import map_action
 from risk.db import risk_events, risk_log
 
 logger = logging.getLogger(__name__)
 
-_CLOSING_ACTIONS = {"SELL", "COVER"}
-_OPENING_ACTIONS = {"BUY", "SHORT"}
-_SHARE_ZERO_THRESHOLD = 1.0
 _FRED_SERIES = "BAMLH0A0HYM2"
 _FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 _HYG_TICKER = "HYG"
@@ -53,7 +49,7 @@ def run_tail_risk(
     cache_dir: Path,
     whatif: bool = False,
 ) -> dict:
-    """Evaluate VIX and credit-spread regime; apply gross exposure reduction if needed.
+    """Evaluate the VIX and credit-spread regime and record it (Layer 5).
 
     Parameters
     ----------
@@ -67,8 +63,7 @@ def run_tail_risk(
     cache_dir:
         Directory for caching FRED data parquet files.
     whatif:
-        If True, compute signals but do not modify position_approvals or write
-        to risk_events / risk_log.
+        If True, compute signals but do not write to risk_events / risk_log.
 
     Returns
     -------
@@ -79,26 +74,12 @@ def run_tail_risk(
         "actions":          list[str],
     }
     """
-    cfg = _load_config(config)
-
-    vix = _get_vix(conn, score_date)
-    credit_spread_z = _get_credit_spread_z(conn, score_date, cfg, cache_dir)
-
-    # -----------------------------------------------------------------------
-    # Determine state and action
-    # -----------------------------------------------------------------------
-    if vix >= cfg["vix_stress"]:
-        state = "STRESS"
-        action = "REDUCE_GROSS_50"
-        reduction_pct = 0.50
-    elif vix >= cfg["vix_caution"] or credit_spread_z >= cfg["credit_spread_sigma"]:
-        state = "CAUTION"
-        action = "REDUCE_GROSS_20"
-        reduction_pct = 0.20
-    else:
-        state = "NORMAL"
-        action = None
-        reduction_pct = 0.0
+    regime = evaluate_tail_risk(conn, score_date, config, cache_dir)
+    state = regime["tail_risk_state"]
+    action = regime["action"]
+    reduction_pct = regime["reduction_pct"]
+    vix = regime["vix"]
+    credit_spread_z = regime["credit_spread_z"]
 
     actions_taken: list[str] = []
 
@@ -113,7 +94,6 @@ def run_tail_risk(
             reduction_pct * 100,
         )
         if not whatif:
-            modified = _apply_reduce_gross(conn, score_date, reduction_pct)
             _log_event(
                 conn,
                 score_date,
@@ -123,7 +103,7 @@ def run_tail_risk(
                     "vix": round(vix, 4),
                     "credit_spread_z": round(credit_spread_z, 4),
                     "reduction_pct": reduction_pct,
-                    "modified_count": modified,
+                    "applied_in": "layer4_gross_scale",
                 },
             )
             _log_check(
@@ -153,6 +133,37 @@ def run_tail_risk(
         "vix": round(vix, 4),
         "credit_spread_z": round(credit_spread_z, 4),
         "actions": actions_taken,
+    }
+
+
+def evaluate_tail_risk(
+    conn: sa.engine.Connection,
+    score_date: str,
+    config: dict,
+    cache_dir: Path,
+) -> dict:
+    """Return the tail-risk regime without writing anything (used by Layer 4 and Layer 5).
+
+    Keys: tail_risk_state ("NORMAL" / "CAUTION" / "STRESS"), action (None,
+    "REDUCE_GROSS_20" or "REDUCE_GROSS_50"), reduction_pct, vix, credit_spread_z.
+    """
+    cfg = _load_config(config)
+    vix = _get_vix(conn, score_date)
+    credit_spread_z = _get_credit_spread_z(conn, score_date, cfg, cache_dir)
+
+    if vix >= cfg["vix_stress"]:
+        state, action, reduction_pct = "STRESS", "REDUCE_GROSS_50", 0.50
+    elif vix >= cfg["vix_caution"] or credit_spread_z >= cfg["credit_spread_sigma"]:
+        state, action, reduction_pct = "CAUTION", "REDUCE_GROSS_20", 0.20
+    else:
+        state, action, reduction_pct = "NORMAL", None, 0.0
+
+    return {
+        "tail_risk_state": state,
+        "action": action,
+        "reduction_pct": reduction_pct,
+        "vix": vix,
+        "credit_spread_z": credit_spread_z,
     }
 
 
@@ -221,7 +232,9 @@ def _get_credit_spread_z_fred(
     import requests  # noqa: PLC0415
 
     lookback = cfg["credit_lookback_days"]
-    start_date_dt = datetime.fromisoformat(score_date) - timedelta(days=lookback + 30)
+    # lookback counts observations (business days); fetch enough calendar days, plus holidays.
+    fetch_days = math.ceil(lookback * 7 / 5) + 30
+    start_date_dt = datetime.fromisoformat(score_date) - timedelta(days=fetch_days)
     start_str = start_date_dt.strftime("%Y-%m-%d")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -264,6 +277,12 @@ def _get_credit_spread_z_fred(
 
     if len(fred_df) < 10:
         raise ValueError(f"Insufficient FRED observations: {len(fred_df)}")
+    if len(fred_df) < lookback:
+        logger.warning(
+            "tail_risk: FRED returned %d observations, fewer than the %d-observation lookback",
+            len(fred_df),
+            lookback,
+        )
 
     latest = float(fred_df["spread"].iloc[-1])
     hist_arr = fred_df["spread"].values.astype(float)
@@ -273,7 +292,16 @@ def _get_credit_spread_z_fred(
     if std_val < 1e-9:
         return 0.0
 
-    return float((latest - mean_val) / std_val)
+    z = float((latest - mean_val) / std_val)
+    logger.info(
+        "tail_risk: FRED HY OAS obs=%d mean=%.3f std=%.3f latest=%.2f z=%.2f",
+        len(fred_df),
+        mean_val,
+        std_val,
+        latest,
+        z,
+    )
+    return z
 
 
 def _get_credit_spread_z_hyg(
@@ -318,76 +346,6 @@ def _get_credit_spread_z_hyg(
 
     # Invert: low price = high spread = high z
     return float((today_close - mean_close) / std_close * -1)
-
-
-# ---------------------------------------------------------------------------
-# Gross reduction action
-# ---------------------------------------------------------------------------
-
-
-def _is_closing(action: str, target_shares: float) -> bool:
-    """Return True for closing trades (SELL/COVER or near-zero shares)."""
-    return action in _CLOSING_ACTIONS or abs(target_shares) < _SHARE_ZERO_THRESHOLD
-
-
-def _apply_reduce_gross(
-    conn: sa.engine.Connection,
-    score_date: str,
-    reduction_pct: float,
-) -> int:
-    """Scale target_shares of APPROVED opening trades by (1 - reduction_pct).
-
-    Only BUY / SHORT actions (opening trades) are modified.
-    Returns the count of rows modified.
-    """
-    rows = conn.execute(
-        sa.select(position_approvals).where(
-            (position_approvals.c.rebalance_date == score_date)
-            & (position_approvals.c.status == "APPROVED")
-        )
-    ).fetchall()
-
-    if not rows:
-        return 0
-
-    cols = [c.name for c in position_approvals.columns]
-    now = datetime.now(UTC).isoformat(timespec="seconds")
-    scale = 1.0 - reduction_pct
-    count = 0
-
-    for row in rows:
-        d = dict(zip(cols, row, strict=False))
-        action = str(d.get("action", "") or "")
-        target_shares = float(d.get("target_shares", 0.0) or 0.0)
-
-        if _is_closing(action, target_shares):
-            continue
-        if action not in _OPENING_ACTIONS:
-            continue
-
-        current_shares = float(d.get("current_shares", 0.0) or 0.0)
-        new_target = round(target_shares * scale)
-        new_delta = new_target - current_shares
-
-        conn.execute(
-            position_approvals.update()
-            .where(position_approvals.c.id == d["id"])
-            .values(
-                action=map_action(current_shares, new_target, new_delta),
-                target_shares=new_target,
-                delta_shares=new_delta,
-                reviewed_at=now,
-            )
-        )
-        count += 1
-
-    conn.commit()
-    logger.info(
-        "tail_risk: reduce_gross (pct=%.0f%%) modified %d trades",
-        reduction_pct * 100,
-        count,
-    )
-    return count
 
 
 # ---------------------------------------------------------------------------

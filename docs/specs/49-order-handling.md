@@ -150,3 +150,5 @@ Out of scope / non-goals:
   for 500 and refuses a full page; `suspended` stays open; an all-`no_close` run fails (AC7).
   Deferred to the backlog: FILLED-only execution metrics, a row left `PENDING` without an order
   id if the process dies mid-submit, and slippage measured against the limit.
+- 2026-11-05 (packet 60): order type, timing and schedule unchanged (queued DAY limits); the
+  band widened from 0.5% to 1.5% of the score date's close (`docs/specs/60-order-fill-rate.md`).

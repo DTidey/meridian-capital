@@ -173,7 +173,7 @@ portfolio:
   max_sector_pct:         0.25
   max_sector_net_pct:     0.05
   max_beta:               0.15
-  turnover_budget_pct:    0.30
+  turnover_budget_pct:    0.30    # NAV rotated per run; the move to target gross is exempt
   nav_usd:                100_000
   earnings_blackout_days: 5
   adv_lookback_days:      20
@@ -223,8 +223,8 @@ risk:
   tail_risk:
     vix_caution:            25
     vix_stress:             35
-    credit_spread_sigma:    1.0
-    credit_lookback_days:   252
+    credit_spread_sigma:    2.0     # packet 59: 1.0 fired on 25 of 30 nights (2026-09-24..11-04)
+    credit_lookback_days:   252     # observations (business days), not calendar days
 
   factor_monitor:
     alert_z_threshold:      1.5
@@ -245,7 +245,7 @@ risk:
 
 execution:
   alpaca_paper:         true    # false → live trading endpoint
-  limit_slippage_pct:   0.005   # 0.5% limit buffer above/below mid
+  limit_slippage_pct:   0.015   # limit = score-date close +/- 1.5% (packet 60); must be in (0, 0.05]
   max_adv_pct:          0.02    # chunk orders larger than 2% of ADV
   shortable_cache_days: 7
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
+import pytest
 
 import portfolio.db  # noqa: F401
 from portfolio.rebalance import generate_trades
@@ -138,32 +139,40 @@ class TestActionClassification:
 # ---------------------------------------------------------------------------
 
 
+def _rotation(n=10, base=1000, step=500, direction="LONG"):
+    """A full book rotating in place: gross unchanged, half the names up, half down."""
+    sign = 1 if direction == "LONG" else -1
+    prefix = "L" if direction == "LONG" else "S"
+    tickers = [f"{prefix}{i}" for i in range(n)]
+    current = [(t, sign * base) for t in tickers]
+    target = [
+        {
+            "ticker": t,
+            "shares": sign * (base + step if i % 2 == 0 else base - step),
+            "direction": direction,
+            "combined_score": float(50 + i * 3) if sign > 0 else float(50 - i * 3),
+        }
+        for i, t in enumerate(tickers)
+    ]
+    return current, target
+
+
+def _value(trades, mask=None):
+    rows = trades if mask is None else trades[mask]
+    return (rows["delta_shares"].abs() * 100.0).sum()
+
+
 class TestTurnoverBudget:
     def test_turnover_budget_trims_smallest_score_changes(self, tmp_db):
-        """10 new positions each worth 5% of NAV=1M → 50k each.
-        Budget=20% → 200k total → ~4 positions can trade (closures excluded).
-        Remaining 6 should be HOLD."""
-        tickers = [f"T{i}" for i in range(10)]
-        current = _empty_current()
-        target_rows = [
-            {
-                "ticker": t,
-                "shares": 500,  # 500 shares × $100 = $50k = 5% of $1M NAV
-                "combined_score": float(50 + i * 3),
-            }
-            for i, t in enumerate(tickers)
-        ]
-        target = _target_df(target_rows)
-        prices = _prices_for(*tickers)
-        trades = _run(current, target, prices=prices, conn=tmp_db)
+        """Full long book rotating 50% of NAV in place (gross unchanged), budget 20%:
+        the rotation is capped at $200k and the rest is trimmed (packet 57: a build-up
+        from cash is no longer trimmed, so the rotation case is the one that binds)."""
+        current, target = _rotation()
+        trades = _run(_current_df(current), _target_df(target), conn=tmp_db)
 
-        active = trades[trades["action"] != "HOLD"]
         held = trades[trades["action"] == "HOLD"]
-        # Some trades must be trimmed to HOLD
         assert len(held) > 0
-        # Total trade value of active trades ≤ budget (20% of 1M = 200k)
-        trade_value = (active["delta_shares"].abs() * 100.0).sum()
-        assert trade_value <= 200_000 * 1.05  # small tolerance
+        assert _value(trades) <= 200_000 * 1.05
 
     def test_closures_are_never_trimmed(self, tmp_db):
         """Full closures (target_shares=0) must not be downgraded to HOLD."""
@@ -176,33 +185,206 @@ class TestTurnoverBudget:
         assert "HOLD" not in actions
 
     def test_budget_split_preserves_both_books(self, tmp_db):
-        """Budget exhausted by LONGs alone must still allow high-conviction SHORTs.
+        """A long-book rotation must not starve a short-book rotation.
 
-        6 LONGs with score=100 each cost $50k → $300k total = 30% NAV.
-        6 SHORTs with score=1   each cost $50k → $300k total.
-        Budget=20% of $1M = $200k. Without book-splitting, LONGs fill budget first.
-        With book splitting: $100k per book → ~2 trades each side.
+        Each book rotates $300k in place (gross unchanged); budget 20% = $200k is split
+        between the books by trade value, so both keep some trades.
         """
-        long_tickers = [f"L{i}" for i in range(6)]
-        short_tickers = [f"S{i}" for i in range(6)]
-        all_tickers = long_tickers + short_tickers
-
-        current = _empty_current()
-        target_rows = [
-            {"ticker": t, "shares": 500, "direction": "LONG", "combined_score": 100.0}
-            for t in long_tickers
-        ] + [
-            {"ticker": t, "shares": -500, "direction": "SHORT", "combined_score": 1.0}
-            for t in short_tickers
-        ]
-        target = _target_df(target_rows)
-        prices = _prices_for(*all_tickers)
-        trades = _run(current, target, prices=prices, conn=tmp_db)
+        cur_l, tgt_l = _rotation(n=6)
+        cur_s, tgt_s = _rotation(n=6, direction="SHORT")
+        trades = _run(_current_df(cur_l + cur_s), _target_df(tgt_l + tgt_s), conn=tmp_db)
 
         active_longs = trades[(trades["action"] != "HOLD") & (trades["direction"] == "LONG")]
         active_shorts = trades[(trades["action"] != "HOLD") & (trades["direction"] == "SHORT")]
         assert len(active_shorts) > 0, "SHORTs were starved by LONG book"
         assert len(active_longs) > 0, "LONGs should also appear"
+
+
+def _cfg(nav=1_000_000, budget=0.20):
+    return {"portfolio": {**_CONFIG["portfolio"], "nav_usd": nav, "turnover_budget_pct": budget}}
+
+
+def _book_from_cash(nav=100_000.0):
+    """2026-11-04 shape: 20 long / 20 short at 3.75% of NAV each, 150% gross."""
+    rows = []
+    for i in range(40):
+        long = i < 20
+        rows.append(
+            {
+                "ticker": f"T{i:02d}",
+                "shares": (1 if long else -1) * 0.0375 * nav / 100.0,
+                "direction": "LONG" if long else "SHORT",
+                "combined_score": 95.0 - i * 0.1 if long else 5.0 + i * 0.1,
+            }
+        )
+    return _target_df(rows)
+
+
+class TestBuildUpAllowance:
+    """Packet 57: the build-up to target gross does not spend the rotation budget."""
+
+    def test_build_from_cash_not_trimmed(self, tmp_db):
+        # Investigation repro (test_build_from_cash_not_capped_by_turnover_budget): 6 trades.
+        trades = _run(_empty_current(), _book_from_cash(), config=_cfg(100_000, 0.30))
+        assert (trades["action"] != "HOLD").sum() == 40
+
+    def test_full_book_rotation_still_capped(self, tmp_db):
+        current, target = _rotation()
+        # X closes and Y opens at the same size: gross unchanged, so the closure is rotation
+        # (kept, and spends the budget first) rather than de-risking.
+        current.append(("X", 300))
+        target.append({"ticker": "Y", "shares": 300, "combined_score": 99.0})
+        trades = _run(_current_df(current), _target_df(target), conn=tmp_db)
+        assert trades.loc[trades["ticker"] == "X", "action"].item() == "SELL"
+        assert _value(trades) <= 200_000 + 1e-6
+        assert (trades["action"] == "HOLD").sum() > 0
+
+    def test_partial_book_gap_per_side(self, tmp_db):
+        current = [(f"L{i}", 100) for i in range(4)] + [(f"S{i}", -100) for i in range(2)]
+        target = [{"ticker": f"L{i}", "shares": 500} for i in range(10)] + [
+            {"ticker": f"S{i}", "shares": -400, "direction": "SHORT", "combined_score": 20.0}
+            for i in range(10)
+        ]
+        trades = _run(_current_df(current), _target_df(target), conn=tmp_db)
+        assert (trades["action"] != "HOLD").sum() == 20
+
+    def test_long_gap_not_spent_by_short_book(self, tmp_db):
+        cur_l, tgt_l = _rotation()  # long book full, rotating $500k
+        tgt_s = [
+            {"ticker": f"S{i}", "shares": -500, "direction": "SHORT", "combined_score": 10.0}
+            for i in range(4)
+        ]  # short book empty -> $200k build-up
+        trades = _run(_current_df(cur_l), _target_df(tgt_l + tgt_s), conn=tmp_db)
+        shorts = trades["direction"] == "SHORT"
+        assert (trades.loc[shorts, "action"] == "SHORT").all()
+        assert _value(trades, ~shorts) <= 200_000 + 1e-6
+        assert (trades.loc[~shorts, "action"] == "HOLD").sum() > 0
+
+    def test_de_risking_reductions_not_trimmed(self, tmp_db):
+        current = [(f"L{i}", 1500) for i in range(10)]
+        target = [{"ticker": f"L{i}", "shares": 1200} for i in range(10)]
+        trades = _run(_current_df(current), _target_df(target), conn=tmp_db)
+        assert (trades["action"] == "SELL").sum() == 10
+
+    def test_all_closures_pass(self, tmp_db):
+        current = _current_df([(f"L{i}", 1000) for i in range(5)])
+        trades = _run(current, _empty_current(), conn=tmp_db)
+        assert (trades["action"] == "SELL").all()
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="map_action has no branch for cur < 0, tgt == 0: a short that leaves the "
+        "target is HOLD, never covered (pre-existing; docs/backlog.md, found by packet 57)",
+    )
+    def test_short_dropped_from_target_is_covered(self, tmp_db):
+        trades = _run(_current_df([("S0", -2000)]), _empty_current(), conn=tmp_db)
+        assert trades["action"].tolist() == ["COVER"]
+
+    def test_missing_price_no_allowance(self, tmp_db):
+        current, target = _rotation()
+        target.append({"ticker": "NOPX", "shares": 5000})
+        prices = _prices_for(*[t for t, _ in current])
+        prices["NOPX"] = pd.DataFrame()
+        trades = _run(_current_df(current), _target_df(target), prices=prices, conn=tmp_db)
+        assert _value(trades, trades["ticker"] != "NOPX") <= 200_000 + 1e-6
+
+    def test_exact_fit_kept(self, tmp_db):
+        target = _target_df([{"ticker": "A", "shares": 2000}])
+        trades = _run(_empty_current(), target, config=_cfg(budget=0.0), conn=tmp_db)
+        assert trades["action"].tolist() == ["BUY"]
+
+    def test_small_gap_cannot_unlock_rotation(self, tmp_db):
+        current, target = _rotation()
+        for i, row in enumerate(target):
+            if i % 2:
+                row["shares"] += 20  # +100 shares in total = $10k = 1% of NAV
+        trades = _run(_current_df(current), _target_df(target), conn=tmp_db)
+        assert _value(trades) <= 210_000 + 1e-6
+
+    def test_offsetting_side_gaps_counted_per_side(self, tmp_db):
+        current = [(f"L{i}", 500) for i in range(4)] + [(f"S{i}", -1000) for i in range(4)]
+        target = [{"ticker": f"L{i}", "shares": 1000} for i in range(4)] + [
+            {"ticker": f"S{i}", "shares": -500, "direction": "SHORT", "combined_score": 10.0}
+            for i in range(4)
+        ]
+        trades = _run(
+            _current_df(current), _target_df(target), config=_cfg(budget=0.0), conn=tmp_db
+        )
+        assert sorted(trades["action"]) == ["BUY"] * 4 + ["COVER"] * 4
+
+    def test_short_gap_uses_absolute_value(self, tmp_db):
+        current = _current_df([("S0", -300)])
+        target = _target_df(
+            [
+                {"ticker": "S0", "shares": -300, "direction": "SHORT"},
+                {"ticker": "S1", "shares": -400, "direction": "SHORT"},
+            ]
+        )
+        trades = _run(current, target, config=_cfg(budget=0.0), conn=tmp_db)
+        assert trades.set_index("ticker").loc["S1", "action"] == "SHORT"
+
+    def test_zero_nav_no_trim(self, tmp_db):
+        current, target = _rotation()
+        trades = _run(_current_df(current), _target_df(target), config=_cfg(nav=0), conn=tmp_db)
+        assert (trades["action"] != "HOLD").all()
+
+
+class TestTrimmedRows:
+    def _commit(self, conn, score_date="2026-03-01"):
+        current, target = _rotation()
+        return generate_trades(
+            _current_df(current),
+            _target_df(target),
+            _prices_for(*[t for t, _ in current]),
+            _CONFIG,
+            conn=conn,
+            score_date=score_date,
+            commit=True,
+        )
+
+    def _rows(self, conn, status):
+        import sqlalchemy as sa
+
+        from portfolio.db import position_approvals
+
+        return conn.execute(
+            sa.select(position_approvals).where(position_approvals.c.status == status)
+        ).fetchall()
+
+    def test_trimmed_rows_written(self, tmp_db):
+        trades = self._commit(tmp_db)
+        trimmed = self._rows(tmp_db, "TRIMMED")
+        assert len(trimmed) == (trades["action"] == "HOLD").sum() > 0
+        for row in trimmed:
+            assert row.action in ("BUY", "SELL")
+            assert row.delta_shares == row.target_shares - row.current_shares != 0
+        assert len(self._rows(tmp_db, "PENDING")) == (trades["action"] != "HOLD").sum()
+
+    def test_whatif_writes_nothing(self, tmp_db):
+        import sqlalchemy as sa
+
+        from portfolio.db import position_approvals
+
+        current, target = _rotation()
+        _run(_current_df(current), _target_df(target), conn=tmp_db)
+        count = sa.select(sa.func.count()).select_from(position_approvals)
+        assert tmp_db.execute(count).scalar() == 0
+
+    def test_rerun_appends(self, tmp_db):
+        # Pins today's append-only behaviour: a re-run for the same date duplicates rows.
+        self._commit(tmp_db)
+        first = len(self._rows(tmp_db, "TRIMMED"))
+        self._commit(tmp_db)
+        assert len(self._rows(tmp_db, "TRIMMED")) == 2 * first
+
+    def test_summary_attached(self, tmp_db):
+        current, target = _rotation()
+        trades = _run(_current_df(current), _target_df(target), conn=tmp_db)
+        summary = trades.attrs["turnover"]
+        assert summary["needed_usd"] == 500_000
+        assert summary["allowance_usd"] == 0
+        assert summary["kept_usd"] + summary["trimmed_usd"] == 500_000
+        assert summary["trimmed_count"] == (trades["action"] == "HOLD").sum()
 
 
 # ---------------------------------------------------------------------------

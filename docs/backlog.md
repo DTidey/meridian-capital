@@ -182,20 +182,6 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** do not merge a pandas 4.x bump until a yfinance release no longer uses `inplace`;
   then drop the filter in `data/market_data.py`.
 
-## Earnings blackout halves the whole target, and REDUCED is never counted
-
-- **Raised:** 2026-11-04, nightly run review (2026-10-30 to 2026-11-03).
-- **Problem:** `risk/pre_trade.py` (around line 144) resizes an opening trade in an earnings
-  blackout to 50% of its target, then `risk/tail_risk.py` `_apply_reduce_gross` scales the
-  target again by 0.8 in CAUTION, so the target ends at 0.4x the Layer 4 plan (2026-11-03: KIM
-  +200 planned, 80 sent; CLX -53 target, -21 sent). Halving the whole target rather than the
-  trade can turn an add into a cut: AKAM was planned as a short add from -14 to -19 and was sent
-  as a cover to -10. The blackout resize returns result `APPROVED`, so the `REDUCED` count in
-  `run_risk_check.py` (around line 144) stays 0 and the summary hides it.
-- **Fix:** decide whether a blackout should hold the existing position and halve only the
-  opening delta (never flipping the direction); return `REDUCED` for resized trades so the
-  summary counts them.
-
 ## Back-and-forth trading across consecutive nights
 
 - **Raised:** 2026-11-04, nightly run review (2026-10-30 to 2026-11-03).
@@ -206,3 +192,37 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   (holding a position until the signal moves by more than a set margin) in Layer 4.
 - **Fix:** measure turnover and round-trips over a few weeks first; if they persist, add a
   minimum holding period or a hysteresis band on entry and exit ranks in Layer 4.
+
+## Circuit-breaker SIZE_DOWN scales only tonight's targets
+
+- **Raised:** 2026-11-05, packet 58 (out of scope there).
+- **Problem:** `risk/circuit_breakers.py` `_apply_size_down` (SIZE_DOWN_30, daily or weekly
+  loss) multiplies the target of each APPROVED opening row by 0.7, like the tail-risk resize
+  packet 58 removed. Untraded positions keep their size, so it does not cut book gross by 30%,
+  can turn an add into a reduction, and Layer 4 plans the full target again the next night.
+  Not yet triggered in paper trading.
+- **Fix:** decide whether a loss response should scale the whole book in Layer 4 (as packet 58
+  does for tail risk) or stay a one-night cut on opening trades.
+
+## Pre-trade POSITION_SIZE rejects from whole-share rounding
+
+- **Raised:** 2026-11-05, packet 58 (out of scope there; investigation finding 2).
+- **Problem:** the optimiser clamps weights at exactly `portfolio.max_position_pct` (0.05),
+  then `generate_trades` rounds to whole shares, which can land just above the pre-trade
+  `max_position_pct` (0.05) and gets the trade rejected: MU 5.3%, ARE 5.0%, BA 5.1% and 5.0%
+  between 2026-10-30 and 2026-11-03.
+- **Fix:** round toward zero for positions at the cap, or give the pre-trade limit a small
+  tolerance above the sizing cap.
+
+## A short that leaves the target is never covered
+
+- **Raised:** 2026-11-05, packet 57 (found by a closure test; out of scope there).
+- **Problem:** `portfolio/rebalance.py` `map_action` has no branch for `cur < 0` and
+  `tgt == 0`, so a short position whose name drops out of the target book maps to HOLD and is
+  never covered by Layer 4 (a long dropping out correctly maps to SELL). No harm yet: every
+  short held on 2026-11-04 is still in the target, and the only cover-to-zero approvals ever
+  written (AKAM, CLX on 2026-10-28) came from the circuit breaker. Pinned by
+  `tests/test_rebalance.py::TestBuildUpAllowance::test_short_dropped_from_target_is_covered`
+  (strict xfail).
+- **Fix:** add `if tgt == 0 and cur < 0 and delta > 0: return "COVER"` (with a spec), and
+  remove the xfail marker. Priority: high, before the first short leaves the target.

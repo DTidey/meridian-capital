@@ -11,7 +11,7 @@ Layer 6 reads APPROVED rows from `position_approvals`, maps them to Alpaca limit
 ## Acceptance criteria
 
 - AC1: The system reads only rows with `status=APPROVED` from `position_approvals` for the given `rebalance_date` and does not process PENDING or REJECTED rows.
-- AC2: All orders are submitted as day limit orders with a 0.5% slippage buffer above the current price for BUY/COVER actions and 0.5% below for SELL/SHORT actions.
+- AC2: All orders are submitted as day limit orders with a `limit_slippage_pct` buffer (1.5% since packet 60; must be in (0, 5%]) above the score date's stored close for BUY/COVER actions and below it for SELL/SHORT actions.
 - AC3: Orders where the absolute share quantity divided by 20-day ADV exceeds 2% are split into chunks of 2% of ADV to limit market impact.
 - AC4: SHORT actions are skipped with a WARNING log entry (not an error) if `short_check.is_shortable()` returns False for the ticker; shortability results are cached for 7 days per ticker.
 - AC5: Partial fills are kept without retry; only zero-fill orders are logged as WARNING and marked CANCELLED in `execution_orders`. (Superseded by packet 49: `docs/specs/49-order-handling.md`: orders are not polled; `sync_orders()` records Alpaca's status the next night, and CANCELLED only when Alpaca reports it.)
@@ -152,9 +152,11 @@ Removed by packet 44; replaced by `execution/book_sync.py` `sync_book()`.
 ## `execution/executor.py`
 
 ### `_limit_price(side, current_price) -> float`
-- BUY / COVER: `current_price x 1.005` (0.5% above -- ensures fill in normal
-  conditions while capping slippage).
-- SELL / SHORT: `current_price x 0.995`.
+- BUY / COVER: `close x (1 + limit_slippage_pct)`; SELL / SHORT: `close x (1 -
+  limit_slippage_pct)`, where `close` is the score date's stored close (packet 49).
+- `limit_slippage_pct` is 0.015 since packet 60 (0.005 before; an overnight gap of more than
+  0.5% left the queued order unfilled). `execute_approvals` refuses a value outside (0, 0.05]
+  before any broker call.
 
 ### `_chunk_orders(ticker, shares, adv) -> list[float]`
 If `|shares| / adv > 0.02`, split into chunks of `0.02 x adv` to avoid market
@@ -249,7 +251,7 @@ Flow for `--execute`:
 ```yaml
 execution:
   alpaca_paper: true          # false -> live trading
-  limit_slippage_pct: 0.005   # 0.5% limit buffer
+  limit_slippage_pct: 0.015   # 1.5% limit buffer (packet 60)
   max_adv_pct: 0.02           # chunk threshold
   poll_timeout_s: 120
   poll_interval_s: 5

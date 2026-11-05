@@ -36,3 +36,22 @@ def book_targets(config: dict) -> tuple[float, float]:
         if (net < bound - _TOLERANCE) if low else (net > bound + _TOLERANCE):
             raise ValueError(f"targets net {net:+.2f} outside {key} {bound:+.2f}")
     return long_gross, short_gross
+
+
+def scale_book_targets(config: dict, scale: float) -> dict:
+    """Return a copy of config with both book targets (and gross_exposure) scaled by `scale`.
+
+    Used for the tail-risk gross reduction (packet 58). The scaled targets are validated
+    against every configured bound, so a reduction that breaks one raises ValueError.
+    """
+    if not 0.0 < scale <= 1.0:
+        raise ValueError(f"book target scale must be in (0, 1]: {scale}")
+    long_gross, short_gross = book_targets(config)
+    pcfg = dict(config.get("portfolio", {}))
+    pcfg["target_long_gross"] = long_gross * scale
+    pcfg["target_short_gross"] = short_gross * scale
+    if "gross_exposure" in pcfg:
+        pcfg["gross_exposure"] = float(pcfg["gross_exposure"]) * scale
+    scaled = {**config, "portfolio": pcfg}
+    book_targets(scaled)
+    return scaled

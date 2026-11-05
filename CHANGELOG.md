@@ -34,6 +34,18 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Order limit band (packet `60-order-fill-rate`): queued DAY limits at the score date's close
+  +/- 1.5% (was 0.5%, which missed every overnight gap above 0.5%); a band outside (0, 5%]
+  stops Layer 6 before any order.
+- Turnover budget (packet `57-turnover-build-up`): the 30% per-run budget limits rotation
+  only; moving each book toward its target gross (building from cash, or de-risking) is
+  exempt. Trimmed trades are recorded as `TRIMMED` approvals and Layer 4 prints a turnover
+  summary. On the 2026-11-04 book this keeps 38 of 40 trades instead of 16.
+- Tail risk and earnings cuts (packet `58-layer5-target-cuts`): REDUCE_GROSS is a book-level
+  gross scale in Layer 4 (150% -> 120% in CAUTION, 75% in STRESS) instead of a cut to the
+  targets of the names trading that night; Layer 5 no longer edits approvals. The earnings
+  haircut happens once, in the Layer 4 optimiser; pre-trade no longer halves the target and
+  runs every check on earnings-window names. Planned adds are no longer turned into reductions.
 - Code fallbacks for LLM models now default to GPT-6 via `analysis.llm.DEFAULT_MODEL` /
   `DEFAULT_MODEL_CHEAP`, kept equal to `config.yaml` by a test (packet `35-model-defaults`).
 - Scoring analyzers moved to GPT-6 after a 50-ticker shadow test: earnings and risk on gpt-6-sol,
@@ -70,6 +82,9 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Credit-spread lookback (packet `59-credit-spread-lookback`): the FRED HY spread z-score
+  uses a true 252 observations (it held about 205), and `credit_spread_sigma` is 2.0 (was 1.0,
+  which fired tail-risk CAUTION on 25 of the 30 nights to 2026-11-04).
 - Resized trade direction (packet `56-resize-trade-direction`): the earnings-blackout,
   tail-risk and breaker size-down resizes re-derive BUY / SELL / SHORT / COVER / HOLD from the new target, so a
   resize below current holdings trims instead of adding; the executor skips no-change rows
