@@ -10,8 +10,11 @@ Alpaca GETs (orders, positions) on 2026-11-05 at 15:13 UTC. Prior Claude Code se
 `~/.claude/projects/-home-david-hedge/` were searched for design history (cited by session id
 prefix and UTC timestamp; every claim taken from them was re-checked against the code).
 Nothing was written to the database or sent to Alpaca.
-**Reproduction tests:** `tests/test_investigation_2026_11_05_repro.py`. Four tests, all
-`xfail(strict=True)`; each fails on its assertion today.
+**Reproduction tests:** four `xfail(strict=True)` tests, each failing on its assertion today,
+were first committed as `tests/test_investigation_2026_11_05_repro.py` in commit `04d9dea`.
+The file was removed to keep this PR docs-only. The finding-1 test (turnover budget) is being
+recreated in packet 57 on `hermes/fix-underinvested-book`. The other three (tear sheet beta,
+factor table, slippage) are preserved in full in the Appendix for a future tear-sheet packet.
 
 ## Prioritised summary
 
@@ -75,8 +78,8 @@ The current book is 26.8% gross ($26,663 / $99,601 NAV, `portfolio_positions` as
   SWK and URI.
 - There is **no separate cap on new positions**. The new-name cap is a side effect of the
   budget.
-- Reproduction: `test_build_from_cash_not_capped_by_turnover_budget`. A 40-name, 150% target
-  from an empty book produces 6 trades.
+- Reproduction: `test_build_from_cash_not_capped_by_turnover_budget` (commit `04d9dea`; moving
+  to packet 57). A 40-name, 150% target from an empty book produces 6 trades.
 - **Spec:** `docs/specs/04-portfolio-construction.md` AC7 and the config comment at line 167
   ("max fraction of portfolio turned per rebalance") make a per-rebalance budget intended. The
   spec never considers the build-up. The code also contradicts AC7 and spec section line 432:
@@ -305,9 +308,9 @@ This needs a new spec that supersedes the packet 56 assumption and updates spec 
 |---|---|---|
 | Inception 2024-01-02 | Hard-coded: `config.yaml:253`, default in `reporting/tear_sheet.py:34` and `run_reporting.py:93`. | Small: set it to 2026-10-27 or derive it from the first trade. |
 | SPY annualised 220%, Sharpe 4.5 | `portfolio_nav` still holds a stale **2026-05-21** row (NAV 100,000, SPY 738.98; with matching 05-21 rows in `portfolio_history` and PENDING approvals). The first SPY "daily" return spans 5 months (+3.6%), and `_perf_stats` annualises 8 returns with `252/8` (`reporting/tear_sheet.py:297-301`): `1.0377^31.5 - 1 = 221%`. Annualising 8 days is not meaningful anyway. | Small: delete or exclude rows before inception (a DB delete needs approval). Suppress annualised stats below about 60 observations. |
-| Beta 0.00 | Hard-coded `"beta": 0.0` (`reporting/tear_sheet.py:314`). Test: `test_tear_sheet_beta_is_computed`. | Small: regress portfolio returns on SPY returns. |
-| Mean slippage -149 bps, P95 -0.9 bps | `slippage_bps` is computed against the **limit** price (`execution/order_sync.py:62-63`). A limit order can only fill at or better than its limit, so every value is ≤ 0. The numbers measure overnight gaps (CVNA -1049 bps, CSGP -667) rather than cost. The mean and P95 are arithmetically fine (P95 is the least favourable value). Test: `test_buy_filled_above_decision_close_is_adverse_slippage`. | Small: store the decision price (the score_date close) on `execution_orders` and measure against it. |
-| Factor scores (momentum 23, quality 17) | `reporting/tear_sheet.py:49-53` takes **one arbitrary row** of `factor_scores` (`ORDER BY score_date DESC LIMIT 1`). On 11-04 that row was ZTS (momentum 23.33, quality 16.67, value 78.33), a short. It is not a portfolio exposure. Test: `test_tear_sheet_factor_exposures_come_from_the_book`. | Small: compute the weighted long-short spread over `portfolio_positions` (`portfolio/factor_exposure.py` `compute_exposures` already does this). |
+| Beta 0.00 | Hard-coded `"beta": 0.0` (`reporting/tear_sheet.py:314`). Test: `test_tear_sheet_beta_is_computed` (Appendix). | Small: regress portfolio returns on SPY returns. |
+| Mean slippage -149 bps, P95 -0.9 bps | `slippage_bps` is computed against the **limit** price (`execution/order_sync.py:62-63`). A limit order can only fill at or better than its limit, so every value is ≤ 0. The numbers measure overnight gaps (CVNA -1049 bps, CSGP -667) rather than cost. The mean and P95 are arithmetically fine (P95 is the least favourable value). Test: `test_buy_filled_above_decision_close_is_adverse_slippage` (Appendix). | Small: store the decision price (the score_date close) on `execution_orders` and measure against it. |
+| Factor scores (momentum 23, quality 17) | `reporting/tear_sheet.py:49-53` takes **one arbitrary row** of `factor_scores` (`ORDER BY score_date DESC LIMIT 1`). On 11-04 that row was ZTS (momentum 23.33, quality 16.67, value 78.33), a short. It is not a portfolio exposure. Test: `test_tear_sheet_factor_exposures_come_from_the_book` (Appendix). | Small: compute the weighted long-short spread over `portfolio_positions` (`portfolio/factor_exposure.py` `compute_exposures` already does this). |
 | 30-day turnover vs budget | See Q1: a 30-day metric is compared with a per-run budget. | Small: label it or drop the budget column. |
 
 Spec: `docs/specs/07-reporting-dashboard.md` AC7 requires "factor and sector exposure tables"
@@ -358,3 +361,107 @@ the date before inserting.
 | 284a3bba | 2026-10-30T07:34-07:57 | Wrong-way and zero-qty orders traced to blackout x tail-risk resizes; packet 56. |
 | f1142635 | 2026-11-04T11:56-12:00 | Run review: blackout x0.8 = 0.4x plan, churn; both added to the backlog (PR #125). |
 
+## Appendix: tear sheet and slippage reproduction tests
+
+Full source of the three Q3.3 tests from `tests/test_investigation_2026_11_05_repro.py` (commit
+`04d9dea`), minus the finding-1 turnover test and its helper. Each is `xfail(strict=True)` and
+failed on its assertion against `051dfb6`. To adopt them, save this as a file under `tests/`;
+when a fix lands, the test XPASSes, which fails the suite, so remove its marker at that point.
+
+```python
+"""Tear sheet and slippage reproductions for docs/investigations/2026-11-05-underinvested-book.md.
+
+Each test states the correct behaviour and is marked xfail(strict=True): it fails today because
+of the bug it names, and it will XPASS (and so fail the suite) once the bug is fixed. That is the
+signal to delete the xfail marker and move the test next to the fix.
+"""
+
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import pytest
+import sqlalchemy as sa
+
+import analysis.db  # noqa: F401
+import execution.db  # noqa: F401
+import factors.db  # noqa: F401
+import portfolio.db  # noqa: F401
+import reporting.db  # noqa: F401
+import risk.db  # noqa: F401
+from data.db import initialise_schema
+from execution.order_sync import _order_values
+from factors.db import factor_scores
+from portfolio.db import portfolio_positions
+from reporting import tear_sheet
+from reporting.db import portfolio_nav
+
+_NAV = 100_000.0
+
+
+def _engine(tmp_path):
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 't.db'}", future=True)
+    initialise_schema(engine)
+    return engine
+
+
+@pytest.mark.xfail(strict=True, reason="Q3.3: tear sheet beta is hard-coded to 0.0")
+def test_tear_sheet_beta_is_computed(tmp_path):
+    engine = _engine(tmp_path)
+    spy = [500.0, 505.0, 500.0, 510.0, 505.0, 515.0]
+    with engine.begin() as conn:
+        nav = _NAV
+        for i, s in enumerate(spy):
+            if i:
+                nav *= 1 + 2 * (s / spy[i - 1] - 1)  # portfolio moves 2x SPY: beta 2
+            conn.execute(
+                portfolio_nav.insert().values(
+                    date=f"2026-11-0{i + 1}", nav=nav, spy_close=s, drawdown_pct=0.0
+                )
+            )
+    out = tmp_path / "tear.md"
+    tear_sheet.write(engine, {}, output_path=str(out))
+    beta_row = next(ln for ln in out.read_text().splitlines() if ln.startswith("| Beta |"))
+    assert float(beta_row.split("|")[2]) == pytest.approx(2.0, abs=0.01)
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Q3.3: tear sheet factor block is the newest factor_scores row"
+)
+def test_tear_sheet_factor_exposures_come_from_the_book(tmp_path):
+    engine = _engine(tmp_path)
+    with engine.begin() as conn:
+        for d in ("2026-11-03", "2026-11-04"):
+            conn.execute(portfolio_nav.insert().values(date=d, nav=_NAV, drawdown_pct=0.0))
+        conn.execute(
+            portfolio_positions.insert().values(
+                ticker="HELD", direction="LONG", weight=0.05, sector="IT"
+            )
+        )
+        conn.execute(
+            factor_scores.insert(),
+            [
+                {"ticker": "HELD", "score_date": "2026-11-04", "momentum_score": 90.0},
+                # Not in the book; the 2026-11-04 tear sheet printed ZTS's own row this way.
+                {"ticker": "ZZZ", "score_date": "2026-11-05", "momentum_score": 23.3},
+            ],
+        )
+    out = tmp_path / "tear.md"
+    tear_sheet.write(engine, {}, output_path=str(out))
+    assert "| Momentum | 23.3 |" not in out.read_text()
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Q3.3: slippage is measured against the limit, so it is never adverse"
+)
+def test_buy_filled_above_decision_close_is_adverse_slippage():
+    # Decision close 100.00; executor limit = close x 1.005 = 100.50; filled at the limit.
+    order = SimpleNamespace(
+        status="filled", filled_qty=10, filled_avg_price=100.50, limit_price=100.50
+    )
+    values = _order_values(order, "BUY")
+    # Expected: about +50 bps adverse versus the 100.00 decision price. Today: 0.0.
+    assert values["slippage_bps"] > 0
+```
