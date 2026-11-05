@@ -34,6 +34,9 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Order limit band (packet `60-order-fill-rate`): queued DAY limits at the score date's close
+  +/- 1.5% (was 0.5%, which missed every overnight gap above 0.5%); a band outside (0, 5%]
+  stops Layer 6 before any order.
 - Turnover budget (packet `57-turnover-build-up`): the 30% per-run budget limits rotation
   only; moving each book toward its target gross (building from cash, or de-risking) is
   exempt. Trimmed trades are recorded as `TRIMMED` approvals and Layer 4 prints a turnover

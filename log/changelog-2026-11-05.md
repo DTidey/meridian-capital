@@ -75,3 +75,15 @@ validation run to report.
   backlog item, so the fix becomes a deliberate packet.
 - Read-only 11-04 replay: 38 of 40 trades (96% of NAV), nothing trimmed, 118.6% gross if all
   filled against the 120% CAUTION target.
+
+## Packet 60 implemented (phase 2)
+
+- The 5 orders that traded through their limit and expired were checked with Alpaca GETs
+  only: valid DAY limits, touched only in the opening minute(s) (after the 2026-11-01 clock
+  change regular hours start 14:30 UTC, which the first bar check got wrong and was redone).
+  Alpaca's paper engine fills on marketable quotes, so an opening print at the limit is not a
+  fill. Not a code fault; no fix.
+- 1.5% kept as approved. A missing config key falls back to 1.5%; an explicit non-number,
+  including a quoted "0.015", is refused rather than coerced, so a YAML typo fails loudly.
+- The check runs before approvals are read, so it fails even on a night with nothing to trade
+  (a bad config is caught on the first run, not on the first night with orders).

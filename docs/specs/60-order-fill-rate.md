@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/60-order-fill-rate.md`
 **Spec slug:** order-fill-rate
-**Status:** Draft (phase 1: awaiting owner decisions D1-D2 before implementation)
+**Status:** Done
 **Owner:** DTidey
 **Date:** 2026-11-05
 
@@ -24,7 +24,7 @@ finding 3, plus a read-only query on 2026-11-05 of `execution_orders` and `daily
   market expirations, 8 needed a band wider than 0.5% (next-session low above a BUY limit or
   high below a SELL limit): KIM 1.20% and 1.34%, CSGP 0.78%, CF 0.70%, MU 1.40%, CLX 1.88%,
   ZTS 2.22%, COHR 6.15%. The other 5 (ALLE, CSGP, AKAM, ZTS, NKE) traded at or through the
-  limit by the daily high/low and still did not fill (see Open questions).
+  limit by the daily high/low and still did not fill (see "Finding" below).
 - Of those 8 gap misses, a 1.0% band would have filled 2 (CF, CSGP), 1.5% would have filled 5
   (adds KIM twice and MU), 2.0% would have filled 6 (adds CLX); COHR and ZTS need more.
 - Whole universe, last 12 months (537 tickers, 133,751 ticker-days): the next session never
@@ -105,11 +105,30 @@ Out of scope / non-goals:
 - ADV chunking (backlog).
 - A dashboard fill-rate panel (verification below uses a query).
 
-## Open questions (not blocking; checked read-only in phase 2)
-- Why 5 orders whose limit was touched by the next session's high/low did not fill. Possible
-  causes: Alpaca paper fills against quotes rather than trade prints, or the extreme was an
-  odd-lot print. Phase 2 checks the Alpaca order records (GET only) and reports; no change
-  to orders.
+## Finding: the 5 orders that traded through their limit (phase 2, read-only)
+Checked 2026-11-05 with Alpaca GETs only (order records and 1-minute bars; no order was
+placed, cancelled or changed).
+
+| Order (score date) | Limit | Status | Minutes at/through limit | 1.5% band: marketable min after 09:35 |
+|---|---|---|---|---|
+| ALLE BUY 12 (10-28) | 181.56 | expired | 09:30 only | 24 |
+| CSGP BUY 4 (10-30) | 30.32 | expired | 09:30-09:32 | 0 |
+| AKAM SHORT 2 (10-30) | 92.26 | expired | 09:30-09:34 | 43 |
+| ZTS COVER 6 (10-30) | 80.12 | expired | 09:30 only | 0 |
+| NKE SHORT 7 (11-02) | 38.92 | expired | 09:30 only | 7 |
+
+- Every order was live as intended: LIMIT, DAY, not extended-hours, correct side and
+  position intent, released by Alpaca at about 4am New York time and expired at the close.
+  `execution_orders` holds no duplicate rows. Nothing in our code stopped them filling.
+- In every case the price reached the limit only in the opening minute(s) (regular hours;
+  the opening print and the first swing), then moved away for the rest of the session. The
+  daily high/low used in phase 1 includes those prints.
+- Alpaca paper trading fills a limit order only when the quote is marketable ("a
+  non-marketable buy limit order will not be filled until its limit price is equal to or
+  greater than the best ask price", docs.alpaca.markets/docs/paper-trading); a print at the
+  limit does not mean the NBBO crossed it. These were near-misses at the open, not a bug.
+- Not fixable in our code within this packet. The wider band helps: at 1.5%, ALLE, AKAM and
+  NKE had marketable minutes later in the session; CSGP and ZTS moved further away.
 
 ## Assumptions
 - Alpaca accepts limits at 1.5% from the last close for queued DAY orders (no price-band
@@ -173,14 +192,22 @@ _limit_price("SHORT", 100.0, 0.015)  # 98.50
 
 ## Test guidance
 - AC1 -> `tests/test_execution_executor.py::TestLimitBand::test_buy_cover_above_close`,
-  `test_sell_short_below_close`
+  `test_sell_short_below_close`, `test_config_band_is_one_and_a_half_pct`
 - AC2 -> `TestLimitBand::test_band_read_from_config`,
   existing `TestSubmission::test_limit_from_close_for_score_date`
 - AC3 -> existing no-close skip test in `tests/test_execution_executor.py`
 - AC4 -> review of the config and spec diffs (documentation AC)
-- AC5 -> `TestLimitBand::test_band_out_of_range_refused`
+- AC5 -> `TestLimitBand::test_band_out_of_range_refused`, `test_band_upper_bound_accepted`,
+  `test_validation_before_alpaca_calls`
 
 ## Decision log
 - 2026-11-05: Spec written from the 2026-11-05 investigation and a read-only replay of
   next-session highs/lows for every order since go-live. Recommendation keeps the owner's
   2026-10-24 order-type decision and changes only the never-chosen 0.5% value.
+- 2026-11-05: Owner approved D1-A (queued DAY limits, 1.5% band, range check (0, 5%]) and
+  D2-A (no roll-forward). No OPG orders or second cron. Implemented.
+- 2026-11-05: The 5 touched-but-unfilled orders were checked read-only (table above): opening
+  near-misses under Alpaca's quote-based paper fills, not a code fault; no fix.
+- 2026-11-05: The range check runs at the start of `execute_approvals`, before approvals are
+  read or Alpaca is called, so a bad value fails the run with nothing sent. A missing key
+  falls back to 1.5%; an explicit non-number (including a quoted "0.015") is refused.

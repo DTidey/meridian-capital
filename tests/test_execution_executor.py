@@ -435,3 +435,63 @@ class TestTrimmedIgnored:
         assert results == []
         client.submit_order.assert_not_called()
         assert _order_rows(conn, "DVA") == []
+
+
+def _band_config(band):
+    cfg = _base_config()
+    cfg["execution"]["limit_slippage_pct"] = band
+    return cfg
+
+
+class TestLimitBand:
+    """Packet 60: limits at the score date's close +/- 1.5%; band validated before trading."""
+
+    @pytest.mark.parametrize("action", ["BUY", "COVER"])
+    def test_buy_cover_above_close(self, action):
+        assert _limit_price(action, 100.0) == pytest.approx(101.50)  # default band is 1.5%
+        assert _limit_price(action, 24.99, 0.015) == pytest.approx(25.36)  # KIM 11-03
+
+    @pytest.mark.parametrize("action", ["SELL", "SHORT"])
+    def test_sell_short_below_close(self, action):
+        assert _limit_price(action, 100.0) == pytest.approx(98.50)
+
+    def test_config_band_is_one_and_a_half_pct(self):
+        import yaml
+
+        cfg = yaml.safe_load((Path(__file__).parent.parent / "config.yaml").read_text())
+        assert cfg["execution"]["limit_slippage_pct"] == 0.015
+
+    @pytest.mark.parametrize(("band", "limit"), [(0.005, 25.11), (0.015, 25.36)])
+    def test_band_read_from_config(self, conn, tmp_path, band, limit):
+        _insert_approval(conn, "KIM", action="BUY", target=80.0, current=0.0, close=24.99)
+        client = _filled_client()
+        execute_approvals(conn, client, _DATE, _band_config(band), tmp_path, dry_run=False)
+        req = client.submit_order.call_args.args[0]
+        assert float(req.limit_price) == pytest.approx(limit)
+        assert str(req.time_in_force.value) == "day"
+
+    @pytest.mark.parametrize("band", [0, 0.0, -0.01, 0.051, 0.15, "0.015", None])
+    def test_band_out_of_range_refused(self, conn, tmp_path, band):
+        _insert_approval(conn, "KIM", action="BUY", target=80.0, current=0.0, close=24.99)
+        client = _filled_client()
+        with pytest.raises(ValueError, match="limit_slippage_pct"):
+            execute_approvals(conn, client, _DATE, _band_config(band), tmp_path, dry_run=False)
+        client.submit_order.assert_not_called()
+
+    def test_band_upper_bound_accepted(self, conn, tmp_path):
+        _insert_approval(conn, "KIM", action="BUY", target=80.0, current=0.0, close=100.0)
+        client = _filled_client()
+        execute_approvals(conn, client, _DATE, _band_config(0.05), tmp_path, dry_run=False)
+        assert float(client.submit_order.call_args.args[0].limit_price) == pytest.approx(105.0)
+
+    def test_rounding_never_crosses_close(self):
+        assert _limit_price("BUY", 4.99, 0.015) == pytest.approx(5.06)
+        assert _limit_price("SELL", 4.99, 0.015) == pytest.approx(4.92)
+
+    def test_validation_before_alpaca_calls(self, conn, tmp_path):
+        # Adversarial: a bad band must fail before any broker call, even with no approvals.
+        client = _filled_client()
+        with pytest.raises(ValueError, match="limit_slippage_pct"):
+            execute_approvals(conn, client, _DATE, _band_config(0.2), tmp_path, dry_run=True)
+        client.get_all_positions.assert_not_called()
+        client.get_orders.assert_not_called()

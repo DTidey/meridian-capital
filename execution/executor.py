@@ -20,6 +20,8 @@ log = logging.getLogger(__name__)
 
 _CLOSING_ACTIONS = {"SELL", "COVER"}
 _OPEN_ORDERS_LIMIT = 500  # Alpaca maximum per listing
+_DEFAULT_LIMIT_BAND = 0.015  # packet 60: 0.5% missed 8 of 13 market expiries
+_MAX_LIMIT_BAND = 0.05  # a typo such as 0.15 must not allow 15% fills
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +29,21 @@ _OPEN_ORDERS_LIMIT = 500  # Alpaca maximum per listing
 # ---------------------------------------------------------------------------
 
 
-def _limit_price(action: str, current_price: float, slippage_pct: float = 0.005) -> float:
+def _limit_band(config: dict) -> float:
+    """Return execution.limit_slippage_pct; raise ValueError unless it is a number in (0, 5%]."""
+    band = config.get("execution", {}).get("limit_slippage_pct", _DEFAULT_LIMIT_BAND)
+    if isinstance(band, bool) or not isinstance(band, int | float):
+        raise ValueError(f"execution.limit_slippage_pct must be a number: {band!r}")
+    if not 0 < band <= _MAX_LIMIT_BAND:
+        raise ValueError(
+            f"execution.limit_slippage_pct must be in (0, {_MAX_LIMIT_BAND}]: {band!r}"
+        )
+    return float(band)
+
+
+def _limit_price(
+    action: str, current_price: float, slippage_pct: float = _DEFAULT_LIMIT_BAND
+) -> float:
     if action in ("BUY", "COVER"):
         return round(current_price * (1.0 + slippage_pct), 2)
     return round(current_price * (1.0 - slippage_pct), 2)
@@ -70,8 +86,7 @@ def submit_order(
     from alpaca.trading.enums import OrderSide, PositionIntent, TimeInForce
     from alpaca.trading.requests import LimitOrderRequest
 
-    slippage_pct = config.get("execution", {}).get("limit_slippage_pct", 0.005)
-    limit = _limit_price(action, current_price, slippage_pct)
+    limit = _limit_price(action, current_price, _limit_band(config))
 
     side_map = {
         "BUY": OrderSide.BUY,
@@ -148,6 +163,7 @@ def execute_approvals(
     next run's order sync (execution/order_sync.py) records fills and final status.
     Returns list of result dicts (one per approval).
     """
+    _limit_band(config)  # refuse a bad band before reading approvals or calling Alpaca
     approvals = conn.execute(
         sa.select(position_approvals).where(
             sa.and_(
