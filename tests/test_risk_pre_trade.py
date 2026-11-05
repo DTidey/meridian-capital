@@ -176,70 +176,78 @@ class TestPreTradeHalt:
         assert result.iloc[0]["result"] == "APPROVED"
 
 
-class TestPreTradeEarningsBlackout:
-    def test_earnings_blackout_reduces_size(self, mem_db, tmp_path):
-        """Ticker with earnings in 3 days gets 50% size cut (BLACKOUT_REDUCED)."""
-        _insert_prices(mem_db, "AAPL")
-        _insert_factor_score(mem_db, "AAPL")
-        _insert_approval(mem_db, "AAPL", action="BUY", target=200, current=0)
-
-        # Earnings 3 days from score_date — inside default blackout of 5d
-        earnings_date = (date.fromisoformat(_SCORE_DATE) + timedelta(days=3)).isoformat()
-        mem_db.execute(
-            earnings_calendar.insert().values(
-                ticker="AAPL",
-                earnings_date=earnings_date,
-                eps_estimate=None,
-            )
-        )
-        mem_db.commit()
-
-        result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
-        assert len(result) == 1
-        row = result.iloc[0]
-        assert row["result"] == "APPROVED"
-        assert "BLACKOUT_REDUCED" in row["reason"]
-
-
 def _approval_row(conn, approval_id):
     return conn.execute(
         sa.select(position_approvals).where(position_approvals.c.id == approval_id)
     ).fetchone()
 
 
-def _insert_earnings_soon(conn, ticker):
-    earnings_date = (date.fromisoformat(_SCORE_DATE) + timedelta(days=3)).isoformat()
+def _insert_earnings(conn, ticker, days_from_score):
+    earnings_date = (date.fromisoformat(_SCORE_DATE) + timedelta(days=days_from_score)).isoformat()
     conn.execute(earnings_calendar.insert().values(ticker=ticker, earnings_date=earnings_date))
     conn.commit()
 
 
-class TestBlackoutResizeAction:
-    """Packet 56: the 50% resize re-derives the action from the new target."""
+class TestEarningsWindow:
+    """Packet 58: Layer 4 owns the earnings haircut; pre-trade no longer resizes."""
 
-    def _resize(self, conn, tmp_path, action, target, current):
-        _insert_prices(conn, "AVY")
-        _insert_factor_score(conn, "AVY")
-        _insert_earnings_soon(conn, "AVY")
-        approval_id = _insert_approval(conn, "AVY", action=action, target=target, current=current)
-        run_pre_trade(conn, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
-        return _approval_row(conn, approval_id)
+    def _run(self, conn, tmp_path, action, target, current, days, ticker="AVY", cfg=None):
+        _insert_prices(conn, ticker)
+        _insert_factor_score(conn, ticker)
+        if days is not None:
+            _insert_earnings(conn, ticker, days)
+        approval_id = _insert_approval(conn, ticker, action=action, target=target, current=current)
+        result = run_pre_trade(conn, _SCORE_DATE, cfg or _base_config(), tmp_path, whatif=False)
+        return result.iloc[0], _approval_row(conn, approval_id)
 
-    def test_resize_below_holding_sells(self, mem_db, tmp_path):
-        row = self._resize(mem_db, tmp_path, "BUY", target=10, current=7)
-        assert (row.action, row.target_shares, row.delta_shares) == ("SELL", 5, -2)
+    def test_no_resize_reason_tagged(self, mem_db, tmp_path):
+        res, row = self._run(mem_db, tmp_path, "BUY", target=200, current=0, days=3)
+        assert res["result"] == "APPROVED"
+        assert "EARNINGS_WINDOW" in res["reason"]
+        assert (row.action, row.target_shares, row.delta_shares) == ("BUY", 200, 200)
+        assert row.status == "APPROVED"
 
-    def test_resize_to_holding_is_hold(self, mem_db, tmp_path):
-        row = self._resize(mem_db, tmp_path, "BUY", target=14, current=7)
-        assert (row.action, row.target_shares, row.delta_shares) == ("HOLD", 7, 0)
+    def test_add_to_held_not_flipped(self, mem_db, tmp_path):
+        # Packet 56 used to turn this add (7 -> 10, halved to 5) into SELL 2.
+        _insert_position(mem_db, "AVY", shares=7.0, weight=0.0001)
+        res, row = self._run(mem_db, tmp_path, "BUY", target=10, current=7, days=3)
+        assert res["result"] == "APPROVED"
+        assert (row.action, row.target_shares, row.delta_shares) == ("BUY", 10, 3)
 
-    def test_short_resize_above_holding_covers(self, mem_db, tmp_path):
-        # Adversarial: the short-side mirror (2026-10-29 BA-style add halved past the book).
-        row = self._resize(mem_db, tmp_path, "SHORT", target=-20, current=-14)
-        assert (row.action, row.target_shares, row.delta_shares) == ("COVER", -10, 4)
+    def test_short_add_not_flipped(self, mem_db, tmp_path):
+        _insert_position(mem_db, "AVY", direction="SHORT", shares=-14.0, weight=-0.0001)
+        _, row = self._run(mem_db, tmp_path, "SHORT", target=-20, current=-14, days=3)
+        assert (row.action, row.target_shares, row.delta_shares) == ("SHORT", -20, -6)
 
-    def test_new_position_keeps_action(self, mem_db, tmp_path):
-        row = self._resize(mem_db, tmp_path, "SHORT", target=-40, current=0)
-        assert (row.action, row.target_shares, row.delta_shares) == ("SHORT", -20, -20)
+    def test_window_name_still_size_checked(self, mem_db, tmp_path):
+        # 15,000 shares x ~$112 = 16.8% of NAV > 10% cap: the old early return approved it.
+        cfg = _base_config()
+        cfg["risk"]["pre_trade"]["adv_pct"] = 1000.0  # isolate the size check
+        res, row = self._run(mem_db, tmp_path, "BUY", target=15_000, current=0, days=3, cfg=cfg)
+        assert res["result"] == "REJECTED"
+        assert "POSITION_SIZE" in res["reason"]
+        assert row.status == "REJECTED"
+
+    def test_reported_yesterday_not_tagged(self, mem_db, tmp_path):
+        res, row = self._run(mem_db, tmp_path, "BUY", target=200, current=0, days=-1)
+        assert res["result"] == "APPROVED"
+        assert "EARNINGS_WINDOW" not in res["reason"]
+        assert (row.action, row.target_shares) == ("BUY", 200)
+
+    def test_earnings_today_tagged(self, mem_db, tmp_path):
+        res, _ = self._run(mem_db, tmp_path, "BUY", target=200, current=0, days=0)
+        assert "EARNINGS_WINDOW" in res["reason"]
+
+    def test_earnings_after_window_not_tagged(self, mem_db, tmp_path):
+        res, _ = self._run(mem_db, tmp_path, "BUY", target=200, current=0, days=6)
+        assert "EARNINGS_WINDOW" not in res["reason"]
+
+    def test_closing_trade_unaffected(self, mem_db, tmp_path):
+        _insert_position(mem_db, "AVY", shares=300.0)
+        res, row = self._run(mem_db, tmp_path, "SELL", target=0, current=300, days=2)
+        assert res["result"] == "APPROVED"
+        assert "CLOSING" in res["reason"]
+        assert (row.action, row.target_shares) == ("SELL", 0)
 
 
 class TestPreTradeNoPending:

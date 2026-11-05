@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/58-layer5-target-cuts.md`
 **Spec slug:** layer5-target-cuts
-**Status:** Draft (phase 1: awaiting owner decisions D1-D3 before implementation)
+**Status:** Done
 **Owner:** DTidey
 **Date:** 2026-11-05
 
@@ -127,8 +127,11 @@ Out of scope / non-goals:
   `tail_risk_state`, `action`, `reduction_pct`, `vix`, `credit_spread_z`.
 - `run_tail_risk(...)` return value unchanged except `actions` no longer reports modified
   approval rows.
-- `run_portfolio.py` output: `Tail risk: CAUTION (credit z 2.42) - gross target 120% (L 64% /
-  S 56%)`.
+- `portfolio.book_targets.scale_book_targets(config, scale) -> dict`: copy of the config with
+  both book targets and `gross_exposure` scaled, validated by `book_targets`; `scale` must be
+  in (0, 1].
+- `run_portfolio.py` output: `Tail risk: CAUTION (VIX 18.0, credit z 2.57) - gross target 120%
+  (L 64% / S 56%)`.
 
 ### Examples
 ```python
@@ -210,14 +213,17 @@ Out of scope / non-goals:
 - AC1 -> `tests/test_risk_tail_risk.py::TestEvaluateTailRisk` (parametrised over the four
   regimes; asserts no approval rows change)
 - AC2 -> `tests/test_run_portfolio.py::TestTailRiskGrossScale::test_caution_scales_book`,
-  `test_stress_scales_book`, `test_normal_full_gross`
-- AC3 -> `tests/test_risk_tail_risk.py::TestNoApprovalEdits::test_caution_leaves_rows`,
-  `test_stress_leaves_rows` (replaces `TestReduceGrossAction`, `test_vix_caution_reduces_20pct`,
-  `test_vix_stress_reduces_50pct`)
+  `test_stress_scales_book`, `test_normal_full_gross`, `test_layer4_uses_regime`
+- AC3 -> `tests/test_risk_tail_risk.py::TestNoApprovalEdits::test_regime_leaves_rows` (CAUTION
+  and STRESS), `TestTailRiskCaution::test_vix_caution_flags_20pct`,
+  `TestTailRiskStress::test_vix_stress_flags_50pct` (replace `TestReduceGrossAction`,
+  `test_vix_caution_reduces_20pct`, `test_vix_stress_reduces_50pct`)
 - AC4 -> `tests/test_run_portfolio.py::TestTailRiskGrossScale::test_second_night_no_churn`
 - AC5 -> `tests/test_layer5_regression_2026_11_04.py::test_planned_actions_survive_layer5`
 - AC6 -> `tests/test_risk_pre_trade.py::TestEarningsWindow::test_no_resize_reason_tagged`,
-  `test_window_name_still_size_checked`, `test_reported_yesterday_not_tagged`
+  `test_add_to_held_not_flipped`, `test_short_add_not_flipped`,
+  `test_window_name_still_size_checked`, `test_reported_yesterday_not_tagged`,
+  `test_earnings_today_tagged`, `test_earnings_after_window_not_tagged`
   (replaces `TestPreTradeEarningsBlackout`, `TestBlackoutResizeAction`)
 - AC7 -> existing `tests/test_optimizer.py` earnings haircut tests
 - AC8 -> `TestTailRiskGrossScale::test_whatif_no_writes`
@@ -236,3 +242,9 @@ Out of scope / non-goals:
   2026-10-24T17:47Z as "Near-neutral, 80/70"); under CAUTION net falls from +10% to +8%,
   still inside the chosen bounds. 120% gross was never discussed with the owner; it is what
   today's REDUCE_GROSS_20 already intends for the whole book.
+- 2026-11-05: Owner approved D1-A, D2-A and D3 as recommended. Implemented. The regression
+  test replays the 11-04 rows: on the old code it reproduces the logged flips (NKE COVER to
+  -40, AKAM COVER to -7, AVY 19, MU 4); on the new code every row keeps Layer 4's plan.
+- 2026-11-05: Tests that run the real regime evaluation clear `FRED_API_KEY` (autouse
+  fixture): `run_portfolio` loads `.env` on import, so in a checkout with a key the tests
+  would otherwise call FRED.

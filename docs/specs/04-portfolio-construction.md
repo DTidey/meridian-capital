@@ -10,7 +10,7 @@ Layer 4 consumes the ranked long/short candidate list produced by Layer 3 (`comb
 
 ## Acceptance criteria
 
-- AC1: The conviction-tilt optimiser produces a target portfolio where long weights sum to `target_long_gross` (default 0.90) and short weights sum to `target_short_gross` (default 0.60), with every individual position clamped to `[min_position_pct, max_position_pct]` (default 0.5%-5% of NAV).
+- AC1: The conviction-tilt optimiser produces a target portfolio where long weights sum to `target_long_gross` (default 0.90) and short weights sum to `target_short_gross` (default 0.60), with every individual position clamped to `[min_position_pct, max_position_pct]` (default 0.5%-5% of NAV). Since packet 58 `run_portfolio.py` first scales both targets by the tail-risk regime (x0.8 in CAUTION, x0.5 in STRESS; `portfolio.book_targets.scale_book_targets`).
 - AC2: The conviction-tilt optimiser applies a 1.5x weight multiplier to the top-5% scoring positions and a 1.25x multiplier to the top-10% scoring positions (within each book), then re-normalises each book to its gross target.
 - AC3: For any ticker with earnings within `earnings_blackout_days` (default 5) days, the optimiser halves the position weight and redistributes the surplus equally across remaining positions in the same book.
 - AC4: The liquidity cap limits each position to no more than `adv_max_pct` (default 5%) of its 20-day average daily volume; positions exceeding this cap are trimmed and the surplus is redistributed.
@@ -25,7 +25,7 @@ Layer 4 consumes the ranked long/short candidate list produced by Layer 3 (`comb
 
 - Auth/authz impact: Layer 4 reads from and writes to the shared PostgreSQL database; database credentials control access to portfolio state, history, and approval records.
 - Secrets or credential handling: No additional API keys introduced in Layer 4; `DATABASE_URL` is read from environment variables only, never hardcoded. Alpaca keys (used in Layer 6) are not accessed here.
-- Network or external service impact: No outbound network calls in Layer 4; all data is read from the internal PostgreSQL database.
+- Network or external service impact: Since packet 58 Layer 4 makes one read-only FRED request per run (tail-risk regime, `FRED_API_KEY` from the environment, HYG fallback from the database); all other data is read from the internal PostgreSQL database.
 - Input handling: All portfolio input (candidates, prices, betas) comes from the trusted internal database; no external user input is processed directly. The `--whatif` flag provides a safe preview mode that commits nothing.
 - No meaningful security impact beyond the above.
 

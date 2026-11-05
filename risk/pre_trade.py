@@ -16,7 +16,6 @@ from data.db import daily_prices, earnings_calendar
 from factors.db import factor_scores as factor_scores_table
 from portfolio.beta import compute_betas, portfolio_beta
 from portfolio.db import portfolio_positions, position_approvals
-from portfolio.rebalance import map_action
 from risk.db import risk_log
 from risk.risk_state import is_halted
 
@@ -140,18 +139,8 @@ def _evaluate_trade(
         logger.warning("pre_trade: no price for %s — skipping size/liquidity checks", ticker)
         return "APPROVED", f"NO_PRICE_DATA: approved with warning for {ticker}", None
 
-    # Check 2 — earnings blackout (resize to 50%, do not reject)
-    if ticker in blackout_tickers:
-        new_target = round(target_shares * 0.50)
-        new_delta = new_target - current_shares
-        updated_row = {
-            "action": map_action(current_shares, new_target, new_delta),
-            "target_shares": new_target,
-            "delta_shares": new_delta,
-            "status": "APPROVED",
-        }
-        reason = f"BLACKOUT_REDUCED: earnings within {cfg['earnings_blackout_days']}d — target resized to 50%"
-        return "APPROVED", reason, updated_row
+    # Check 2 — earnings window: Layer 4 already halved the weight (packet 58); no resize here,
+    # the row goes through every check below and is tagged if approved.
 
     # Check 3 — liquidity
     adv = adv_map.get(ticker, 0.0)
@@ -230,7 +219,10 @@ def _evaluate_trade(
         if reject:
             return "REJECTED", reason, None
 
-    return "APPROVED", "All checks passed", None
+    reason = "All checks passed"
+    if ticker in blackout_tickers:
+        reason += f" | EARNINGS_WINDOW: earnings within {cfg['earnings_blackout_days']}d"
+    return "APPROVED", reason, None
 
 
 # ---------------------------------------------------------------------------
@@ -515,12 +507,12 @@ def _load_blackout_tickers(
     score_date: str,
     blackout_days: int,
 ) -> set[str]:
-    """Return tickers with earnings within ±blackout_days of score_date."""
+    """Return tickers with earnings in [score_date, score_date + blackout_days] (as Layer 4)."""
     if not tickers:
         return set()
 
     ref_date = datetime.fromisoformat(score_date).date()
-    lo = (ref_date - timedelta(days=blackout_days)).isoformat()
+    lo = ref_date.isoformat()
     hi = (ref_date + timedelta(days=blackout_days)).isoformat()
 
     rows = conn.execute(

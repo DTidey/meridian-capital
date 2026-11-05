@@ -24,6 +24,12 @@ _SCORE_DATE = "2026-03-15"
 _VIX_TICKER = "^VIX"
 
 
+@pytest.fixture(autouse=True)
+def _no_fred_key(monkeypatch):
+    """No live FRED calls from tests ; tests that need a key set a fake one."""
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+
+
 @pytest.fixture
 def mem_engine():
     engine = sa.create_engine("sqlite:///:memory:", future=True)
@@ -85,6 +91,12 @@ def _insert_approval(conn, ticker, action="BUY", target=300.0, current=0.0):
     conn.commit()
 
 
+def _approval(conn, ticker):
+    return conn.execute(
+        sa.select(position_approvals).where(position_approvals.c.ticker == ticker)
+    ).fetchone()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -100,41 +112,27 @@ class TestTailRiskNormal:
 
 
 class TestTailRiskCaution:
-    def test_vix_caution_reduces_20pct(self, mem_db, tmp_path):
-        """VIX=28, REDUCE_GROSS_20 fires, target_shares *= 0.80."""
+    def test_vix_caution_flags_20pct(self, mem_db, tmp_path):
+        """VIX=28: REDUCE_GROSS_20 reported; packet 58: the approval is not edited."""
         _insert_vix(mem_db, 28.0)
         _insert_approval(mem_db, "AAPL", action="BUY", target=500)
 
         result = run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
         assert result["tail_risk_state"] == "CAUTION"
         assert "REDUCE_GROSS_20" in result["actions"]
-
-        row = mem_db.execute(
-            sa.select(position_approvals.c.target_shares).where(
-                position_approvals.c.ticker == "AAPL"
-            )
-        ).fetchone()
-        assert row is not None
-        assert row[0] == pytest.approx(400.0, abs=1.0)  # 500 * 0.80 = 400
+        assert _approval(mem_db, "AAPL").target_shares == pytest.approx(500.0)
 
 
 class TestTailRiskStress:
-    def test_vix_stress_reduces_50pct(self, mem_db, tmp_path):
-        """VIX=38, REDUCE_GROSS_50 fires, target_shares *= 0.50."""
+    def test_vix_stress_flags_50pct(self, mem_db, tmp_path):
+        """VIX=38: REDUCE_GROSS_50 reported; packet 58: the approval is not edited."""
         _insert_vix(mem_db, 38.0)
         _insert_approval(mem_db, "MSFT", action="BUY", target=200)
 
         result = run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
         assert result["tail_risk_state"] == "STRESS"
         assert "REDUCE_GROSS_50" in result["actions"]
-
-        row = mem_db.execute(
-            sa.select(position_approvals.c.target_shares).where(
-                position_approvals.c.ticker == "MSFT"
-            )
-        ).fetchone()
-        assert row is not None
-        assert row[0] == pytest.approx(100.0, abs=1.0)  # 200 * 0.50 = 100
+        assert _approval(mem_db, "MSFT").target_shares == pytest.approx(200.0)
 
 
 class TestTailRiskClosingTrades:
@@ -154,38 +152,6 @@ class TestTailRiskClosingTrades:
         assert row is not None
         # SELL is a closing trade; target_shares=0 should be untouched
         assert row[0] == pytest.approx(0.0, abs=0.01)
-
-
-def _approval(conn, ticker):
-    return conn.execute(
-        sa.select(position_approvals).where(position_approvals.c.ticker == ticker)
-    ).fetchone()
-
-
-class TestReduceGrossAction:
-    """Packet 56: the 20% cut re-derives the action from the new target."""
-
-    def test_cut_below_holding_sells(self, mem_db, tmp_path):
-        _insert_vix(mem_db, 28.0)
-        _insert_approval(mem_db, "AVY", action="BUY", target=11.0, current=10.0)
-        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
-        row = _approval(mem_db, "AVY")
-        assert (row.action, row.target_shares, row.delta_shares) == ("SELL", 9, -1)
-
-    def test_cut_to_holding_is_hold(self, mem_db, tmp_path):
-        _insert_vix(mem_db, 28.0)
-        _insert_approval(mem_db, "COIN", action="SHORT", target=-6.0, current=-5.0)
-        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
-        row = _approval(mem_db, "COIN")
-        assert (row.action, row.target_shares, row.delta_shares) == ("HOLD", -5, 0)
-
-    def test_hold_row_not_cut_again(self, mem_db, tmp_path):
-        # Adversarial: a blackout HOLD (target == book) must not become a 20% reduction.
-        _insert_vix(mem_db, 28.0)
-        _insert_approval(mem_db, "ZTS", action="HOLD", target=-51.0, current=-51.0)
-        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
-        row = _approval(mem_db, "ZTS")
-        assert (row.action, row.target_shares) == ("HOLD", -51)
 
 
 class TestTailRiskWhatIf:
@@ -415,3 +381,124 @@ class TestCreditThreshold:
 
         cfg = yaml.safe_load((Path(__file__).parent.parent / "config.yaml").read_text())
         assert cfg["risk"]["tail_risk"]["credit_spread_sigma"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Packet 58: regime evaluated read-only; Layer 5 never edits approvals
+# ---------------------------------------------------------------------------
+
+
+def _row_counts(conn):
+    from risk.db import risk_events, risk_log
+
+    return tuple(
+        conn.execute(sa.select(sa.func.count()).select_from(t)).scalar()
+        for t in (position_approvals, risk_events, risk_log)
+    )
+
+
+def _approval_tuple(conn, ticker):
+    row = _approval(conn, ticker)
+    return (row.action, row.target_shares, row.delta_shares, row.status)
+
+
+class TestEvaluateTailRisk:
+    @pytest.mark.parametrize(
+        ("vix", "credit_z", "state", "action", "reduction"),
+        [
+            (20.0, 0.0, "NORMAL", None, 0.0),
+            (28.0, 0.0, "CAUTION", "REDUCE_GROSS_20", 0.20),
+            (18.0, 2.5, "CAUTION", "REDUCE_GROSS_20", 0.20),
+            (38.0, 2.5, "STRESS", "REDUCE_GROSS_50", 0.50),
+        ],
+    )
+    def test_matches_run_tail_risk(
+        self, mem_db, tmp_path, monkeypatch, vix, credit_z, state, action, reduction
+    ):
+        import risk.tail_risk as tr
+
+        monkeypatch.setattr(tr, "_get_credit_spread_z", lambda *a, **k: credit_z)
+        _insert_vix(mem_db, vix)
+        cfg = _base_config()
+        cfg["risk"]["tail_risk"]["credit_spread_sigma"] = 2.0
+        regime = tr.evaluate_tail_risk(mem_db, _SCORE_DATE, cfg, tmp_path)
+        assert (regime["tail_risk_state"], regime["action"]) == (state, action)
+        assert regime["reduction_pct"] == pytest.approx(reduction)
+        assert regime["vix"] == pytest.approx(vix)
+        assert regime["credit_spread_z"] == pytest.approx(credit_z)
+        full = tr.run_tail_risk(mem_db, _SCORE_DATE, cfg, tmp_path, whatif=True)
+        assert full["tail_risk_state"] == regime["tail_risk_state"]
+
+    def test_writes_nothing(self, mem_db, tmp_path):
+        from risk.tail_risk import evaluate_tail_risk
+
+        _insert_vix(mem_db, 38.0)
+        _insert_approval(mem_db, "NVDA", action="BUY", target=400)
+        before = _row_counts(mem_db)
+        evaluate_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path)
+        assert _row_counts(mem_db) == before
+        assert _approval(mem_db, "NVDA").target_shares == pytest.approx(400.0)
+
+    def test_fred_failure_falls_back(self, mem_db, tmp_path, monkeypatch):
+        # Adversarial: FRED raises; both entry points fall back to HYG the same way.
+        import requests
+
+        from risk.tail_risk import evaluate_tail_risk
+
+        def _boom(*a, **k):
+            raise requests.ConnectionError("down")
+
+        monkeypatch.setenv("FRED_API_KEY", _FRED_KEY)
+        monkeypatch.setattr(requests, "get", _boom)
+        _insert_vix(mem_db, 18.0)
+        regime = evaluate_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path)
+        full = run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
+        assert regime["tail_risk_state"] == full["tail_risk_state"] == "NORMAL"
+        assert regime["credit_spread_z"] == pytest.approx(0.0)
+
+    def test_api_key_not_logged(self, mem_db, tmp_path, monkeypatch, caplog):
+        from risk.tail_risk import evaluate_tail_risk
+
+        monkeypatch.setenv("FRED_API_KEY", _FRED_KEY)
+        _fake_fred(monkeypatch, _obs(_bdays(300, end=_SCORE_DATE), _series(300)))
+        _insert_vix(mem_db, 18.0)
+        with caplog.at_level("DEBUG"):
+            evaluate_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path)
+        assert caplog.records
+        assert all(_FRED_KEY not in r.getMessage() for r in caplog.records)
+
+
+class TestNoApprovalEdits:
+    @pytest.mark.parametrize("vix", [28.0, 38.0])
+    def test_regime_leaves_rows(self, mem_db, tmp_path, vix):
+        from risk.db import risk_events
+
+        _insert_vix(mem_db, vix)
+        _insert_approval(mem_db, "NKE", action="SHORT", target=-50.0, current=-41.0)
+        _insert_approval(mem_db, "KIM", action="BUY", target=192.0, current=0.0)
+        before = {t: _approval_tuple(mem_db, t) for t in ("NKE", "KIM")}
+        result = run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        assert result["tail_risk_state"] in ("CAUTION", "STRESS")
+        assert {t: _approval_tuple(mem_db, t) for t in ("NKE", "KIM")} == before
+        events = mem_db.execute(sa.select(risk_events)).fetchall()
+        assert len(events) == 1  # the regime is still recorded
+
+    def test_small_delta_untouched(self, mem_db, tmp_path):
+        # Adversarial: a 1-share add must not become a 0-share or reversed row.
+        _insert_vix(mem_db, 28.0)
+        _insert_approval(mem_db, "MU", action="BUY", target=4.0, current=3.0)
+        run_tail_risk(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        assert _approval_tuple(mem_db, "MU") == ("BUY", 4.0, 1.0, "APPROVED")
+
+    def test_layer5_regime_differs_no_edit(self, mem_db, tmp_path, monkeypatch):
+        # Adversarial: Layer 4 saw NORMAL, Layer 5 sees CAUTION; Layer 5 still edits nothing.
+        import risk.tail_risk as tr
+
+        monkeypatch.setattr(tr, "_get_credit_spread_z", lambda *a, **k: 3.0)
+        cfg = _base_config()
+        cfg["risk"]["tail_risk"]["credit_spread_sigma"] = 2.0
+        _insert_vix(mem_db, 18.0)
+        _insert_approval(mem_db, "AVY", action="BUY", target=24.0, current=0.0)
+        result = run_tail_risk(mem_db, _SCORE_DATE, cfg, tmp_path, whatif=False)
+        assert result["tail_risk_state"] == "CAUTION"
+        assert _approval_tuple(mem_db, "AVY") == ("BUY", 24.0, 24.0, "APPROVED")

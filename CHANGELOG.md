@@ -34,6 +34,11 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Tail risk and earnings cuts (packet `58-layer5-target-cuts`): REDUCE_GROSS is a book-level
+  gross scale in Layer 4 (150% -> 120% in CAUTION, 75% in STRESS) instead of a cut to the
+  targets of the names trading that night; Layer 5 no longer edits approvals. The earnings
+  haircut happens once, in the Layer 4 optimiser; pre-trade no longer halves the target and
+  runs every check on earnings-window names. Planned adds are no longer turned into reductions.
 - Code fallbacks for LLM models now default to GPT-6 via `analysis.llm.DEFAULT_MODEL` /
   `DEFAULT_MODEL_CHEAP`, kept equal to `config.yaml` by a test (packet `35-model-defaults`).
 - Scoring analyzers moved to GPT-6 after a 50-ticker shadow test: earnings and risk on gpt-6-sol,

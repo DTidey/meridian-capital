@@ -44,3 +44,18 @@ validation run to report.
   real ~70bp OAS widening since late September, which is what the control is for.
 - The z is still computed from a short window (with a WARNING) rather than failing over to
   HYG: a 200-observation FRED z is closer to the intended signal than the HYG price proxy.
+
+## Packet 58 implemented (phase 2)
+
+- Layer 4 calls `evaluate_tail_risk` itself rather than reading a state written by Layer 5:
+  Layer 5 runs after Layer 4, so there is no same-night record to read, and the previous
+  night's state would lag a regime change by a day.
+- `scale_book_targets` scales `gross_exposure` with the two book targets so `book_targets`
+  validation keeps working, and re-validates the scaled book: a reduction that would break a
+  configured net bound fails loudly instead of building an out-of-bounds book.
+- Pre-trade keeps loading the earnings set, only to tag approvals (`EARNINGS_WINDOW`), and its
+  window is now forward-only like the optimiser's, so the tag means the same as the haircut.
+- `TestTailRiskClosingTrades` kept: closing rows were never cut and still are not.
+- Tests that run the real regime evaluation clear `FRED_API_KEY` with an autouse fixture,
+  because `run_portfolio` loads `.env` at import and would otherwise reach FRED from a
+  checkout that has a key.

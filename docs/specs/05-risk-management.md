@@ -12,9 +12,9 @@ Layer 5 is a post-optimisation, pre-execution risk gate that sits between Layer 
 
 - AC1: The system runs the full daily pipeline (factor risk model, pre-trade veto, circuit breakers, factor monitor, correlation monitor, risk state save) when `run_risk_check.py` is invoked with no flags.
 - AC2: The pre-trade veto evaluates all 8 checks in order for each PENDING trade and stamps each row APPROVED or REJECTED in `position_approvals`; closing/covering trades skip checks 2-8 and are always APPROVED.
-- AC3: The earnings blackout check (check 2) resizes the trade to 50% of target shares and marks it APPROVED with reason `BLACKOUT_REDUCED` rather than rejecting it.
+- AC3: The earnings check (check 2) does not resize (packet 58: Layer 4 owns the earnings haircut). An opening trade with earnings in `[score_date, score_date + earnings_blackout_days]` runs checks 3-8 like any other and, if approved, carries `EARNINGS_WINDOW` in its reason.
 - AC4: The circuit breaker triggers SIZE_DOWN_30, CLOSE_ALL, or KILL_SWITCH based on daily/weekly P&L and drawdown thresholds, evaluated in priority order (drawdown first), and writes `cache/halt.lock` on KILL_SWITCH.
-- AC5: The tail risk monitor reduces APPROVED non-closure target shares by 50% when VIX >= 35, by 20% when VIX >= 25, and by 20% on credit spread z-score >= `credit_spread_sigma` (2.0 since packet 59; z over the last 252 FRED observations); VIX >= 35 dominates if both fire simultaneously.
+- AC5: The tail risk regime is STRESS (`REDUCE_GROSS_50`) when VIX >= 35, CAUTION (`REDUCE_GROSS_20`) when VIX >= 25 or the credit spread z-score >= `credit_spread_sigma` (2.0 since packet 59; z over the last 252 FRED observations); VIX >= 35 dominates. Since packet 58 Layer 4 scales both book gross targets by the reduction (150% -> 120% / 75%) and Layer 5 records the regime without editing `position_approvals`.
 - AC6: The factor risk model decomposes portfolio variance into factor and specific components, computes MCTR per position, flags tickers where `|MCTR_pct| > 1.5 * |weight_pct|`, and writes `cache/predicted_cov_<date>.parquet`.
 - AC7: The correlation monitor computes per-book average pairwise correlation over 60 days, raises an alert when either exceeds 0.60, and computes effective number of bets via eigendecomposition of the combined correlation matrix.
 - AC8: The factor monitor raises a HIGH-priority alert when a long-minus-short factor z-score exceeds 1.5 in magnitude and that factor also has an active crowding flag from Layer 2.
@@ -33,9 +33,9 @@ Layer 5 is a post-optimisation, pre-execution risk gate that sits between Layer 
 
 - AC1 -> `tests/test_risk_state.py` (full pipeline wiring via entry point)
 - AC2 -> `tests/test_risk_pre_trade.py` (each of the 8 checks in isolation; closing trades always pass)
-- AC3 -> `tests/test_risk_pre_trade.py` (earnings blackout size reduction)
+- AC3 -> `tests/test_risk_pre_trade.py::TestEarningsWindow`
 - AC4 -> `tests/test_risk_circuit_breakers.py` (each trigger threshold; KILL_SWITCH creates halt.lock; SIZE_DOWN modifies target_shares)
-- AC5 -> `tests/test_risk_tail_risk.py` (VIX thresholds; HYG proxy z-score; no double-reduction)
+- AC5 -> `tests/test_risk_tail_risk.py` (VIX thresholds; credit z; `TestEvaluateTailRisk`, `TestNoApprovalEdits`), `tests/test_run_portfolio.py::TestTailRiskGrossScale`
 - AC6 -> `tests/test_risk_factor_risk.py` (variance decomposition sums to total; MCTR flagging; predicted_cov shape)
 - AC7 -> `tests/test_risk_correlation.py` (effective N bets formula; high-corr alert)
 - AC8 -> `tests/test_risk_factor_risk.py` (HIGH priority alert logic)
@@ -322,7 +322,7 @@ Closing/covering trades skip checks 2-8 (only check 1 applies).
 | # | Check | Condition for REJECTION |
 |---|-------|------------------------|
 | 1 | **Halt lock** | `cache/halt.lock` exists |
-| 2 | **Earnings blackout** | Earnings within +-5 days -> full position blocked (50% size cut applied as a sizing adjustment, not a rejection -- trade is resized to 50% of target then approved) |
+| 2 | **Earnings window** | Earnings in the next 5 days -> no resize (Layer 4 already halved the weight, packet 58); the trade runs checks 3-8 and an approval is tagged `EARNINGS_WINDOW` |
 | 3 | **Liquidity** | Trade value > 5% of 20-day ADV for that ticker |
 | 4 | **Position size** | Resulting position > 5% of NAV (abs weight) |
 | 5 | **Sector concentration** | Resulting gross sector exposure > 25% of NAV |
@@ -334,9 +334,11 @@ Closing/covering trades skip checks 2-8 (only check 1 applies).
 the date applied, so each trade is checked against the whole proposed book. Check 8 compares
 the new ticker with the other same-book names, not with itself.
 
-Note on check 2: The earnings blackout applies a **50% size reduction** rather than a
-full rejection. The trade is modified (delta_shares halved, target_shares adjusted) and
-marked APPROVED with a `BLACKOUT_REDUCED` note in the reason column.
+Note on check 2: Since packet 58 the earnings haircut has one owner, the Layer 4
+optimiser (weight x0.5 for earnings in `[score_date, score_date + 5d]`, spec 04 AC3).
+Pre-trade no longer resizes (it used to halve the target over +-5 days, which cut such names
+a second time and could turn an add into a reduction); it tags approvals in the same forward
+window with `EARNINGS_WINDOW`.
 
 ### Implementation
 
@@ -505,8 +507,10 @@ This is stored in `risk_state["correlation_monitor"]["effective_n_bets"]`.
 
 ### Purpose
 Respond to market stress (VIX spikes, credit spread widening) by reducing gross exposure.
-These triggers modify APPROVED position_approvals rows (same SIZE_DOWN mechanism as
-circuit breakers), they do NOT reject entirely.
+Since packet 58 the reduction is a book-level gross scale applied in Layer 4
+(`run_portfolio.py` calls `evaluate_tail_risk` and scales both book targets), so every
+position honours it and the next night plans the same book. Layer 5 records the regime in
+`risk_events` / `risk_log` and does not edit `position_approvals`.
 
 ### VIX
 
@@ -514,8 +518,8 @@ VIX prices are already in `daily_prices` under ticker `^VIX`. Pull today's close
 
 | VIX Level | Action |
 |-----------|--------|
-| >= 35 | Reduce all APPROVED non-closure target shares by 50% (`REDUCE_GROSS_50`) |
-| >= 25 | Reduce all APPROVED non-closure target shares by 20% (`REDUCE_GROSS_20`) |
+| >= 35 | Book gross targets x0.5, 150% -> 75% (`REDUCE_GROSS_50`) |
+| >= 25 | Book gross targets x0.8, 150% -> 120% (`REDUCE_GROSS_20`) |
 | < 25 | No action |
 
 ### Credit Spread
@@ -634,7 +638,7 @@ python run_risk_check.py --whatif         # run all checks but don't commit chan
 6. **Factor risk model** -- compute and write `cache/predicted_cov_<date>.parquet`; update risk_state
 7. **Pre-trade veto** -- stamp PENDING rows as APPROVED/REJECTED; log to risk_log
 8. **Circuit breakers** -- evaluate P&L; apply SIZE_DOWN or KILL_SWITCH; log events
-9. **Tail risk** -- evaluate VIX/credit; apply REDUCE_GROSS; log events
+9. **Tail risk** -- evaluate VIX/credit; log events (the gross scale is applied in Layer 4)
 10. **Factor monitor** -- compute z-scores; append to risk_state alerts
 11. **Correlation monitor** -- compute effective N bets; append to risk_state alerts
 12. **Save risk_state.json**
@@ -658,7 +662,7 @@ Portfolio Risk Decomposition:
 Pre-Trade Veto (18 pending trades):
   APPROVED : 15
   REJECTED :  2  (AAPL -- liquidity, DE -- sector limit)
-  REDUCED  :  1  (MSFT -- earnings blackout, 50% size cut)
+  REDUCED  :  0
 
 Circuit Breakers: NORMAL
   Daily P&L    :  +0.32%
@@ -666,7 +670,7 @@ Circuit Breakers: NORMAL
   Drawdown     :   3.8%
 
 Tail Risk: CAUTION
-  VIX          :  27.4  -> REDUCE_GROSS_20 applied (13 trades resized)
+  VIX          :  27.4  -> REDUCE_GROSS_20 (Layer 4 gross target 120%)
   Credit spread:  +0.8s (below threshold)
 
 Factor Monitor:

@@ -54,6 +54,10 @@ Out of scope / non-goals:
   COVER / HOLD; Layer 5 should agree with it rather than keep its own.
 - A resize that turns an opening trade into a reduction is wanted: both resizes exist to cut
   exposure, so trimming an existing position is in the spirit of the rule.
+  **Superseded by packet 58** (`docs/specs/58-layer5-target-cuts.md`, owner sign-off
+  2026-11-05) for pre-trade and tail risk: neither resizes approvals any more, so AC2-AC4 and
+  their tests no longer apply. `map_action`, the circuit-breaker SIZE_DOWN re-derivation (AC7)
+  and the executor guards (AC5, AC6) stay.
 - HOLD rows stay `APPROVED` in `position_approvals` so the dashboard shows what Layer 5 did.
 
 ## Proposed behavior / API
