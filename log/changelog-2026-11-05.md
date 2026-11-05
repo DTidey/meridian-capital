@@ -59,3 +59,19 @@ validation run to report.
 - Tests that run the real regime evaluation clear `FRED_API_KEY` with an autouse fixture,
   because `run_portfolio` loads `.env` at import and would otherwise reach FRED from a
   checkout that has a key.
+
+## Packet 57 implemented (phase 2)
+
+- The allowance is tied to the gap's direction per book (exempts trades that move the book
+  toward its target gross, closures first, then by conviction), not a plain `30% + |gap|` pool.
+  The pool form would let a de-risking book spend its allowance on new opens and trim the
+  reductions; it would also let a closure on a shrinking book count twice.
+- The summary travels as `trades.attrs["turnover"]` so `generate_trades`' return columns stay
+  the same for every caller.
+- The two existing budget tests built from an empty book; with the allowance nothing is
+  trimmed there, so they were reworked into full-book rotations, which is what they test.
+- A closure test exposed a pre-existing `map_action` gap (a short leaving the target maps to
+  HOLD). Not fixed here (behaviour outside the spec); strict xfail test plus a high-priority
+  backlog item, so the fix becomes a deliberate packet.
+- Read-only 11-04 replay: 38 of 40 trades (96% of NAV), nothing trimmed, 118.6% gross if all
+  filled against the 120% CAUTION target.

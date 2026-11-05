@@ -424,3 +424,14 @@ class TestTradeDirectionGuard:
         results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
         assert results[0]["status"] == "SUBMITTED"
         assert client.submit_order.call_args.args[0].qty == 3
+
+
+class TestTrimmedIgnored:
+    def test_no_order_for_trimmed(self, conn, tmp_path):
+        """Packet 57: a TRIMMED approval never becomes an order."""
+        _insert_approval(conn, "DVA", action="SHORT", target=-50.0, current=0.0, status="TRIMMED")
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results == []
+        client.submit_order.assert_not_called()
+        assert _order_rows(conn, "DVA") == []

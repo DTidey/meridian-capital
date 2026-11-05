@@ -323,3 +323,20 @@ class TestTargetBook:
         self._setup(mem_db, [("A", "BUY", 8000)])
         result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=True)
         assert len(result) == 1
+
+
+class TestTrimmedIgnored:
+    def test_trimmed_not_evaluated(self, mem_db, tmp_path):
+        """Packet 57: TRIMMED rows are a record only; pre-trade reads PENDING rows."""
+        _insert_prices(mem_db, "AVY")
+        _insert_factor_score(mem_db, "AVY")
+        approval_id = _insert_approval(mem_db, "AVY", action="BUY", target=200, current=0)
+        mem_db.execute(
+            position_approvals.update()
+            .where(position_approvals.c.id == approval_id)
+            .values(status="TRIMMED")
+        )
+        mem_db.commit()
+        result = run_pre_trade(mem_db, _SCORE_DATE, _base_config(), tmp_path, whatif=False)
+        assert result.empty
+        assert _approval_row(mem_db, approval_id).status == "TRIMMED"

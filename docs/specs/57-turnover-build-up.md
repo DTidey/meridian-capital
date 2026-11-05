@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/57-turnover-build-up.md`
 **Spec slug:** turnover-build-up
-**Status:** Draft (phase 1: awaiting owner decisions D1-D3 before implementation)
+**Status:** Done
 **Owner:** DTidey
 **Date:** 2026-11-05
 
@@ -115,8 +115,10 @@ Out of scope / non-goals:
 ### Public interface
 - `generate_trades(...)` signature unchanged. The returned frame gains no columns; trimmed
   rows keep `action = HOLD`, `delta_shares = 0` in the returned frame (as today) so callers are
-  unaffected, and carry their original action/delta into a new internal column used only by
-  `_write_approvals`.
+  unaffected, and carry their original action/delta/cost in internal columns used only by
+  `_write_approvals`. The turnover summary is attached as `trades.attrs["turnover"]`
+  (`nav_usd`, `needed_usd`, `allowance_usd`, `rotation_budget_usd`, `kept_usd`, `kept_count`,
+  `trimmed_usd`, `trimmed_count`).
 - `position_approvals.status` gains the value `TRIMMED` (string column; no schema change).
 
 ### Inputs / outputs
@@ -124,10 +126,13 @@ Out of scope / non-goals:
   - `cur_gross_b = sum(|current_shares x price|)` over current positions on side `b`;
   - `tgt_gross_b = sum(|target_shares x price|)` over targets on side `b`;
   - `allowance_b = |tgt_gross_b - cur_gross_b|`;
-  - `book_budget_b = rotation_share_b + allowance_b`, where `rotation_share_b` is today's
-    proportional split of `budget x NAV - closure value`.
-- The budget is only applied when `proposed_turnover > budget + (allowance_L + allowance_S) / NAV`;
-  otherwise every trade passes, as today when under budget.
+  - the allowance exempts the trades that move book `b` toward its target gross (opens and
+    adds when below target, reductions and closures when above), closures first and then by
+    conviction, until it is used up; a trade larger than what is left is exempt in part;
+  - the remaining (non-exempt) value of each trade is what the existing budget logic counts:
+    closures first, then the proportional long/short split of `budget x NAV - closures`.
+  As implemented, this is the additive form of D1-A with the allowance tied to the gap's
+  direction, so a book cannot spend its build-up allowance on rotation.
 - Error handling: unchanged (NAV <= 0 keeps today's behaviour of no trimming).
 
 ### Examples
@@ -148,7 +153,8 @@ Out of scope / non-goals:
   vice versa.
 - AC4: A book whose target gross is below its current gross (de-risking) can reduce to target
   without the reductions being trimmed by the rotation budget.
-- AC5: Full closures are never trimmed and still spend the rotation budget first (unchanged).
+- AC5: Full closures are never trimmed and still spend the rotation budget first (unchanged),
+  except a closure that moves its book toward a lower target gross, which is de-risking (AC4).
 - AC6: Every trimmed trade is written to `position_approvals` with `status = 'TRIMMED'`, its
   original `action`, `target_shares` and `delta_shares`; no other stage reads or acts on
   `TRIMMED` rows, and the executor submits no order for them.
@@ -181,6 +187,8 @@ Out of scope / non-goals:
   today; it neither spends nor creates allowance.
 - NAV from config vs broker: `nav_usd` is the value used today; unchanged.
 - Allowance exactly equal to the remaining trade value: boundary trade is kept (`<=`).
+- A `TRIMMED` row can be approved by hand from the dashboard research page (status buttons
+  act on any row for the ticker); that is a deliberate manual action and then trades.
 
 ## Rollout
 1. Land after or with packet 58 (recommended order: 59, 58, 57, 60; see
@@ -202,7 +210,9 @@ Out of scope / non-goals:
 
 ## Test guidance
 - AC1 -> `tests/test_rebalance.py::TestBuildUpAllowance::test_build_from_cash_not_trimmed`
-- AC2 -> `TestBuildUpAllowance::test_full_book_rotation_still_capped`
+- AC2 -> `TestBuildUpAllowance::test_full_book_rotation_still_capped`,
+  `TestTurnoverBudget::test_turnover_budget_trims_smallest_score_changes`,
+  `test_budget_split_preserves_both_books` (both reworked as full-book rotations)
 - AC3 -> `TestBuildUpAllowance::test_partial_book_gap_per_side`,
   `test_long_gap_not_spent_by_short_book`
 - AC4 -> `TestBuildUpAllowance::test_de_risking_reductions_not_trimmed`
@@ -210,8 +220,9 @@ Out of scope / non-goals:
 - AC6 -> `tests/test_rebalance.py::TestTrimmedRows::test_trimmed_rows_written`,
   `tests/test_risk_pre_trade.py::TestTrimmedIgnored::test_trimmed_not_evaluated`,
   `tests/test_execution_executor.py::TestTrimmedIgnored::test_no_order_for_trimmed`
-- AC7 -> `tests/test_run_portfolio.py::test_turnover_summary_printed` (new module; no
-  `run_portfolio` test module exists yet)
+- AC7 -> `tests/test_run_portfolio.py::TestTurnoverSummary::test_turnover_summary_printed`,
+  `test_summary_missing_is_silent`;
+  `tests/test_rebalance.py::TestTrimmedRows::test_summary_attached`
 - AC8 -> `TestTrimmedRows::test_whatif_writes_nothing`
 - AC9 -> review of `docs/specs/04-portfolio-construction.md` diff (documentation AC)
 
@@ -222,3 +233,9 @@ Out of scope / non-goals:
   (sessions 630ff079 2026-10-24, 9d2a0c48 2026-10-27) assumed every budgeted trade would be
   sent and filled in full. This packet does not reverse an owner decision: the owner accepted
   a slow build as a consequence, not as a goal.
+- 2026-11-05: Owner approved D1-A, D2-A and D3. Implemented with the allowance tied to the
+  gap's direction (see Inputs / outputs): a plain `budget + |gap|` pool would let a de-risking
+  book spend its allowance on new opens and still trim the reductions AC4 requires.
+- 2026-11-05: A closure test found a pre-existing bug outside this packet: `map_action`
+  maps a short leaving the target (cur < 0, target 0) to HOLD, so it is never covered. Not
+  fixed here (no spec); pinned with a strict xfail test and added to `docs/backlog.md`.

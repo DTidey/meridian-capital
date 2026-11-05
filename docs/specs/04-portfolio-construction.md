@@ -16,7 +16,7 @@ Layer 4 consumes the ranked long/short candidate list produced by Layer 3 (`comb
 - AC4: The liquidity cap limits each position to no more than `adv_max_pct` (default 5%) of its 20-day average daily volume; positions exceeding this cap are trimmed and the surplus is redistributed.
 - AC5: Sector neutrality is enforced so that the net sector weight (long minus short) for any GICS sector does not exceed `max_sector_net_pct` (default 5% of NAV); the portfolio net beta is kept within `max_beta` (default 0.15) by scaling the short book.
 - AC6: The MVO optimiser uses SLSQP to maximise `mu^T w - lambda * w^T Sigma w` subject to long/short gross targets, position bounds, beta constraint, and per-sector caps; if `result.success == False` or any exception occurs, it falls back to conviction-tilt and logs a warning.
-- AC7: The rebalance generator diffs the current `portfolio_positions` against the target, maps deltas to BUY/SELL/SHORT/COVER/HOLD actions, respects the `turnover_budget_pct` (default 30%) by trimming the smallest-delta-score trades first (full closures are never trimmed), and estimates transaction costs for each trade.
+- AC7: The rebalance generator diffs the current `portfolio_positions` against the target, maps deltas to BUY/SELL/SHORT/COVER/HOLD actions, respects the per-run `turnover_budget_pct` (default 30%) and estimates transaction costs for each trade. Since packet 57 the budget limits rotation only: per book, trades that move the book toward its target gross (opens and adds below target, reductions and closures above it) are exempt up to |target gross - current gross|. Over budget, full closures are kept and spend the budget first; the rest of each book (budget split between books by trade value) is kept by conviction `|combined_score - 50|`, highest first, skipping any trade that does not fit. Trimmed trades are written to `position_approvals` with status `TRIMMED` (never acted on) and the run prints a turnover summary.
 - AC8: When `--rebalance` is run without `--whatif`, the system writes proposed trades to `position_approvals` (status PENDING), upserts `portfolio_positions`, and appends a snapshot row to `portfolio_history`. (Superseded by packet 44: `docs/specs/44-book-of-record.md`: rebalance writes approvals only; positions and history come from the broker.)
 - AC9: The rebalance schedule checker returns advisory warning strings (never blocks execution) for: earnings within 2 days, FOMC meeting within 5 days, and options expiration within 3 days.
 - AC10: The entry point `run_portfolio.py` supports `--rebalance`, `--whatif`, `--current`, and `--optimize-method mvo|conviction` flags, and prints a portfolio summary including gross/net exposure, sector breakdown, and net beta.
@@ -164,7 +164,7 @@ portfolio:
   max_sector_pct:         0.25        # single-side sector cap (25%)
   max_sector_net_pct:     0.05        # sector net exposure cap (5%)
   max_beta:               0.15        # portfolio net beta cap
-  turnover_budget_pct:    0.30        # max fraction of portfolio turned per rebalance
+  turnover_budget_pct:    0.30        # max fraction of NAV rotated per run; build-up to target gross exempt (packet 57)
   nav_usd:                10_000_000  # notional NAV for share-count calculation
   earnings_blackout_days: 5           # halve position if earnings within N days
   adv_lookback_days:      20          # days for average daily volume
@@ -429,7 +429,7 @@ def generate_trades(
    - SHORT delta > 0 (less short): `COVER`
    - delta ≈ 0 (< 1 share difference): `HOLD`
 
-3. **Turnover budget:** compute `proposed_turnover = Σ |delta_shares × price| / NAV`. If > `turnover_budget_pct`, sort trades by `|Δscore| = |new_combined_score − old_combined_score|` descending and trim from the bottom until within budget. Positions being fully closed are never trimmed.
+3. **Turnover budget (packet 57):** value each trade as `|delta_shares x price|`. Per book, trades that move the book toward its target gross are exempt up to `|target gross - current gross|` (closures first, then by conviction). If the remaining value exceeds `turnover_budget_pct x NAV`, keep full closures (they spend the budget first), split the rest of the budget between the long and short books by value, and keep each book's trades by `|combined_score - 50|` descending, skipping any that do not fit. Trimmed trades become HOLD in the trade list and `TRIMMED` rows in `position_approvals`.
 
 4. **Cost estimation:** call `transaction_costs.estimate_cost()` for each trade.
 
@@ -475,7 +475,7 @@ All tests use SQLite in-memory fixtures (same `tmp_engine`/`tmp_db` pattern as L
 | `test_rebalance_schedule.py` | Earnings within 2 days triggers warning; FOMC within 5 days; third-Friday detection; no warnings when all clear |
 | `test_optimizer.py` | Weights sum to gross targets; no position exceeds max_pct; sector net within limit; earnings haircut applied; conviction tilt applied to top scores; liquidity cap honoured |
 | `test_mvo_optimizer.py` | Returns valid weights on simple case; falls back to conviction-tilt when forced to not converge; beta constraint satisfied |
-| `test_rebalance.py` | New position → BUY; closed position → SELL; turnover budget trims smallest Δscore trades first; closures never trimmed; HOLD when delta < 1 share |
+| `test_rebalance.py` | New position → BUY; closed position → SELL; turnover budget trims rotation by conviction, build-up to target gross exempt, trimmed rows TRIMMED; closures never trimmed; HOLD when delta < 1 share |
 | `test_state.py` | save_positions upserts correctly; load_positions returns current state; history appended on save |
 | `test_factor_exposure.py` | Long/short exposure dicts have correct keys; spread = long − short; flags raised when spread > 1σ |
 

@@ -213,3 +213,16 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   between 2026-10-30 and 2026-11-03.
 - **Fix:** round toward zero for positions at the cap, or give the pre-trade limit a small
   tolerance above the sizing cap.
+
+## A short that leaves the target is never covered
+
+- **Raised:** 2026-11-05, packet 57 (found by a closure test; out of scope there).
+- **Problem:** `portfolio/rebalance.py` `map_action` has no branch for `cur < 0` and
+  `tgt == 0`, so a short position whose name drops out of the target book maps to HOLD and is
+  never covered by Layer 4 (a long dropping out correctly maps to SELL). No harm yet: every
+  short held on 2026-11-04 is still in the target, and the only cover-to-zero approvals ever
+  written (AKAM, CLX on 2026-10-28) came from the circuit breaker. Pinned by
+  `tests/test_rebalance.py::TestBuildUpAllowance::test_short_dropped_from_target_is_covered`
+  (strict xfail).
+- **Fix:** add `if tgt == 0 and cur < 0 and delta > 0: return "COVER"` (with a spec), and
+  remove the xfail marker. Priority: high, before the first short leaves the target.

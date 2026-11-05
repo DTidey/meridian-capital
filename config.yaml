@@ -173,7 +173,7 @@ portfolio:
   max_sector_pct:         0.25
   max_sector_net_pct:     0.05
   max_beta:               0.15
-  turnover_budget_pct:    0.30
+  turnover_budget_pct:    0.30    # NAV rotated per run; the move to target gross is exempt
   nav_usd:                100_000
   earnings_blackout_days: 5
   adv_lookback_days:      20

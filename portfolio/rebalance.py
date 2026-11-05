@@ -88,6 +88,7 @@ def generate_trades(
         return trades
 
     trades = _apply_turnover_budget(trades, nav, turnover)
+    summary = _turnover_summary(trades, nav, turnover)
     trades = _prioritise(trades)
     trades = _add_priority_column(trades)
 
@@ -95,7 +96,7 @@ def generate_trades(
         # Approvals only: positions come from the broker after fills (execution/book_sync.py).
         _write_approvals(conn, trades, score_date)
 
-    return trades[
+    result = trades[
         [
             "ticker",
             "action",
@@ -108,6 +109,8 @@ def generate_trades(
             "price",
         ]
     ]
+    result.attrs["turnover"] = summary
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +143,12 @@ def _infer_direction(shares: float) -> str:
 
 
 def _apply_turnover_budget(trades: pd.DataFrame, nav: float, budget: float) -> pd.DataFrame:
+    """Trim trades beyond the rotation budget; the move to each book's target gross is exempt."""
     df = trades.copy()
     df["trade_value"] = df["delta_shares"].abs() * df["price"].fillna(0)
-    proposed_turnover = df["trade_value"].sum() / nav if nav > 0 else 0.0
+    df["budget_value"] = _budget_values(df)
+    df["trimmed"] = False
+    proposed_turnover = df["budget_value"].sum() / nav if nav > 0 else 0.0
 
     if proposed_turnover <= budget:
         return df
@@ -151,8 +157,7 @@ def _apply_turnover_budget(trades: pd.DataFrame, nav: float, budget: float) -> p
     closures = df[df["target_shares"].abs() < _HOLD_THRESHOLD].copy()
     adjustable = df[df["target_shares"].abs() >= _HOLD_THRESHOLD].copy()
 
-    closure_tv = closures["trade_value"].sum()
-    budget_remaining = budget * nav - closure_tv
+    budget_remaining = budget * nav - closures["budget_value"].sum()
 
     # Split budget proportionally between long and short books so that score
     # distribution asymmetry (sector_rank min > 0) cannot starve the short book.
@@ -160,8 +165,8 @@ def _apply_turnover_budget(trades: pd.DataFrame, nav: float, budget: float) -> p
     long_adj = adjustable[~is_short].copy()
     short_adj = adjustable[is_short].copy()
 
-    long_tv = long_adj["trade_value"].sum()
-    short_tv = short_adj["trade_value"].sum()
+    long_tv = long_adj["budget_value"].sum()
+    short_tv = short_adj["budget_value"].sum()
     total_tv = long_tv + short_tv
 
     if total_tv > 0:
@@ -170,31 +175,77 @@ def _apply_turnover_budget(trades: pd.DataFrame, nav: float, budget: float) -> p
     else:
         long_budget = short_budget = budget_remaining / 2
 
-    def _fill_book(book: pd.DataFrame, book_budget: float) -> tuple[list, list]:
-        book = book.copy()
-        book["_conviction"] = (book["combined_score"].fillna(50) - 50).abs()
-        book = book.sort_values("_conviction", ascending=False)  # highest first
-        keep, trim = [], []
-        used = 0.0
-        for idx, row in book.iterrows():
-            if used + row["trade_value"] <= book_budget:
-                keep.append(idx)
-                used += row["trade_value"]
-            else:
-                trim.append(idx)
-        return keep, trim
-
-    long_keep, long_trim = _fill_book(long_adj, long_budget)
-    short_keep, short_trim = _fill_book(short_adj, short_budget)
+    long_keep, _ = _fill_book(long_adj, long_budget)
+    short_keep, _ = _fill_book(short_adj, short_budget)
 
     keep_rows = set(long_keep + short_keep)
     allowed = adjustable.loc[adjustable.index.isin(keep_rows)]
     trimmed = adjustable.loc[~adjustable.index.isin(keep_rows)].copy()
+    trimmed["trimmed"] = True
+    trimmed["orig_action"] = trimmed["action"]
+    trimmed["orig_delta"] = trimmed["delta_shares"]
+    trimmed["orig_cost"] = trimmed["estimated_cost_usd"]
     trimmed["action"] = "HOLD"
     trimmed["delta_shares"] = 0.0
     trimmed["estimated_cost_usd"] = 0.0
 
     return pd.concat([closures, allowed, trimmed], ignore_index=True)
+
+
+def _fill_book(book: pd.DataFrame, book_budget: float) -> tuple[list, list]:
+    """Keep trades by conviction (|score - 50|, highest first), skipping any that do not fit."""
+    book = book.copy()
+    book["_conviction"] = (book["combined_score"].fillna(50) - 50).abs()
+    book = book.sort_values("_conviction", ascending=False)  # highest first
+    keep, trim = [], []
+    used = 0.0
+    for idx, row in book.iterrows():
+        if used + row["budget_value"] <= book_budget:
+            keep.append(idx)
+            used += row["budget_value"]
+        else:
+            trim.append(idx)
+    return keep, trim
+
+
+def _budget_values(df: pd.DataFrame) -> pd.Series:
+    """Trade value that spends the rotation budget (packet 57).
+
+    Per book, trades that move it toward its target gross (opens/adds when the book is below
+    target, reductions/closures when above) are exempt up to |target gross - current gross|.
+    """
+    counted = df["trade_value"].copy()
+    price = df["price"].fillna(0)
+    cur, tgt = df["current_shares"], df["target_shares"]
+    conviction = (df["combined_score"].fillna(50) - 50).abs()
+    is_closure = (tgt.abs() < _HOLD_THRESHOLD).astype(int)
+    for sign, book in ((1, "LONG"), (-1, "SHORT")):
+        gap = ((sign * tgt).clip(lower=0) * price).sum() - (
+            (sign * cur).clip(lower=0) * price
+        ).sum()
+        moves_with_gap = tgt.abs() > cur.abs() if gap > 0 else tgt.abs() < cur.abs()
+        eligible = df.index[(df["direction"] == book) & moves_with_gap]
+        order = sorted(eligible, key=lambda i: (-is_closure[i], -conviction[i]))
+        left = abs(gap)
+        for idx in order:
+            exempt = min(counted[idx], left)
+            counted[idx] -= exempt
+            left -= exempt
+    return counted
+
+
+def _turnover_summary(df: pd.DataFrame, nav: float, budget: float) -> dict:
+    trimmed = df["trimmed"]
+    return {
+        "nav_usd": nav,
+        "needed_usd": float(df["trade_value"].sum()),
+        "allowance_usd": float((df["trade_value"] - df["budget_value"]).sum()),
+        "rotation_budget_usd": budget * nav,
+        "kept_usd": float(df.loc[~trimmed, "trade_value"].sum()),
+        "kept_count": int((df["action"] != "HOLD").sum()),
+        "trimmed_usd": float(df.loc[trimmed, "trade_value"].sum()),
+        "trimmed_count": int(trimmed.sum()),
+    }
 
 
 def _prioritise(trades: pd.DataFrame) -> pd.DataFrame:
@@ -215,17 +266,18 @@ def _add_priority_column(trades: pd.DataFrame) -> pd.DataFrame:
 def _write_approvals(conn, trades: pd.DataFrame, score_date: str) -> None:
     now = datetime.now(UTC).isoformat(timespec="seconds")
     rows = []
-    for _, row in trades[trades["action"] != "HOLD"].iterrows():
+    for _, row in trades[(trades["action"] != "HOLD") | trades["trimmed"]].iterrows():
+        trimmed = bool(row["trimmed"])  # kept for the record; nothing downstream reads TRIMMED
         rows.append(
             {
                 "rebalance_date": score_date,
                 "ticker": row["ticker"],
-                "action": row["action"],
+                "action": row["orig_action"] if trimmed else row["action"],
                 "target_shares": row["target_shares"],
                 "current_shares": row["current_shares"],
-                "delta_shares": row["delta_shares"],
-                "estimated_cost_usd": row["estimated_cost_usd"],
-                "status": "PENDING",
+                "delta_shares": row["orig_delta"] if trimmed else row["delta_shares"],
+                "estimated_cost_usd": row["orig_cost"] if trimmed else row["estimated_cost_usd"],
+                "status": "TRIMMED" if trimmed else "PENDING",
                 "created_at": now,
                 "reviewed_at": None,
             }
@@ -233,4 +285,8 @@ def _write_approvals(conn, trades: pd.DataFrame, score_date: str) -> None:
     if rows:
         conn.execute(position_approvals.insert(), rows)
         conn.commit()
-    logger.info("Rebalance: wrote %d approval rows", len(rows))
+    logger.info(
+        "Rebalance: wrote %d approval rows (%d TRIMMED)",
+        len(rows),
+        int(trades["trimmed"].sum()),
+    )

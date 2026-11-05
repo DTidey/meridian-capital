@@ -182,3 +182,41 @@ class TestTailRiskGrossScale:
         book = pd.DataFrame(filled, columns=["ticker", "shares"])
         night2 = generate_trades(book, target, prices, config, tmp_db, _SCORE_DATE, commit=False)
         assert (night2["action"] == "HOLD").all()
+
+
+class TestTurnoverSummary:
+    def test_turnover_summary_printed(self, capsys):
+        """Packet 57 AC7: needed, allowance, rotation budget, kept and trimmed."""
+        rows = [
+            {
+                "ticker": f"L{i}",
+                "shares": 1000 + (500 if i % 2 == 0 else -500),
+                "direction": "LONG",
+                "combined_score": 60.0 + i,
+            }
+            for i in range(10)
+        ]
+        current = pd.DataFrame([(f"L{i}", 1000) for i in range(10)], columns=["ticker", "shares"])
+        target = pd.DataFrame(rows)
+        cands = pd.DataFrame({"ticker": target["ticker"]})
+        trades = generate_trades(
+            current,
+            target,
+            _prices(cands),
+            _config(turnover_budget_pct=0.20),
+            None,
+            _SCORE_DATE,
+            commit=False,
+        )
+        run_portfolio._print_turnover_summary(trades)
+        out = capsys.readouterr().out
+        assert "Turnover" in out
+        assert "needed $500,000 (50.0% NAV)" in out
+        assert "build-up allowance $0 (0.0%)" in out
+        assert "rotation budget $200,000 (20.0%)" in out
+        trimmed = (trades["action"] == "HOLD").sum()
+        assert f"trimmed {trimmed}" in out
+
+    def test_summary_missing_is_silent(self, capsys):
+        run_portfolio._print_turnover_summary(pd.DataFrame())
+        assert capsys.readouterr().out == ""

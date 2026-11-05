@@ -34,6 +34,10 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Turnover budget (packet `57-turnover-build-up`): the 30% per-run budget limits rotation
+  only; moving each book toward its target gross (building from cash, or de-risking) is
+  exempt. Trimmed trades are recorded as `TRIMMED` approvals and Layer 4 prints a turnover
+  summary. On the 2026-11-04 book this keeps 38 of 40 trades instead of 16.
 - Tail risk and earnings cuts (packet `58-layer5-target-cuts`): REDUCE_GROSS is a book-level
   gross scale in Layer 4 (150% -> 120% in CAUTION, 75% in STRESS) instead of a cut to the
   targets of the names trading that night; Layer 5 no longer edits approvals. The earnings

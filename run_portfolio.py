@@ -51,6 +51,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _print_turnover_summary(trades: pd.DataFrame) -> None:
+    """Print what the turnover budget kept and trimmed (packet 57)."""
+    t = trades.attrs.get("turnover")
+    if not t:
+        return
+    nav = t["nav_usd"] or 1.0
+
+    def _pct(usd: float) -> str:
+        return f"{usd / nav:.1%}"
+
+    print(
+        f"\n  Turnover: needed ${t['needed_usd']:,.0f} ({_pct(t['needed_usd'])} NAV) | "
+        f"build-up allowance ${t['allowance_usd']:,.0f} ({_pct(t['allowance_usd'])}) | "
+        f"rotation budget ${t['rotation_budget_usd']:,.0f} ({_pct(t['rotation_budget_usd'])})"
+    )
+    print(
+        f"  Kept {t['kept_count']} trades ${t['kept_usd']:,.0f} ({_pct(t['kept_usd'])}) | "
+        f"trimmed {t['trimmed_count']} ${t['trimmed_usd']:,.0f} ({_pct(t['trimmed_usd'])})"
+    )
+
+
 def _tail_risk_config(conn, score_date: str, config: dict, cache_dir: Path) -> dict:
     """Scale the book's gross targets for the tail-risk regime (packet 58); read-only."""
     regime = evaluate_tail_risk(conn, score_date, config, cache_dir)
@@ -309,6 +330,7 @@ def run(args) -> None:
 
         print("=== Trade List ===")
         _print_trade_list(trades)
+        _print_turnover_summary(trades)
 
         if args.whatif:
             print("\n  (--whatif mode: no changes committed)")
