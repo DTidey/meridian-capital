@@ -192,6 +192,7 @@ def execute_approvals(
         "cur_shares": _current_shares(conn),
         "alpaca_positions": alpaca_positions,
         "open_tickers": open_tickers,
+        "submitted": _submitted_keys(conn, score_date),
         "cache_dir": cache_dir,
     }
     return [
@@ -215,6 +216,7 @@ def _execute_one(conn, client, appr, score_date, config, ctx, dry_run) -> dict:
         log.warning("%s %s skipped: %s", action, ticker, reason)
         return {"ticker": ticker, "action": action, "status": "SKIPPED", "reason": reason}
 
+    ctx["submitted"].add((ticker, action))
     price = ctx["closes"][ticker]
     chunks = _chunk_orders(delta_shares, None, ex_cfg.get("max_adv_pct", 0.02))
     statuses = [
@@ -247,6 +249,8 @@ def _direction_skip_reason(ticker: str, action: str, delta_shares: float) -> str
 
 
 def _skip_reason(client, ticker: str, action: str, ctx: dict, ex_cfg: dict) -> str | None:
+    if (ticker, action) in ctx["submitted"]:
+        return "already_submitted"
     if ticker not in ctx["closes"]:
         return "no_close"
     if ticker in ctx["open_tickers"]:
@@ -307,6 +311,20 @@ def _open_order_tickers(client) -> set[str]:
         # Alpaca caps one listing; a truncated list cannot rule out duplicates.
         raise RuntimeError(f"{len(orders)} open orders: listing may be truncated")
     return {from_alpaca(o.symbol) for o in orders}
+
+
+def _submitted_keys(conn, score_date: str) -> set[tuple[str, str]]:
+    """(ticker, action) already sent for score_date; FAILED counts (a timeout may have reached
+    Alpaca), DRY_RUN does not."""
+    rows = conn.execute(
+        sa.select(execution_orders.c.ticker, execution_orders.c.action)
+        .where(
+            (execution_orders.c.rebalance_date == score_date)
+            & execution_orders.c.status.is_distinct_from("DRY_RUN")
+        )
+        .distinct()
+    ).fetchall()
+    return {(t, a) for t, a in rows}
 
 
 def _closes_on(conn, tickers: list[str], score_date: str) -> dict[str, float]:

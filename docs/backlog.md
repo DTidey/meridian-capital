@@ -247,3 +247,24 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   unaffected: the executor prices from `daily_prices` (`_closes_on`), AVY has a 2026-11-05
   close, and closures are never trimmed. Related to the no-stored-close item above.
 - **Fix:** load prices for the candidates plus the currently held tickers.
+
+## Candidate card status buttons act on every row
+
+- **Raised:** 2026-11-06, packet 62 (question 4, packet 57 open risk).
+- **Problem:** `dashboard/page_research.py` `_set_status` (Approve / Reject / Reset on each
+  candidate card) updates every `position_approvals` row for (date, ticker) with no status
+  filter. "Approve" turns a `TRIMMED` row `APPROVED`; "Reset" turns it `PENDING`, where the bulk
+  execute button picks it up. The same buttons overwrite `REJECTED` (Layer 5) and already
+  submitted rows. Spec 57 calls approving a `TRIMMED` row by hand deliberate, so packet 62 did
+  not block it; packet 62's `already_submitted` skip stops a reset row from trading twice.
+- **Fix:** decide which transitions the cards may make (e.g. only PENDING <-> APPROVED /
+  REJECTED, and TRIMMED -> APPROVED with a confirmation), filter the update on the source
+  status, and show TRIMMED distinctly on the card.
+
+## Research page short-availability veto never fires
+
+- **Raised:** 2026-11-06, packet 62.
+- **Problem:** `_run_veto_checks` check 8 calls `execution.short_check.is_shortable(ticker)`
+  with one argument; the function needs the client, cache dir and days, so it raises and the
+  bare `except` swallows it. The executor's own `not_shortable` check still guards SHORT orders.
+- **Fix:** pass the arguments or drop the check in favour of the executor's.

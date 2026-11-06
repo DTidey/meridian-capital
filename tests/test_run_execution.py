@@ -82,3 +82,21 @@ def test_some_no_close_still_succeeds(monkeypatch, run):
         {"ticker": "MSFT", "action": "BUY", "status": "SUBMITTED"},
     ]
     assert _main(monkeypatch, "--execute") == 0
+
+
+def test_execute_refused_while_lock_held(monkeypatch, run):
+    # Packet 62 (AC8), adversarial: a second click or a rerun while Layer 6 is running.
+    import fcntl
+
+    lock = Path(__file__).parent.parent / "cache" / "execution.lock"
+    lock.parent.mkdir(exist_ok=True)
+    with open(lock, "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert _main(monkeypatch, "--execute") == 1
+    assert "execute" not in run.calls
+
+
+def test_lock_released_after_run(monkeypatch, run):
+    assert _main(monkeypatch, "--execute") == 0
+    assert _main(monkeypatch, "--execute") == 0
+    assert run.calls.count("execute") == 2
