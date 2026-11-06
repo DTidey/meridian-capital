@@ -234,3 +234,16 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   opposite position, or fills only part of it.
 - **Fix:** check Alpaca's behaviour on paper; if rejected, split into a closing order for the
   held quantity and an opening order for the rest.
+
+## Held names outside the candidate list valued at $0 in Layer 4
+
+- **Raised:** 2026-11-06, `run_portfolio.py --whatif --date 2026-11-05` run.
+- **Problem:** `run_portfolio.py` (around line 282) passes only `candidates["ticker"]` to
+  `_load_prices`, so a held name that left the LONG/SHORT candidate list gets price 0.00 and
+  estimated cost $0 in the trade list (AVY: 19 shares, target 0, about $3.7k or 3.7% of NAV).
+  `portfolio/rebalance.py` uses that price for `trade_value` (line 153) and the build-up gap
+  (lines 223-229), so the closure counts as $0 in the turnover summary and the build-up
+  allowance, which can slightly mis-size the allowance and rotation budget. The order itself is
+  unaffected: the executor prices from `daily_prices` (`_closes_on`), AVY has a 2026-11-05
+  close, and closures are never trimmed. Related to the no-stored-close item above.
+- **Fix:** load prices for the candidates plus the currently held tickers.
