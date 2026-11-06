@@ -82,6 +82,12 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Research page execute button (packet `62-execute-button`): it ran `run_execution.py` with
+  no flags (help text, exit 0) and reported "Submitted N orders" with nothing sent. It now runs
+  `--execute --date <latest rebalance>` for that date's PENDING rows only, and reports the exit
+  code, stderr and the orders actually recorded. The executor skips an approval already sent
+  for the same date, ticker and action (`already_submitted`); `run_execution.py` takes
+  `cache/execution.lock`; research-page vetoes are keyed by ticker (they used the date).
 - Short cover to zero (packet `61-short-cover-target-zero`): a held short whose target drops to
   0 now maps to COVER for the full quantity (it was HOLD, so a short leaving the target book
   was never covered); `generate_trades` refuses duplicate tickers in the current book.

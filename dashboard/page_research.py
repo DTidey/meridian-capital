@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess  # nosec B404
-import sys
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +10,16 @@ import sqlalchemy as sa
 import streamlit as st
 
 from analysis.db import analysis_results
+from dashboard.execute_approvals import (
+    ORDER_COLUMNS,
+    approve_pending,
+    latest_rebalance_date,
+    orders_since,
+    outcome,
+    pending_rows,
+    run_execution,
+    stale_pending_count,
+)
 from dashboard.theme import (
     LONG_COL,
     NEUTRAL,
@@ -259,20 +267,25 @@ def _factor_heatmap(engine, score_date: str) -> None:
 
 
 def _approval_section(engine, cfg: dict) -> None:
+    """Approve PENDING rows for the latest rebalance and run Layer 6 for it (packet 62)."""
     with engine.connect() as conn:
-        pending = conn.execute(
-            sa.select(position_approvals).where(position_approvals.c.status == "PENDING")
-        ).fetchall()
+        rebalance_date = latest_rebalance_date(conn)
+        if rebalance_date is None:
+            return
+        pending = pending_rows(conn, rebalance_date)
+        stale = stale_pending_count(conn, rebalance_date)
 
+    if stale:
+        st.info(f"{stale} PENDING row(s) from older rebalances are not executable.")
     if not pending:
         return
 
-    section_header(f"PENDING APPROVAL — {len(pending)} TRADE(S)")
+    section_header(f"PENDING APPROVAL — {len(pending)} TRADE(S) FOR {rebalance_date}")
     st.warning(f"{len(pending)} trades pending approval.")
 
     if st.button("⚡ Execute All Approved Trades", type="primary"):
         vetoes = _run_veto_checks(engine, cfg, pending)
-        passed = [p for p in pending if p[1] not in vetoes]
+        passed = [p for p in pending if p.ticker not in vetoes]
 
         if vetoes:
             for ticker, reason in vetoes.items():
@@ -282,34 +295,38 @@ def _approval_section(engine, cfg: dict) -> None:
                 )
 
         if passed:
-            with engine.begin() as conn:
-                for row in passed:
-                    conn.execute(
-                        position_approvals.update()
-                        .where(
-                            position_approvals.c.id == row[0],
-                            position_approvals.c.status == "PENDING",
-                        )
-                        .values(status="APPROVED")
-                    )
-            with st.spinner("Submitting orders to Alpaca…"):
-                root = Path(__file__).parent.parent
-                result = subprocess.run(  # nosec B603
-                    [sys.executable, str(root / "run_execution.py")], capture_output=True, text=True
-                )
-            if result.returncode == 0:
-                st.success(f"Submitted {len(passed)} orders.")
-            else:
-                st.error(f"Execution error: {result.stderr[-500:]}")
+            _approve_and_execute(engine, rebalance_date, passed)
         else:
             st.error("All trades vetoed — none submitted.")
+
+
+def _approve_and_execute(engine, rebalance_date: str, passed) -> None:
+    since = datetime.now(UTC).isoformat()
+    with engine.begin() as conn:
+        approve_pending(conn, [row.id for row in passed])
+    with st.spinner("Submitting orders to Alpaca…"):
+        result = run_execution(rebalance_date)
+    with engine.connect() as conn:
+        orders = orders_since(conn, rebalance_date, since)
+    out = outcome(result.returncode, orders, [row.ticker for row in passed])
+    getattr(st, out.level)(out.message)
+    if out.level == "error":
+        st.code(result.stderr[-2000:] or "(no stderr)")
+        st.caption(
+            "Approved rows stay APPROVED. Rerun safely with "
+            f"`python run_execution.py --execute --date {rebalance_date}`."
+        )
+    if orders:
+        st.dataframe(pd.DataFrame(orders, columns=ORDER_COLUMNS), use_container_width=True)
+    with st.expander("Layer 6 log"):
+        st.code(result.stdout[-2000:] or "(no stdout)")
+        st.code(result.stderr[-2000:] or "(no stderr)")
 
 
 def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
     """Return {ticker: veto_reason} for trades that fail any of the 8 checks."""
     from datetime import date as _date
     from datetime import datetime as _dt
-    from pathlib import Path
 
     import pytz
 
@@ -318,7 +335,7 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
     # Check 1 — Halt lock
     if (Path("cache") / "halt.lock").exists():
         for row in pending:
-            vetoes[row[1]] = "Halt lock active"
+            vetoes[row.ticker] = "Halt lock active"
         return vetoes
 
     # Check 2 — Market hours
@@ -326,7 +343,7 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
     now = _dt.now(et)
     if now.weekday() >= 5 or not ((9, 30) <= (now.hour, now.minute) <= (16, 0)):
         for row in pending:
-            vetoes[row[1]] = "Market closed"
+            vetoes[row.ticker] = "Market closed"
         return vetoes
 
     today = _date.today().isoformat()
@@ -344,7 +361,7 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
 
         if "CLOSE_ALL" in severe_types or "KILL_SWITCH" in severe_types:
             for row in pending:
-                vetoes[row[1]] = "Circuit breaker: CLOSE_ALL / KILL_SWITCH active"
+                vetoes[row.ticker] = "Circuit breaker: CLOSE_ALL / KILL_SWITCH active"
             return vetoes
 
         # Check 4 — Kill switch (included above)
@@ -357,7 +374,7 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
         max_gross = float(cb_cfg.get("max_gross", 1.65))
         if gross >= max_gross:
             for row in pending:
-                vetoes[row[1]] = f"Gross exposure {gross:.2%} ≥ limit {max_gross:.2%}"
+                vetoes[row.ticker] = f"Gross exposure {gross:.2%} ≥ limit {max_gross:.2%}"
 
         # Check 6 — Net exposure
         net = sum(r[0] if r[1] == "LONG" else -r[0] for r in pos_rows)
@@ -366,8 +383,8 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
         net_max = float(pt_cfg.get("net_max", 0.15))
         if not (net_min <= net <= net_max):
             for row in pending:
-                if row[1] not in vetoes:
-                    vetoes[row[1]] = (
+                if row.ticker not in vetoes:
+                    vetoes[row.ticker] = (
                         f"Net exposure {net:.2%} out of bounds [{net_min:.2%}, {net_max:.2%}]"
                     )
 
@@ -376,7 +393,7 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
         from data.db import earnings_calendar as ec
 
         for row in pending:
-            ticker = row[1]
+            ticker = row.ticker
             earn = conn.execute(
                 sa.select(ec.c.earnings_date).where(
                     ec.c.ticker == ticker,
@@ -391,8 +408,8 @@ def _run_veto_checks(engine, cfg: dict, pending) -> dict[str, str]:
     from execution.short_check import is_shortable
 
     for row in pending:
-        ticker = row[1]
-        action = row[3]  # action column
+        ticker = row.ticker
+        action = row.action
         if action in ("SHORT", "COVER") and ticker not in vetoes:
             try:
                 if not is_shortable(ticker):

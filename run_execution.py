@@ -14,8 +14,10 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import logging
 import sys
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -73,6 +75,56 @@ def _print_sync(summary: dict) -> None:
         f"Book sync: {summary['positions']} position(s); added {summary['added'] or '-'}, "
         f"removed {summary['removed'] or '-'}, changed {summary['changed'] or '-'}"
     )
+
+
+@contextmanager
+def _exclusive(lock_path: Path):
+    """Yield True while this process holds lock_path, False if another process holds it."""
+    with open(lock_path, "a") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _execute(engine, client, score_date: str, config: dict, cache_dir: Path, dry_run: bool) -> int:
+    from execution.book_sync import sync_book
+    from execution.broker import market_is_open
+    from execution.executor import execute_approvals
+    from execution.order_manager import OrderManager
+    from execution.order_sync import sync_orders
+
+    log = logging.getLogger(__name__)
+    with engine.connect() as conn:
+        # 1. Order sync (record fills since the last run), then book sync
+        #    (dry-run: book sync logs only, no DB writes)
+        print(f"Order sync: {sync_orders(conn, client)}")
+        _print_sync(sync_book(conn, client, score_date, dry_run=dry_run))
+
+        # 2. Market open check (warn but don't block)
+        market_is_open(client)
+
+        # 3. Execute
+        with OrderManager(client):
+            results = execute_approvals(
+                conn, client, score_date, config, cache_dir, dry_run=dry_run
+            )
+
+        print(f"\nExecution summary for {score_date}:")
+        _print_summary(results)
+        if results and all(r.get("reason") == "no_close" for r in results):
+            log.error("No close stored for %s: no orders placed (wrong --date?)", score_date)
+            return 1
+
+        # 4. Record fills: the broker is the book of record
+        if not dry_run:
+            _print_sync(sync_book(conn, client, score_date))
+    return 0
 
 
 def main() -> int:
@@ -144,7 +196,7 @@ def main() -> int:
     # All other modes need Alpaca client
     # -----------------------------------------------------------------------
     try:
-        from execution.broker import get_account, get_client, market_is_open
+        from execution.broker import get_account, get_client
 
         client = get_client()
         acct = get_account(client)
@@ -187,36 +239,14 @@ def main() -> int:
         parser.print_help()
         return 0
 
-    dry_run = args.dry_run
-
-    with engine.connect() as conn:
-        # 1. Order sync (record fills since the last run), then book sync
-        #    (dry-run: book sync logs only, no DB writes)
-        print(f"Order sync: {sync_orders(conn, client)}")
-        _print_sync(sync_book(conn, client, score_date, dry_run=dry_run))
-
-        # 2. Market open check (warn but don't block)
-        market_is_open(client)
-
-        # 3. Execute
-        from execution.executor import execute_approvals
-        from execution.order_manager import OrderManager
-
-        with OrderManager(client):
-            results = execute_approvals(
-                conn, client, score_date, config, cache_dir, dry_run=dry_run
+    # One execution run at a time: a second click or rerun must not race the duplicate guard.
+    with _exclusive(cache_dir / "execution.lock") as held:
+        if not held:
+            log.error(
+                "Another execution run holds %s: not submitting", cache_dir / "execution.lock"
             )
-
-        print(f"\nExecution summary for {score_date}:")
-        _print_summary(results)
-        if results and all(r.get("reason") == "no_close" for r in results):
-            log.error("No close stored for %s: no orders placed (wrong --date?)", score_date)
             return 1
-
-        # 4. Record fills: the broker is the book of record
-        if not dry_run:
-            _print_sync(sync_book(conn, client, score_date))
-    return 0
+        return _execute(engine, client, score_date, config, cache_dir, args.dry_run)
 
 
 if __name__ == "__main__":

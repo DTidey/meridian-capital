@@ -495,3 +495,71 @@ class TestLimitBand:
             execute_approvals(conn, client, _DATE, _band_config(0.2), tmp_path, dry_run=True)
         client.get_all_positions.assert_not_called()
         client.get_orders.assert_not_called()
+
+
+def _prior_order(conn, ticker, status, action="BUY"):
+    conn.execute(
+        execution_orders.insert().values(
+            rebalance_date=_DATE,
+            ticker=ticker,
+            action=action,
+            ordered_shares=10.0,
+            filled_shares=0.0,
+            status=status,
+            order_id="earlier",
+            created_at=f"{_DATE}T22:00:00",
+        )
+    )
+    conn.commit()
+
+
+class TestAlreadySubmitted:
+    """Packet 62 (AC7, AC9): one approval key is submitted at most once per date."""
+
+    @pytest.mark.parametrize("status", ["PENDING", "PARTIAL", "FILLED", "CANCELLED", "FAILED"])
+    def test_prior_order_blocks_resubmission(self, conn, tmp_path, status):
+        # Adversarial: the earlier order filled, so it is no longer in Alpaca's open list.
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        _prior_order(conn, "AAPL", status)
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["reason"] == "already_submitted"
+        client.submit_order.assert_not_called()
+        assert len(_order_rows(conn, "AAPL")) == 1
+
+    def test_second_run_same_date_submits_nothing(self, conn, tmp_path):
+        # Adversarial: button click then a manual Layer 6 rerun for the same date.
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        client = _filled_client()
+        execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["reason"] == "already_submitted"
+        assert client.submit_order.call_count == 1
+
+    def test_duplicate_approvals_in_one_run_submit_once(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0, close=None)
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert [r.get("reason") for r in results] == [None, "already_submitted"]
+        assert client.submit_order.call_count == 1
+
+    def test_dry_run_rows_do_not_block(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        _prior_order(conn, "AAPL", "DRY_RUN")
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] == "SUBMITTED"
+
+    def test_other_action_or_date_does_not_block(self, conn, tmp_path):
+        _insert_approval(conn, "AAPL", action="BUY", target=10.0, current=0.0)
+        _prior_order(conn, "AAPL", "FILLED", action="SELL")
+        conn.execute(
+            execution_orders.insert().values(
+                rebalance_date="2026-05-05", ticker="AAPL", action="BUY", status="FILLED"
+            )
+        )
+        conn.commit()
+        client = _filled_client()
+        results = execute_approvals(conn, client, _DATE, _base_config(), tmp_path, dry_run=False)
+        assert results[0]["status"] == "SUBMITTED"
