@@ -8,6 +8,7 @@ import pandas as pd
 import sqlalchemy as sa
 
 from data.db import earnings_calendar
+from portfolio.book_selection import select_book
 from portfolio.book_targets import book_targets
 from portfolio.transaction_costs import compute_adv
 
@@ -24,6 +25,7 @@ def optimise(
     config: dict,
     score_date: str,
     conn: sa.engine.Connection,
+    current: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Conviction-tilt optimisation.
 
@@ -35,6 +37,7 @@ def optimise(
         config: Full application config.
         score_date: ISO date string.
         conn: DB connection (for earnings lookup).
+        current: Broker positions (ticker, shares) for the incumbent buffer; None = no book.
 
     Returns:
         DataFrame with columns [ticker, direction, weight, shares, sector,
@@ -42,8 +45,6 @@ def optimise(
     """
     pcfg = config.get("portfolio", {})
     nav = float(pcfg.get("nav_usd", 10_000_000))
-    num_longs = int(pcfg.get("num_longs", 20))
-    num_shorts = int(pcfg.get("num_shorts", 20))
     long_gross, short_gross = book_targets(config)
     max_pos = float(pcfg.get("max_position_pct", 0.05))
     min_pos = float(pcfg.get("min_position_pct", 0.005))
@@ -57,18 +58,9 @@ def optimise(
     top5_mult = float(tilt_cfg.get("top5_multiplier", 1.50))
     top10_mult = float(tilt_cfg.get("top10_multiplier", 1.25))
 
-    longs = (
-        candidates[candidates["direction"] == "LONG"]
-        .sort_values("combined_score", ascending=False)
-        .head(num_longs)
-        .copy()
-    )
-    shorts = (
-        candidates[candidates["direction"] == "SHORT"]
-        .sort_values("combined_score", ascending=True)
-        .head(num_shorts)
-        .copy()
-    )
+    book = select_book(candidates, current, config)
+    longs = book[book["direction"] == "LONG"].copy()
+    shorts = book[book["direction"] == "SHORT"].copy()
 
     if longs.empty and shorts.empty:
         logger.warning("Optimizer: no candidates")

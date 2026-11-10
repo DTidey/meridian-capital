@@ -406,3 +406,76 @@ class TestAdjustBeta:
         with caplog.at_level("WARNING"):
             out = _adjust_beta(df, betas, 0.15, 0.80, 0.05, 0.005, 0.05)
         assert abs(_net_beta(out, betas)) <= 0.15 + 1e-6 or "net beta" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Packet 64: incumbent buffer (AC3, AC5)
+# ---------------------------------------------------------------------------
+
+_BUFFER_CFG = {"portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 15}}
+
+
+def test_select_book_used_and_gross_preserved(tmp_db, monkeypatch):
+    """Book membership comes from select_book; held L07 (rank 13) stays, books sum to gross."""
+    import portfolio.optimizer as opt
+
+    calls = []
+    real = opt.select_book
+    monkeypatch.setattr(opt, "select_book", lambda *a: calls.append(a) or real(*a))
+    candidates = _build_candidates()
+    current = pd.DataFrame({"ticker": ["L07"], "shares": [10.0]})
+    result = optimise(
+        candidates,
+        _build_prices(candidates),
+        _build_betas(candidates),
+        _BUFFER_CFG,
+        _SCORE_DATE,
+        tmp_db,
+        current,
+    )
+    assert len(calls) == 1
+    longs = result[result["direction"] == "LONG"]
+    shorts = result[result["direction"] == "SHORT"]
+    assert "L07" in longs["ticker"].tolist() and len(longs) == 10
+    assert "L10" not in longs["ticker"].tolist()  # rank 10 gives up its slot
+    assert longs["weight"].sum() == pytest.approx(0.80, abs=1e-6)
+    assert shorts["weight"].abs().sum() == pytest.approx(0.70, abs=1e-6)
+
+
+def test_no_current_matches_top_n(tmp_db):
+    """AC3: with no book (or exit rank = num_*) the output is today's top-N output."""
+    candidates = _build_candidates()
+    args = (candidates, _build_prices(candidates), _build_betas(candidates))
+    today = optimise(*args, _CONFIG, _SCORE_DATE, tmp_db)
+    current = pd.DataFrame({"ticker": ["L07"], "shares": [10.0]})
+    same_rank = optimise(*args, _CONFIG, _SCORE_DATE, tmp_db, current)
+    no_book = optimise(*args, _BUFFER_CFG, _SCORE_DATE, tmp_db, None)
+    for other in (same_rank, no_book):
+        pd.testing.assert_frame_equal(today, other)
+
+
+def test_buffered_name_gets_no_tilt(tmp_db):
+    """A buffered incumbent at the bottom of the book never gets the top-5%/10% multiplier."""
+    cfg = {
+        "portfolio": {
+            **_BUFFER_CFG["portfolio"],
+            "max_beta": 5.0,
+            "max_sector_pct": 1.0,
+            "max_sector_net_pct": 1.0,
+        }
+    }
+    candidates = _build_candidates()
+    current = pd.DataFrame({"ticker": ["L06"], "shares": [10.0]})
+    result = optimise(
+        candidates,
+        _build_prices(candidates),
+        _build_betas(candidates),
+        cfg,
+        _SCORE_DATE,
+        tmp_db,
+        current,
+    )
+    longs = result[result["direction"] == "LONG"].set_index("ticker")["weight"]
+    assert "L06" in longs.index
+    assert longs["L06"] == pytest.approx(longs.min())
+    assert longs["L06"] < longs.max()

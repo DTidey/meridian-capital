@@ -189,3 +189,35 @@ def test_cov_keeps_days_with_gaps(tmp_db):
     sigma = _build_cov(["AAA", "BBB", "GAP"], "2026-03-31", 80, tmp_db)
     assert sigma.shape == (3, 3)
     assert np.isfinite(sigma).all()
+
+
+def test_select_book_used(tmp_db, monkeypatch):
+    """Packet 64 AC5: MVO selects through select_book; held L6 (rank 7) is kept."""
+    import portfolio.mvo_optimizer as mvo
+
+    calls = []
+    real = mvo.select_book
+    monkeypatch.setattr(mvo, "select_book", lambda *a: calls.append(a) or real(*a))
+    cands = _make_candidates(n_long=8, n_short=8)
+    tickers = cands["ticker"].tolist()
+    _seed_prices(tmp_db, tickers + ["SPY"])
+    prices = _make_prices_dict(tickers)
+    betas = pd.Series(dict.fromkeys(tickers, 1.0))
+    config = {"portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 8}}
+    current = pd.DataFrame({"ticker": ["L6", "S7"], "shares": [10.0, -10.0]})
+
+    result = optimise(cands, prices, betas, config, "2024-03-30", tmp_db, current)
+    assert calls, "MVO did not call select_book"
+    longs = result[result["direction"] == "LONG"]["ticker"].tolist()
+    shorts = result[result["direction"] == "SHORT"]["ticker"].tolist()
+    assert sorted(longs) == ["L0", "L1", "L2", "L3", "L6"]
+    assert sorted(shorts) == ["S0", "S1", "S2", "S3", "S7"]
+    assert result[result["direction"] == "LONG"]["weight"].sum() == pytest.approx(0.80, abs=0.05)
+
+
+def test_bad_exit_rank_raises_before_fallback(tmp_db):
+    """Packet 64 AC10: a bad exit rank raises, not a silent conviction-tilt fallback."""
+    cands = _make_candidates()
+    config = {"portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 3}}
+    with pytest.raises(ValueError, match="incumbent_exit_rank"):
+        optimise(cands, {}, pd.Series(dtype=float), config, "2024-03-30", tmp_db)

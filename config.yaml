@@ -166,6 +166,7 @@ portfolio:
   gross_exposure:         1.50
   target_long_gross:      0.80    # long + short = gross_exposure; net within both net bounds
   target_short_gross:     0.70
+  incumbent_exit_rank:    35      # keep a held name while its side rank <= this (replay, spec 64)
   net_exposure_min:       0.00
   net_exposure_max:       0.10
   max_position_pct:       0.05

@@ -9,6 +9,7 @@ from scipy.optimize import minimize
 
 from data.db import daily_prices
 from portfolio import optimizer as tilt
+from portfolio.book_selection import exit_rank, select_book
 from portfolio.book_targets import book_targets
 from portfolio.transaction_costs import estimate_cost
 
@@ -24,13 +25,15 @@ def optimise(
     config: dict,
     score_date: str,
     conn: sa.engine.Connection,
+    current: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """MVO-optimised target portfolio, falling back to conviction-tilt on failure."""
+    exit_rank(config)  # a bad config raises here, not inside the fallback below
     try:
-        return _mvo(candidates, prices, betas, config, score_date, conn)
+        return _mvo(candidates, prices, betas, config, score_date, conn, current)
     except Exception as exc:
         logger.warning("MVO did not converge (%s) — falling back to conviction-tilt", exc)
-        return tilt.optimise(candidates, prices, betas, config, score_date, conn)
+        return tilt.optimise(candidates, prices, betas, config, score_date, conn, current)
 
 
 def _mvo(
@@ -40,6 +43,7 @@ def _mvo(
     config: dict,
     score_date: str,
     conn: sa.engine.Connection,
+    current: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     pcfg = config.get("portfolio", {})
     mvo_cfg = pcfg.get("mvo", {})
@@ -58,21 +62,10 @@ def _mvo(
     ret_map = mvo_cfg.get("score_to_return_map", {})
     ret_100 = float(ret_map.get("score_100", 0.15))
     ret_0 = float(ret_map.get("score_0", -0.15))
-    num_longs = int(pcfg.get("num_longs", 20))
-    num_shorts = int(pcfg.get("num_shorts", 20))
 
-    longs = (
-        candidates[candidates["direction"] == "LONG"]
-        .sort_values("combined_score", ascending=False)
-        .head(num_longs)
-        .copy()
-    )
-    shorts = (
-        candidates[candidates["direction"] == "SHORT"]
-        .sort_values("combined_score", ascending=True)
-        .head(num_shorts)
-        .copy()
-    )
+    book = select_book(candidates, current, config)
+    longs = book[book["direction"] == "LONG"].copy()
+    shorts = book[book["direction"] == "SHORT"].copy()
 
     if longs.empty or shorts.empty:
         raise ValueError("Insufficient candidates for MVO")
@@ -88,7 +81,7 @@ def _mvo(
     mu_gross = ret_0 + (scores / 100.0) * (ret_100 - ret_0)
 
     # Adjust for transaction costs (use conviction weights as proxy for position size)
-    tilt_result = tilt.optimise(candidates, prices, betas, config, score_date, conn)
+    tilt_result = tilt.optimise(candidates, prices, betas, config, score_date, conn, current)
     mu = _adjust_mu_for_costs(mu_gross, tickers, tilt_result, prices, nav, config)
 
     # Covariance matrix

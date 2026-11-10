@@ -457,3 +457,45 @@ class TestWholeShareTargets:
         target = _target_df([{"ticker": "AAPL", "shares": 0.4}])
         row = _run(current, target, conn=tmp_db).iloc[0]
         assert (row["action"], row["target_shares"], row["delta_shares"]) == ("SELL", 0, -10)
+
+
+# ---------------------------------------------------------------------------
+# Packet 64: a name beyond the exit rank is closed in full (AC2)
+# ---------------------------------------------------------------------------
+
+
+def test_buffer_exit_generates_full_closure(tmp_db):
+    from portfolio.optimizer import optimise
+
+    cands = pd.DataFrame(
+        {
+            "ticker": [f"L{i}" for i in range(1, 11)] + [f"S{i}" for i in range(1, 11)],
+            "direction": ["LONG"] * 10 + ["SHORT"] * 10,
+            "combined_score": [100.0 - i for i in range(1, 11)] + [float(i) for i in range(1, 11)],
+            "sector": "Technology",
+        }
+    )
+    config = {
+        "portfolio": {
+            **_CONFIG["portfolio"],
+            "num_longs": 3,
+            "num_shorts": 3,
+            "incumbent_exit_rank": 5,
+            "max_position_pct": 0.5,
+            "max_sector_pct": 1.0,
+            "max_sector_net_pct": 1.0,
+            "max_beta": 5.0,
+            "adv_max_pct": 1.0,
+        }
+    }
+    # L4 (rank 4) is kept by the buffer; L7 (rank 7) and S9 (rank 9) are beyond rank 5
+    current = _current_df([("L4", 40.0), ("L7", 25.0), ("S9", -30.0)])
+    prices = _prices_for(*cands["ticker"])
+    target = optimise(cands, prices, pd.Series(dtype=float), config, "2026-03-01", tmp_db, current)
+    assert "L4" in target["ticker"].tolist()
+    trades = _run(current, target, prices=prices, config=config).set_index("ticker")
+    assert trades.loc["L7", "action"] == "SELL"
+    assert trades.loc["L7", "target_shares"] == 0
+    assert trades.loc["L7", "delta_shares"] == -25.0
+    assert trades.loc["S9", "action"] == "COVER"
+    assert trades.loc["S9", "delta_shares"] == 30.0
