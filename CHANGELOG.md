@@ -82,6 +82,11 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Held prices in Layer 4 (packet `63-held-prices-layer4`): a held name that left the LONG/SHORT
+  candidate list was priced at 0.00 with a $0 cost estimate, so its trade counted as $0 in the
+  turnover budget and the build-up gap. Layer 4 now loads prices for candidates plus held
+  tickers (the optimiser universe is unchanged) and warns about any trade-list ticker still
+  without a price.
 - Research page execute button (packet `62-execute-button`): it ran `run_execution.py` with
   no flags (help text, exit 0) and reported "Submitted N orders" with nothing sent. It now runs
   `--execute --date <latest rebalance>` for that date's PENDING rows only, and reports the exit

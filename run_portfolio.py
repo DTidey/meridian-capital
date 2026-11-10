@@ -136,6 +136,13 @@ def _load_candidates(conn, score_date: str) -> pd.DataFrame:
     return df
 
 
+def _price_tickers(candidates: pd.DataFrame, current: pd.DataFrame) -> list[str]:
+    """Candidate tickers, then held tickers outside the candidate list (packet 63)."""
+    tickers = candidates["ticker"].tolist()
+    held = set(current["ticker"]) if not current.empty and "ticker" in current.columns else set()
+    return tickers + sorted(held - set(tickers))
+
+
 def _load_prices(
     conn, tickers: list[str], score_date: str, lookback: int = 130
 ) -> dict[str, pd.DataFrame]:
@@ -278,11 +285,12 @@ def run(args) -> None:
             sys.exit(0)
         logger.info("Loaded %d candidates", len(candidates))
 
-        # 2. Prices and betas
+        # 2. Prices (candidates plus held names, for the trade list) and betas (candidates)
         all_tickers = candidates["ticker"].tolist()
+        current = load_positions(conn)
         prices = _load_prices(
             conn,
-            all_tickers,
+            _price_tickers(candidates, current),
             score_date,
             lookback=config.get("portfolio", {}).get("mvo", {}).get("cov_lookback_days", 130) + 10,
         )
@@ -324,7 +332,6 @@ def run(args) -> None:
         print()
 
         # 6. Trade list
-        current = load_positions(conn)
         commit = not args.whatif
         trades = generate_trades(current, target, prices, config, conn, score_date, commit=commit)
 
