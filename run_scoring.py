@@ -140,15 +140,18 @@ def _write_factor_scores(conn, scored: pd.DataFrame, score_date: str) -> None:
         conn.commit()
 
 
-def _write_regime_state(conn, score_date: str, vix_close, regime: str) -> None:
+def _write_regime_state(conn, score_date: str, state: dict) -> None:
     stmt = insert_or_replace(conn, regime_state)
     conn.execute(
         stmt,
         [
             {
                 "score_date": score_date,
-                "vix_close": vix_close,
-                "regime": regime,
+                "vix_close": state["vix_close"],
+                "regime": state["regime"],
+                "vix_smoothed": state["vix_smoothed"],
+                "high_vol_share": state["high_vol_share"],
+                "low_vol_share": state["low_vol_share"],
                 "computed_at": pd.Timestamp.now("UTC").isoformat(),
             }
         ],
@@ -227,6 +230,7 @@ def main() -> None:
     logger = logging.getLogger("run_scoring")
 
     scoring_cfg = config.get("scoring", {})
+    regime_mod.validate(scoring_cfg.get("regime_weights", {}) or {})  # bad bands stop here
 
     # Score date
     score_date = args.date or (scoring_cfg.get("score_date") or date.today().isoformat())
@@ -271,16 +275,19 @@ def main() -> None:
     # 2. Resolve regime
     # ---------------------------------------------------------------------------
     logger.info("[2/7] Resolving regime")
-    regime, vix_close = regime_mod.resolve_regime(data["vix"])
-    logger.info("Regime: %s (VIX: %s)", regime, vix_close)
-
-    base_weights = scoring_cfg.get("factor_weights", {})
-    if scoring_cfg.get("regime_conditional_weights", True):
-        weights = regime_mod.adjust_weights(
-            base_weights, regime, scoring_cfg.get("regime_weights", {})
-        )
-    else:
-        weights = base_weights
+    state = regime_mod.resolve(
+        data["vix"], scoring_cfg.get("factor_weights", {}), scoring_cfg, score_date
+    )
+    regime, vix_close, weights = state["regime"], state["vix_close"], state["weights"]
+    logger.info(
+        "Regime: %s (VIX %s, %s-day mean %s; high_vol share %.2f, low_vol share %.2f)",
+        regime,
+        vix_close,
+        regime_mod.smoothing_days(scoring_cfg.get("regime_weights", {}) or {}),
+        state["vix_smoothed"],
+        state["high_vol_share"],
+        state["low_vol_share"],
+    )
 
     # ---------------------------------------------------------------------------
     # 3. Compute all 8 factor scores
@@ -311,7 +318,7 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     logger.info("[5/7] Writing scores to database")
     _write_factor_scores(conn, scored, score_date)
-    _write_regime_state(conn, score_date, vix_close, regime)
+    _write_regime_state(conn, score_date, state)
 
     # ---------------------------------------------------------------------------
     # 6. Crowding detection

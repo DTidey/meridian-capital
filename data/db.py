@@ -287,6 +287,8 @@ def initialise_schema(engine: sa.engine.Engine) -> None:
         _add_column_if_missing(conn, "earnings_transcripts", "source_accession_no", "TEXT")
         _add_column_if_missing(conn, "sec_filings", "transcript_checked", "BOOLEAN DEFAULT FALSE")
         _add_column_if_missing(conn, "institutional_holdings", "filed_date", "TEXT")
+        for column in ("vix_smoothed", "high_vol_share", "low_vol_share"):
+            _add_column_if_missing(conn, "regime_state", column, "FLOAT")
         _widen_volume_column(conn)
         _migrate_insider_unique_key(conn)
     logger.debug("Schema initialised")
