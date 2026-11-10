@@ -182,17 +182,6 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** do not merge a pandas 4.x bump until a yfinance release no longer uses `inplace`;
   then drop the filter in `data/market_data.py`.
 
-## Back-and-forth trading across consecutive nights
-
-- **Raised:** 2026-11-04, nightly run review (2026-10-30 to 2026-11-03).
-- **Problem:** some names are bought and then fully exited, or covered and re-shorted, on
-  consecutive nights: CSGP +4 (10-30), +60 to 122 (11-02), then sold to 0 (11-03); ALLE +3
-  (11-02), sold to 0 (11-03); CLX covered (10-30, 11-02), then shorted again (11-03). Costs are
-  small (a few dollars per trade) but the churn points to unstable signals or no hysteresis
-  (holding a position until the signal moves by more than a set margin) in Layer 4.
-- **Fix:** measure turnover and round-trips over a few weeks first; if they persist, add a
-  minimum holding period or a hysteresis band on entry and exit ranks in Layer 4.
-
 ## Circuit-breaker SIZE_DOWN scales only tonight's targets
 
 - **Raised:** 2026-11-05, packet 58 (out of scope there).
