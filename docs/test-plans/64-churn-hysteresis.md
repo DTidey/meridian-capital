@@ -6,7 +6,8 @@ Status: Planned (spec-only packet; the Tester role fills in results with the imp
 
 ## What will change
 - New `portfolio/book_selection.py` (`select_book`), used by `portfolio/optimizer.py` and
-  `portfolio/mvo_optimizer.py`; `run_portfolio.py` loads positions before optimising.
+  `portfolio/mvo_optimizer.py`; `run_portfolio.py` passes the positions it
+  already loads before pricing (packet 63) to the optimiser.
 - `factors/regime_weights.py`: smoothed VIX, regime shares, weight blend, label.
 - `factors/loader.py` `_load_vix`: 14-calendar-day window.
 - `run_scoring.py` and `data/db.py`: three new nullable `regime_state` columns.
@@ -45,8 +46,8 @@ Status: Planned (spec-only packet; the Tester role fills in results with the imp
     (`TestSelectBook::test_oversized_side_capped`)
   - Fewer candidates than `num_*`: all selected, incumbents first
     (`TestSelectBook::test_short_candidate_list`)
-  - Name dropped from the universe: closed, budget value 0 without a price
-    (`TestSelectBook::test_missing_score_row_closed`)
+  - Name dropped from the universe: closed; valued at its stored close (packet 63), budget
+    value 0 only when no close is stored (`TestSelectBook::test_missing_score_row_closed`)
   - VIX gap and single close in window (`TestBlend::test_single_close_with_warning`)
   - Backfill gives the same weights as the first run (`TestBlend::test_stateless_rerun`)
 - Additional adversarial cases (planned):

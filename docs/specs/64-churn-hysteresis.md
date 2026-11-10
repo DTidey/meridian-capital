@@ -104,7 +104,8 @@ Out of scope / non-goals:
 - Minimum holding period (see Design 4: rejected for now).
 - Buffering names that leave the candidate band (NEUTRAL). They are closed as today; see
   Design 1 for why and for the follow-up option.
-- Held-name prices outside the candidate list (packet 63, in progress on another branch).
+- Held-name prices outside the candidate list: done in packet 63 (merged, PR #131); held
+  non-candidates now get prices in Layer 4.
 - Smoothing factor scores or `combined_score` over time (EMA of scores): a wider change to
   every factor's meaning; revisit only if the replay shows the buffer and regime smoothing
   are not enough.
@@ -146,8 +147,8 @@ Rules for (a):
   Layer 3 computes no side-band `combined_score` for NEUTRAL names, so there is no rank to
   compare. Under regime smoothing, the band exits caused by the regime switch (YUM, CRL)
   should mostly not happen. Follow-up option if the replay shows many band exits: a wider
-  exit band on the composite (e.g. keep a long while composite >= 70), which needs packet 63
-  for prices.
+  exit band on the composite (e.g. keep a long while composite >= 70); the prices it needs
+  are in place since packet 63.
 - Flips side (held long, now a SHORT candidate, or the reverse): not an incumbent on its old
   side; target 0 on that side. It can enter the other side only by the normal top-N rule.
 - Buffered names are ordinary book members after selection. The equal-weight base, conviction
@@ -279,7 +280,8 @@ portfolio:
   DataFrame` with the selected LONG and SHORT rows plus `side_rank` and `incumbent` (bool).
   Used by `portfolio/optimizer.py` and `portfolio/mvo_optimizer.py` in place of `.head(num)`.
 - `optimise(...)` gains a `current: pd.DataFrame` argument (broker positions);
-  `run_portfolio.py` loads positions before optimising.
+  `run_portfolio.py` already loads positions before prices and the optimiser (packet 63) and
+  passes that frame through.
 - `portfolio/rebalance.py` `_budget_values`: rotation credit per book.
 - `portfolio/churn_replay.py` (new): `python -m portfolio.churn_replay --since 2026-10-27
   [--exit-rank 20,30,35,40] [--smoothing-days 5]`, read-only.
@@ -367,8 +369,9 @@ regime_label(0.248, 0.0)    # "NORMAL"
 - Halt or circuit breaker active: Layer 5 decides as today; the buffer never blocks a risk
   closure.
 - Name dropped from the universe (no `combined_scores` row): out of band, closed (AC2). Its
-  closure value depends on packet 63 (held-name prices); with price 0 it charges 0 budget and
-  gives 0 rotation credit.
+  closure is valued at its stored close (packet 63), so it charges the budget and earns
+  rotation credit at that value. With no stored close, packet 63 logs a WARNING and the price
+  is 0, so it charges 0 budget and gives 0 rotation credit.
 - VIX gap (holiday, missed ingest): mean of the closes found in the window; one close only is
   allowed with a warning; none gives NORMAL.
 - Backfill or rerun of an old score date: same weights as the first run (stateless, AC6).
@@ -424,7 +427,7 @@ regime_label(0.248, 0.0)    # "NORMAL"
   wrong, the 11-05 switch looks larger than it was; check against another source. The 5-day
   mean limits the damage either way.
 - Should the buffer also cover band exits (keep a long while composite >= 70)? Deferred until
-  the replay counts band exits under regime smoothing; needs packet 63.
+  the replay counts band exits under regime smoothing (held-name prices exist since packet 63).
 - Should the low_vol band be narrower than 12-18? VIX sat at 15-16 for most of October; the
   replay should report low_vol share changes too.
 
