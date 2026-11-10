@@ -91,6 +91,7 @@ def generate_trades(
     trades = pd.DataFrame(rows)
     if trades.empty:
         return trades
+    _warn_missing_prices(trades)
 
     trades = _apply_turnover_budget(trades, nav, turnover)
     summary = _turnover_summary(trades, nav, turnover)
@@ -141,6 +142,17 @@ def map_action(cur: float, tgt: float, delta: float) -> str:
     if tgt < 0 and cur < 0 and delta < 0:
         return "SHORT"
     return "HOLD"
+
+
+def _warn_missing_prices(trades: pd.DataFrame) -> None:
+    """Name every trade-list ticker valued at $0 for want of a price (packet 63)."""
+    missing = sorted(trades.loc[~(trades["price"] > 0), "ticker"])
+    if missing:
+        logger.warning(
+            "No price for %d trade-list ticker(s), valued at $0: %s",
+            len(missing),
+            ", ".join(missing),
+        )
 
 
 def _infer_direction(shares: float) -> str:
