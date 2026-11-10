@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/64-churn-hysteresis.md`
 **Spec slug:** churn-hysteresis
-**Status:** Draft
+**Status:** Implemented (2026-11-10)
 **Owner:** DTidey
 **Date:** 2026-11-10
 
@@ -84,7 +84,7 @@ Idealised 20/20 book rebuilt from `combined_scores` each night, no costs, full f
 | 40 | 33 | 14 | 12.8 | 0.25 |
 
 On 11-09 alone, exits fall from 14 to 7 at exit rank 35. This replay does not change the
-regime weights; AC9 adds the full replay.
+regime weights; AC8 adds the full replay (see Replay results).
 
 ## Scope
 In scope:
@@ -94,16 +94,17 @@ In scope:
 2. Regime weight smoothing in Layer 2: blend base and regime weights linearly across a VIX
    band, driven by a trailing mean of VIX closes, for both high_vol and low_vol; read the
    band edges from config; persist the smoothed VIX and blend shares.
-3. Turnover budget: count a rotation once. Closures stay never-trimmed and charged; opens and
-   adds in the same book are exempt up to the value those closures charged.
-4. A read-only replay tool that measures turnover and round trips for the current rules and
-   each change, from the stored history since 2026-10-27.
-5. Remove the backlog item and point to this spec.
+3. A read-only replay tool that measures exits, round trips and composite stability for the
+   current rules and each change, from the stored score history.
+4. Remove the backlog item and point to this spec.
 
 Out of scope / non-goals:
+- Rotation credit in the turnover budget (Design 3): a follow-up packet after the buffer and
+  smoothing land (Decision 2); backlog "Rotation credit in the turnover budget".
 - Minimum holding period (see Design 4: rejected for now).
 - Buffering names that leave the candidate band (NEUTRAL). They are closed as today; see
-  Design 1 for why and for the follow-up option.
+  Design 1 and Decision 3. The replay counts band exits separately so the follow-up can be
+  decided from data; backlog "Buffer for band exits".
 - Held-name prices outside the candidate list: done in packet 63 (merged, PR #131); held
   non-candidates now get prices in Layer 4.
 - Smoothing factor scores or `combined_score` over time (EMA of scores): a wider change to
@@ -183,9 +184,9 @@ Options:
 
 Rule for (c):
 - `vix_smoothed` = mean of the last `vix_smoothing_days` VIX closes dated on or before the
-  score date, looked up within 14 calendar days (holidays and gaps). Fewer closes than
-  `vix_smoothing_days` but at least one: mean of those, with a warning. None: NORMAL (both
-  shares 0), with a warning, as today.
+  score date, looked up within max(14, 2 x days) calendar days (holidays and gaps). Fewer
+  closes than `vix_smoothing_days` but at least one: mean of those, with a warning. None:
+  NORMAL (both shares 0), with a warning, as today.
 - `high_share` = clip((vix_smoothed - high_vol.vix_none) / (high_vol.vix_full -
   high_vol.vix_none), 0, 1); `low_share` = clip((low_vol.vix_none - vix_smoothed) /
   (low_vol.vix_none - low_vol.vix_full), 0, 1). The bands do not overlap, so at most one
@@ -198,7 +199,10 @@ Rule for (c):
   15) keep today's thresholds as the label boundary.
 - `regime_conditional_weights: false` still means base weights, shares 0.
 
-### 3. Turnover budget and closures (recommended: count each rotation once)
+### 3. Turnover budget and closures (deferred: follow-up packet, Decision 2)
+Not implemented in this packet. The analysis below is kept as the starting point for the
+follow-up; `portfolio/rebalance.py` is unchanged here.
+
 Today closures are never trimmed and are charged to the budget first, so they push the
 replacements out.
 - (a) Keep as is. On a night like 11-09 the book stays below target. Rejected.
@@ -222,18 +226,18 @@ A hold of k nights would block exits for k nights whatever the signal says. It w
 with the buffer (double dampening: a name kept by the buffer is also inside the hold; a name
 outside both would still be held), it is time-based and so ignores how far the name fell
 (DE: rank 12 -> 74), and it has to exempt risk and band exits, which adds special cases.
-Not added. If the AC9 replay at the chosen exit rank still shows round trips within 2 nights,
+Not added. If the AC8 replay at the chosen exit rank still shows round trips within 2 nights,
 a follow-up packet can add `min_hold_nights` that blocks rank exits only (never band exits,
 flips, Layer 5 or circuit-breaker closures).
 
 How the three measures fit together, with no double dampening:
 - Regime smoothing acts on the score input: fewer rank shocks.
 - The buffer acts on book membership: absorbs the rank noise that remains.
-- The rotation credit acts on trade sizing: lets the replacements for real exits through, so
-  it loosens rather than adds damping.
-- The exit rank is chosen with smoothing in place (AC9 replay), so the two dampers are tuned
-  together rather than stacked: pick the smallest exit rank that gets 2-night round trips
-  near zero.
+- The rotation credit (follow-up packet) would act on trade sizing: it lets the replacements
+  for real exits through, so it loosens rather than adds damping.
+- The exit rank is chosen with smoothing in place (AC8 replay), so the two dampers are tuned
+  together rather than stacked. No exit rank gets 2-night round trips to zero (40 still has
+  59 over 120 nights), so the rank is set at the elbow of the curve (Replay results).
 
 ## Config keys
 ```yaml
@@ -241,8 +245,8 @@ scoring:
   regime_weights:
     vix_smoothing_days: 5     # trailing VIX closes averaged before blending
     low_vol:
-      vix_full:  12           # smoothed VIX <= 12: full low_vol weights
-      vix_none:  18           # smoothed VIX >= 18: base weights
+      vix_full:  13           # smoothed VIX <= 13: full low_vol weights
+      vix_none:  17           # smoothed VIX >= 17: base weights
       momentum:  0.28
       value:     0.10
     high_vol:
@@ -255,40 +259,52 @@ scoring:
 portfolio:
   incumbent_exit_rank: 35     # keep a held name while its side rank <= this; = num_* is today
 ```
-- `low_vol.vix_below` and `high_vol.vix_above` are removed (never read today).
-- Validation at load (ValueError naming the key): `vix_smoothing_days >= 1`;
+- `low_vol.vix_below` and `high_vol.vix_above` are removed (never read before this packet).
+- Validation at load (ValueError naming the key): `vix_smoothing_days` an integer >= 1;
   `low_vol.vix_full < low_vol.vix_none <= high_vol.vix_none < high_vol.vix_full`;
   `incumbent_exit_rank` an integer >= max(`num_longs`, `num_shorts`).
-- Missing keys: `vix_smoothing_days` 5 and the band edges above; `incumbent_exit_rank`
-  defaults to max(`num_longs`, `num_shorts`) (no buffer), so an old config keeps today's
-  behaviour. `config.yaml` sets 35.
-- Defaults to confirm by the AC9 replay before the first live night: exit rank among 25, 30,
-  35, 40; smoothing days among 3, 5, 10.
+- Missing keys: `vix_smoothing_days` 5, band edges low 12/18 and high 20/30 (code defaults,
+  the spec's provisional values); `incumbent_exit_rank` defaults to max(`num_longs`,
+  `num_shorts`) (no buffer), so an old config keeps the top-N selection.
+- `config.yaml` sets 35, 5 and the low_vol band 13-17, chosen from the replay (Replay
+  results, Decision 4). The high_vol band 20-30 is not tuned here (one episode in the
+  history), it keeps the spec value.
+- VIX lookup window: the last `vix_smoothing_days` closes within max(14, 2 x days) calendar
+  days of the score date (14 days at the chosen 5).
 
 ## Proposed behavior / API
 ### Public interface
 - `factors/regime_weights.py`:
-  - `smoothed_vix(vix_df, days) -> float | None`
+  - `smoothed_vix(vix_df, days, score_date) -> float | None` (closes after `score_date`
+    ignored)
   - `regime_shares(vix_smoothed, regime_config) -> tuple[float, float]` (high, low)
   - `blend_weights(base, regime_config, high_share, low_share) -> dict[str, float]`
   - `regime_label(high_share, low_share) -> str`
-  - `resolve_regime` / `adjust_weights` kept for the per-regime weights (or folded in).
-- `factors/loader.py` `_load_vix`: look back 14 calendar days (today 5).
-- `run_scoring.py`: use the blend; write `vix_smoothed`, `high_vol_share`, `low_vol_share` to
-  `regime_state`, added with `data/db.py` `_add_column_if_missing` (FLOAT, nullable).
+  - `resolve(vix_df, base, scoring_cfg, score_date) -> dict` (weights, regime, vix_close,
+    vix_smoothed, high_vol_share, low_vol_share); `validate(regime_config)`.
+  - `adjust_weights` kept for the per-regime weights; the hard-coded `resolve_regime` is
+    removed.
+- `factors/loader.py` `_load_vix`: look back max(14, 2 x `vix_smoothing_days`) calendar days
+  (was 5).
+- `run_scoring.py`: validates the regime config at start, uses the blend; writes
+  `vix_smoothed`, `high_vol_share`, `low_vol_share` to `regime_state`, added with `data/db.py`
+  `_add_column_if_missing` (FLOAT, nullable).
 - `portfolio/book_selection.py` (new): `select_book(candidates, current, config) ->
-  DataFrame` with the selected LONG and SHORT rows plus `side_rank` and `incumbent` (bool).
-  Used by `portfolio/optimizer.py` and `portfolio/mvo_optimizer.py` in place of `.head(num)`.
-- `optimise(...)` gains a `current: pd.DataFrame` argument (broker positions);
-  `run_portfolio.py` already loads positions before prices and the optimiser (packet 63) and
-  passes that frame through.
-- `portfolio/rebalance.py` `_budget_values`: rotation credit per book.
-- `portfolio/churn_replay.py` (new): `python -m portfolio.churn_replay --since 2026-10-27
-  [--exit-rank 20,30,35,40] [--smoothing-days 5]`, read-only.
+  DataFrame` with the selected LONG and SHORT rows plus `side_rank` and `incumbent` (bool);
+  `classify_exits(...)` gives each held name that is not kept its reason (`beyond_exit_rank`,
+  `capped`, `out_of_band`, `flipped`); `exit_rank(config)` validates the key. Used by
+  `portfolio/optimizer.py` and `portfolio/mvo_optimizer.py` in place of `.head(num)`.
+- `optimise(...)` (both optimisers) gains `current: pd.DataFrame | None = None` (broker
+  positions); `run_portfolio.py` passes the positions it already loads before pricing
+  (packet 63) and validates `incumbent_exit_rank` at start.
+- `portfolio/churn_replay.py` (new, CLI and read-only loading) and `portfolio/churn_sim.py`
+  (new, pure rescoring and book simulation): `python -m portfolio.churn_replay --since
+  2026-10-27 [--until 2026-11-09] [--exit-ranks 20,25,30,35,40] [--smoothing-days 1,3,5,10]
+  [--low-bands 12-18,13-17,14-16]`.
 
 ### Inputs / outputs
-- Layer 4 summary prints per side: names kept by the buffer (`incumbent` and side rank >
-  `num_*`), names closed by reason (beyond exit rank, out of band, flipped).
+- Layer 4 logs per side: names kept by the buffer (`incumbent` and side rank > `num_*`),
+  held names closed by reason (beyond exit rank, capped, out of band, flipped).
 - `regime_state` gains three nullable FLOAT columns; existing columns unchanged.
 - Error handling: invalid config raises ValueError at start (scoring or portfolio). No silent
   fallback for a bad band; missing VIX logs a warning and uses base weights (as today).
@@ -299,21 +315,21 @@ portfolio:
 # held long APA at side rank 21 -> kept (incumbent), book still 20 names
 # held long VICI now NEUTRAL -> closed (out of band)
 # held long XYZ now a SHORT candidate -> closed on the long side
-regime_shares(22.48, cfg)   # (0.248, 0.0): weights 75% base, 25% high_vol
-regime_label(0.248, 0.0)    # "NORMAL"
+regime_shares(22.24, cfg)   # 2026-11-09 5-day mean: (0.224, 0.0), 78% base, 22% high_vol
+regime_label(0.224, 0.0)    # "NORMAL"
 ```
 
 ## Acceptance criteria
 - AC1: Per side, `select_book` keeps every held name that is a candidate on the same side
   with side rank <= `incumbent_exit_rank` (best rank first, capped at `num_longs` /
-  `num_shorts`), then fills the remaining slots with the best ranked non-held candidates; the
+  `num_shorts`), then fills the remaining slots with the best ranked remaining candidates; the
   side has `min(num_*, candidates on that side)` names.
 - AC2: A held name with side rank > `incumbent_exit_rank`, a held name that is no longer a
   LONG/SHORT candidate, and a held name that is now a candidate on the other side are not
   incumbents; each gets target 0 on its old side and `generate_trades` closes it (SELL or
   COVER, full quantity).
 - AC3: With `incumbent_exit_rank` equal to `num_*` (or the key absent), the selected book,
-  weights and trades equal today's top-N output for the same inputs; with an empty book the
+  weights and trades equal the top-N output for the same inputs; with an empty book the
   selection is the top N.
 - AC4: Side ranks are deterministic: ties in `combined_score` break by ticker ascending, and
   the result does not depend on row order in `candidates` or `current`.
@@ -322,36 +338,37 @@ regime_label(0.248, 0.0)    # "NORMAL"
   steps then run on the selected book unchanged, and each book still sums to its gross target.
 - AC6: Scoring weights are the linear blend of base, high_vol and low_vol weights by shares
   from the mean of the last `vix_smoothing_days` VIX closes (on or before the score date,
-  within 14 calendar days), with the band edges read from config; the weights sum to 1; at
-  or beyond a band's full edge they equal today's regime weights, and inside the neutral
-  zone they equal the base weights.
+  within max(14, 2 x days) calendar days), with the band edges read from config; the weights
+  sum to 1; at or beyond a band's full edge they equal the regime's weights, and inside the
+  neutral zone they equal the base weights.
 - AC7: `regime_state` stores `vix_smoothed`, `high_vol_share` and `low_vol_share`, and the
   regime label is HIGH_VOL / LOW_VOL when that share is >= 0.5, else NORMAL; no VIX close in
   the window gives base weights, shares 0, label NORMAL and a warning;
   `regime_conditional_weights: false` gives base weights.
-- AC8: In `_budget_values`, per book, opens and adds still charged after the build-up
-  allowance are exempt up to that book's charged closure value (highest conviction first);
-  closures are still never trimmed, still charged and still ordered first; when the night has
-  no closures, budget values equal today's.
-- AC9: `python -m portfolio.churn_replay` runs read-only (`SET TRANSACTION READ ONLY`, no
-  writes, no broker calls) over the stored history and prints, per variant (today; buffer at
-  each exit rank; regime smoothing; buffer plus smoothing; plus rotation credit), name exits
-  per night, round trips within 1 and 2 nights, one-way turnover as a fraction of NAV,
-  trimmed trade count, gross vs target, and mean side rank of the held book.
-- AC10: Invalid config raises ValueError naming the key: `incumbent_exit_rank` below
-  `num_*` or not an integer; band edges out of order or overlapping; `vix_smoothing_days`
-  below 1.
+- AC8: `python -m portfolio.churn_replay` runs read-only (`SET TRANSACTION READ ONLY` on
+  PostgreSQL, `PRAGMA query_only` on SQLite, SELECT only, no broker calls) over the stored
+  history and prints, per scoring variant (stored scores; the hard switch recomputed; the
+  blend for each smoothing-days and low_vol band setting) and per exit rank: name exits
+  (total and per night), exits by reason (rank, band, flip), round trips within 1 and 2
+  nights, idealised one-way turnover per night, mean side rank of the held book and top-10
+  names left out per side-night; and per scoring variant the mean and minimum day-over-day
+  Spearman of the composite and the blend shares' largest one-night change.
+- AC9: Invalid config raises ValueError naming the key, before any database work:
+  `incumbent_exit_rank` below `num_*` or not an integer; band edges out of order or
+  overlapping; `vix_smoothing_days` not an integer >= 1.
 
 ## Security considerations
 - Auth/authz impact: none.
-- Input handling or injection risk: none new; config values are validated (AC10); DB access
+- Input handling or injection risk: none new; config values are validated (AC9); DB access
   uses SQLAlchemy expressions, no string-built SQL.
 - Secrets or credential handling: the replay reads `DATABASE_URL` from `.env` like every
   layer; nothing is logged or printed from it.
-- Data exposure or privacy impact: none; the replay prints aggregates and tickers only.
+- Data exposure or privacy impact: none; the replay prints aggregates only.
 - File system access impact: none beyond existing cache and log paths.
 - Network or external service impact: no new calls; the replay never calls Alpaca. Live
   effect: fewer closing and opening orders per night.
+- Schema: three nullable FLOAT columns on `regime_state`, added by `initialise_schema` on the
+  next run (idempotent `ADD COLUMN`); no existing row is rewritten.
 - Dependency or supply-chain impact: none.
 - Security notes for reviewers/testers: confirm the replay opens a read-only transaction and
   cannot write approvals or positions; confirm Layer 5 and the circuit breaker can still
@@ -369,24 +386,127 @@ regime_label(0.248, 0.0)    # "NORMAL"
 - Halt or circuit breaker active: Layer 5 decides as today; the buffer never blocks a risk
   closure.
 - Name dropped from the universe (no `combined_scores` row): out of band, closed (AC2). Its
-  closure is valued at its stored close (packet 63), so it charges the budget and earns
-  rotation credit at that value. With no stored close, packet 63 logs a WARNING and the price
-  is 0, so it charges 0 budget and gives 0 rotation credit.
+  closure is valued at its stored close (packet 63). With no stored close, packet 63 logs a
+  WARNING and the price is 0, so it charges 0 budget.
 - VIX gap (holiday, missed ingest): mean of the closes found in the window; one close only is
   allowed with a warning; none gives NORMAL.
-- Backfill or rerun of an old score date: same weights as the first run (stateless, AC6).
+- Backfill or rerun of a score date scored after this packet: same weights as the first run
+  (stateless, AC6). A rerun of a date scored before this packet gives the blend, not the
+  stored hard-switch weights: already stored scores are not rescored by this packet, and
+  rerunning old dates is not part of the nightly run.
 - `--whatif`: same selection (positions read, nothing written).
 - Score date with no positions (fresh book): top N, as today (AC3).
 
+## Replay results
+`python -m portfolio.churn_replay` against production (read-only), 2026-11-10. Idealised
+20/20 book, equal weight, full fills. "Stored" uses the stored `combined_scores`; "switch"
+recomputes Layer 2 and the Layer 3 side bands from the stored factor and AI scores with the
+stored regime's weights; "blend Nd low a-b" uses the blend (high_vol band 20-30).
+
+Check: over 2026-10-27 to 2026-11-09 the recomputed switch reproduces the stored results
+exactly (every metric equal), so the rescoring matches Layers 2 and 3. Before late October
+the stored `combined_scores` follow the pre-packet-43 rules (1655 exits and 387 band exits
+over 120 nights, against 1043 and 72 recomputed), so for the long window the recomputed
+switch is the baseline.
+
+Short window, 2026-10-27 to 2026-11-09 (9 nights; VIX 16.6 to 28.2):
+
+| Scoring | Exit rank | Exits | Rank / band exits | Round trips 1 / 2 nights | Turnover / night | Mean side rank | Top-10 left out |
+|---|---|---|---|---|---|---|---|
+| stored (today) | 20 | 92 | 80 / 12 | 38 / 61 | 38.5% | 10.5 | 0.00 |
+| stored | 35 | 41 | 34 / 7 | 14 / 18 | 17.2% | 12.0 | 0.15 |
+| blend 5d low 13-17 | 20 | 87 | 83 / 4 | 42 / 60 | 36.8% | 10.5 | 0.00 |
+| blend 5d low 13-17 | 30 | 44 | 41 / 3 | 15 / 22 | 18.4% | 11.4 | 0.05 |
+| **blend 5d low 13-17** | **35** | **32** | **29 / 3** | **11 / 14** | **13.5%** | **12.1** | **0.15** |
+| blend 5d low 13-17 | 40 | 26 | 23 / 3 | 7 / 9 | 11.1% | 13.2 | 0.40 |
+| blend 3d low 13-17 | 35 | 34 | 30 / 4 | 11 / 15 | 14.3% | 12.1 | 0.15 |
+| blend 10d low 13-17 | 35 | 33 | 30 / 3 | 10 / 15 | 13.8% | 12.1 | 0.15 |
+
+Long window, 2026-05-05 to 2026-11-09 (120 nights; 5-day mean VIX 14.8 to 22.5):
+
+| Scoring | Exit rank | Exits | Rank / band exits | Round trips 1 / 2 nights | Turnover / night | Mean side rank | Top-10 left out |
+|---|---|---|---|---|---|---|---|
+| switch (today's rules) | 20 | 1043 | 971 / 72 | 484 / 645 | 32.7% | 10.5 | 0.00 |
+| switch | 35 | 373 | 314 / 59 | 58 / 88 | 11.7% | 12.4 | 0.34 |
+| blend 5d low 13-17 | 20 | 1022 | 954 / 68 | 466 / 628 | 32.0% | 10.5 | 0.00 |
+| blend 5d low 13-17 | 25 | 659 | 598 / 61 | 195 / 285 | 20.7% | 10.9 | 0.03 |
+| blend 5d low 13-17 | 30 | 471 | 411 / 60 | 95 / 141 | 14.8% | 11.6 | 0.20 |
+| **blend 5d low 13-17** | **35** | **358** | **300 / 58** | **47 / 77** | **11.2%** | **12.4** | **0.31** |
+| blend 5d low 13-17 | 40 | 304 | 239 / 65 | 40 / 59 | 9.5% | 13.2 | 0.47 |
+| blend 5d low 12-18 | 35 | 365 | 310 / 55 | 54 / 84 | 11.4% | 12.4 | 0.29 |
+| blend 5d low 14-16 | 35 | 360 | 302 / 58 | 52 / 80 | 11.3% | 12.4 | 0.32 |
+| blend 3d low 13-17 | 35 | 360 | 301 / 59 | 49 / 76 | 11.3% | 12.4 | 0.32 |
+| blend 10d low 13-17 | 35 | 376 | 322 / 54 | 49 / 86 | 11.8% | 12.3 | 0.28 |
+
+No flip exits in any variant. Composite stability and blend shares:
+
+| Scoring | Spearman mean / min, short window | Spearman mean / min, long window | Largest one-night share change (high / low), long | Nights with low share > 0 (of 120), mean low share |
+|---|---|---|---|---|
+| stored / switch | 0.947 / 0.802 | 0.967 / 0.802 | 1.0 / 1.0 (hard switch) | 14 LOW_VOL nights |
+| blend 1d low 13-17 | 0.954 / 0.822 | 0.970 / 0.815 | 0.82 / 0.49 | 79, 0.21 |
+| blend 3d low 13-17 | 0.963 / 0.876 | 0.971 / 0.815 | 0.19 / 0.32 | 74, 0.20 |
+| blend 5d low 13-17 | 0.963 / 0.879 | 0.971 / 0.815 | 0.12 / 0.29 | 69, 0.19 |
+| blend 10d low 13-17 | 0.963 / 0.882 | 0.971 / 0.815 | 0.02 / 0.16 | 67, 0.17 |
+| blend 5d low 12-18 | 0.963 / 0.879 | 0.971 / 0.817 | 0.12 / 0.36 | 99, 0.24 |
+| blend 5d low 14-16 | 0.963 / 0.879 | 0.971 / 0.815 | 0.12 / 0.35 | 45, 0.13 |
+
+The long-window minimum (0.815, 2026-05-09) is a factor-data night with base weights on
+both days, not a regime switch; the blend
+removes the 0.802 regime night. Share changes in the long window include a 7-day gap in the
+score history (2026-05-14 to 05-21) and nights with no `combined_scores` row.
+
+### Chosen settings
+- `incumbent_exit_rank: 35`. The buffer does most of the work: with the blend in place,
+  2-night round trips fall 628 -> 285 -> 141 -> 77 -> 59 for exit ranks 20/25/30/35/40 over
+  120 nights. 35 is the elbow: 30 -> 35 removes 64 round trips and 113 exits, 35 -> 40 only
+  18 and 54, while the top-10 names left out rise from 0.31 to 0.47 per side-night and the
+  mean held rank from 12.4 to 13.2. Short window: exits 92 -> 32, round trips 61 -> 14.
+  Round trips do not reach zero at any tested rank, so this is the elbow rather than the
+  spec's "near zero" target.
+- `vix_smoothing_days: 5`. Churn is the same for 3, 5 and 10 days (within noise at every
+  exit rank). 5 days keeps the largest one-night high_vol share change at 0.12 (3 days:
+  0.19; 1 day: 0.82, about as jumpy as today). 10 days barely reacts: over the 11-05 spike
+  its mean high_vol share is 0.005, so it would in effect switch the high_vol tilt off.
+- low_vol band 13-17 (not 12-18). Churn is within noise across 12-18, 13-17 and 14-16
+  (round trips 84 / 77 / 80 at exit 35). The band changes how often the low_vol tilt is on:
+  VIX sat at 15-17 for most of the summer, so with 12-18 the tilt is partly on 99 of 120
+  nights (mean share 0.24), a standing change to the strategy's calm-market weights rather
+  than smoothing. 13-17 keeps today's 15 boundary as its centre, is on 69 nights (mean
+  0.19) and has the smallest largest one-night change (0.29); 14-16 is steeper (0.35).
+- Band exits: about one in six exits at the chosen settings (58 of 358 over 120 nights; 3 of
+  32 in the short window), against 12 of 92 today in the short window. The blend removes most
+  of the regime-driven band exits (short window, exit 20: 12 -> 4). Decision 3's follow-up
+  can use these counts.
+
+## First night after merge
+- Scoring for already-stored dates is not rewritten; the change starts with the next nightly
+  run after merge.
+- Layer 2: regime weights blend instead of switching. If the next run were scored on the
+  2026-11-09 data, the 5-day mean is 22.24, high_vol share 0.22, label NORMAL: momentum 0.177
+  (base 0.20), quality 0.215, value 0.163, the rest scaled by 0.99. Composite Spearman
+  against the stored 11-09 composite (base weights) is 0.995; 9 names leave the LONG/SHORT
+  candidate lists and 10 enter. So composite values shift once, by a small amount, on the
+  first night; the share then moves by at most about 0.12 a night. The 11-05 and 11-06
+  closes (28.2, 25.6) leave the 5-day window on the 11-13 score date; after that the share
+  is 0 unless the mean of the new closes is above 20.
+- `regime_state` gains three columns on the first run (old rows NULL).
+- Layer 4: the buffer applies to the broker book from the first run. With the 11-09 scores
+  and the current broker book (35 names), today's rule closes 12 held names; the buffer at
+  35 closes 10 with the stored scores and 9 with the blend (7 beyond rank 35, 2 out of
+  band), keeping 4 names at side rank 21-35. Fewer closures mean fewer replacement opens,
+  so the turnover budget trims less.
+
 ## Rollout
-1. One commit per measure, in this order: replay tool (AC9) with today's rules as baseline;
-   buffer (AC1-AC5, AC10 part); regime smoothing (AC6, AC7, AC10 part); rotation credit (AC8).
-   Rerun the replay after each and record the numbers in the PR draft.
-2. Choose `incumbent_exit_rank` and `vix_smoothing_days` from the replay; record the choice in
-   `log/changelog-YYYY-MM-DD.md`.
-3. Schema: three nullable columns on `regime_state`; no backfill needed (old rows NULL).
-4. Revert: set `incumbent_exit_rank` to 20 for the buffer; the regime blend and rotation
-   credit revert by commit.
+1. Commits in order: buffer (AC1-AC5, AC9 part); regime blend (AC6, AC7, AC9 part); replay
+   tool (AC8); chosen config values and packet docs. The replay reuses `select_book` and the
+   blend functions, so it lands after them (the spec's order put it first; the numbers were
+   produced before the config values were committed).
+2. `incumbent_exit_rank`, `vix_smoothing_days` and the low_vol band are set from the replay
+   (Replay results); reasoning in `log/changelog-2026-11-10.md`.
+3. Schema: three nullable columns on `regime_state`; no backfill (old rows NULL).
+4. Revert: set `incumbent_exit_rank` to 20 for the buffer; the regime blend reverts by commit
+   (or `regime_conditional_weights: false` for base weights only).
+5. Follow-ups (backlog): rotation credit in the turnover budget; buffer for band exits.
 
 ## Verify in paper trading
 - Layer 4 log shows buffered counts per side and closure reasons; on a quiet night, closures
@@ -403,7 +523,8 @@ regime_label(0.248, 0.0)    # "NORMAL"
   `test_flipped_incumbent_closed_on_old_side`,
   `tests/test_rebalance.py::test_buffer_exit_generates_full_closure`
 - AC3 -> `TestSelectBook::test_exit_rank_equal_n_matches_top_n`,
-  `test_missing_key_matches_top_n`, `test_empty_book_top_n`
+  `test_missing_key_matches_top_n`, `test_empty_book_top_n`,
+  `tests/test_optimizer.py::test_no_current_matches_top_n`
 - AC4 -> `TestSelectBook::test_tie_break_by_ticker`, `test_row_order_independent`
 - AC5 -> `tests/test_optimizer.py::test_select_book_used_and_gross_preserved`,
   `tests/test_mvo_optimizer.py::test_select_book_used`
@@ -411,25 +532,31 @@ regime_label(0.248, 0.0)    # "NORMAL"
   `test_full_edge_equals_regime_weights`, `test_midpoint_blend`, `test_weights_sum_to_one`,
   `test_smoothed_vix_mean_of_last_n`, `test_window_gap_uses_available_closes`
 - AC7 -> `tests/test_regime_weights.py::TestLabel::test_label_thresholds`,
-  `test_no_vix_normal_with_warning`, `tests/test_regime_state.py::test_regime_state_columns`,
-  `test_conditional_weights_off`
-- AC8 -> `tests/test_rebalance.py::TestRotationCredit::test_replacement_exempt_up_to_closure`,
-  `test_closure_never_trimmed`, `test_no_closures_unchanged`,
-  `test_credit_per_book_not_shared`
-- AC9 -> `tests/test_churn_replay.py::test_read_only_transaction`,
+  `test_no_vix_normal_with_warning`, `test_conditional_weights_off`,
+  `tests/test_regime_state.py::test_regime_state_columns`
+- AC8 -> `tests/test_churn_replay.py::test_read_only_transaction`,
   `test_metrics_on_fixture_history`, `test_baseline_matches_top_n`
-- AC10 -> `tests/test_book_selection.py::test_exit_rank_below_n_raises`,
-  `tests/test_regime_weights.py::test_band_order_validated`,
-  `test_smoothing_days_validated`
+- AC9 -> `tests/test_book_selection.py::TestExitRankConfig::test_exit_rank_below_n_raises`,
+  `test_exit_rank_not_integer_raises`,
+  `tests/test_regime_weights.py::TestRegimeConfig::test_band_order_validated`,
+  `test_smoothing_days_validated`,
+  `tests/test_regime_state.py::test_bad_band_stops_scoring_before_db`,
+  `tests/test_mvo_optimizer.py::test_bad_exit_rank_raises_before_fallback`
 
-## Open questions
-- VIX close for 2026-11-04 is 16.61 between 20.83 (11-03) and 28.18 (11-05). If that print is
-  wrong, the 11-05 switch looks larger than it was; check against another source. The 5-day
-  mean limits the damage either way.
-- Should the buffer also cover band exits (keep a long while composite >= 70)? Deferred until
-  the replay counts band exits under regime smoothing (held-name prices exist since packet 63).
-- Should the low_vol band be narrower than 12-18? VIX sat at 15-16 for most of October; the
-  replay should report low_vol share changes too.
+## Decisions
+David, 2026-11-10, on the open questions of the merged spec (#132):
+1. The VIX close of 16.61 on 2026-11-04 is real: FRED VIXCLS and CBOE history agree, and VIX
+   ran 16.6 -> 28.2 on 11-05. No data fix.
+2. Rotation credit (turnover budget exemption for opens and adds up to the book's closure
+   value; former Scope item 3, Design 3 and AC8) is out of this packet: a separate follow-up
+   packet after the buffer and smoothing land. The ACs were renumbered AC1-AC9 (old AC9
+   replay -> AC8, old AC10 config -> AC9). Backlog: "Rotation credit in the turnover budget".
+3. No buffer for names that leave the candidate band (turn NEUTRAL) for now: deferred until
+   the replay counts those exits. The replay reports band exits separately from rank exits
+   (AC8; Replay results). Backlog: "Buffer for band exits".
+4. The low_vol band, the incumbent exit rank and the number of VIX smoothing days are set
+   from the replay, not from the provisional 12-18, 35 and 5: chosen 13-17, 35 and 5 (Replay
+   results, Chosen settings), in `config.yaml`.
 
 ## Decision log
 - 2026-11-10: Rank buffer with fixed book size over extra slots or score distance: no resize
@@ -437,6 +564,11 @@ regime_label(0.248, 0.0)    # "NORMAL"
 - 2026-11-10: Linear blend on a 5-day mean VIX over enter/exit hysteresis: hysteresis would
   not have prevented the 11-05/11-09 jumps, needs stored state, and still jumps in full.
 - 2026-11-10: Rotation credit over exempting or trimming closures: counts a rotation once and
-  keeps closures never-trimmed (packets 57, 61).
+  keeps closures never-trimmed (packets 57, 61). Deferred to a follow-up packet (Decision 2).
 - 2026-11-10: No minimum holding period: overlaps with the buffer and ignores how far a name
   fell.
+- 2026-11-10: Exit rank 35, 5 smoothing days, low_vol band 13-17, from the replay (Chosen
+  settings).
+- 2026-11-10: The replay recomputes combined scores with the current Layer 2/3 code from the
+  stored factor and AI scores, so variants are compared under one set of rules; checked
+  against the stored scores on 2026-10-27 to 11-09 (identical).

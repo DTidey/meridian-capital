@@ -34,6 +34,14 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Layer 4 churn (packet `64-churn-hysteresis`): an incumbent buffer keeps a held name while it
+  is a candidate on the same side with side rank <= `portfolio.incumbent_exit_rank` (35); new
+  names still enter at the top 20 and the book size is unchanged. Layer 2 regime weights blend
+  linearly across VIX bands (low_vol 13-17, high_vol 20-30) on the mean of the last 5 VIX
+  closes instead of switching on one close; `regime_state` stores the smoothed VIX and the
+  blend shares; `vix_below` / `vix_above` (never read) are replaced by validated band edges.
+  New read-only replay `python -m portfolio.churn_replay`. Replay over 2026-10-27 to 11-09:
+  name exits 92 -> 32, round trips within 2 nights 61 -> 14.
 - Order limit band (packet `60-order-fill-rate`): queued DAY limits at the score date's close
   +/- 1.5% (was 0.5%, which missed every overnight gap above 0.5%); a band outside (0, 5%]
   stops Layer 6 before any order.
