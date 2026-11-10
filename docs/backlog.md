@@ -244,3 +244,36 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   with one argument; the function needs the client, cache dir and days, so it raises and the
   bare `except` swallows it. The executor's own `not_shortable` check still guards SHORT orders.
 - **Fix:** pass the arguments or drop the check in favour of the executor's.
+
+## Rotation credit in the turnover budget
+
+- **Raised:** 2026-11-10, packet 64 (Decision 2: out of that packet, follow-up after the
+  buffer and regime smoothing land).
+- **Problem:** `portfolio/rebalance.py` `_apply_turnover_budget` charges full closures to the
+  rotation budget first (`budget_remaining = budget - closures`) and never trims them, so on a
+  high-churn night the closures use up the budget and their replacements are trimmed: each
+  rotated dollar is charged twice. The packet 57 build-up allowance covers opens only up to
+  the pre-trade gap, not the gross freed by that night's closures. Evidence, 2026-11-09: 12
+  names opened by the 11-06 orders were closed in full and 13 opening or adding trades were
+  TRIMMED (BUY 4, SHORT 7, SELL 1, COVER 1); the book stayed below target.
+- **Fix:** spec 64 Design 3 option (d): closures stay never-trimmed, charged and ordered
+  first; per book, opens and adds still charged after the build-up allowance are exempt up
+  to that book's charged closure value (highest conviction first). Measure first: with the
+  packet 64 buffer, closures per night fall (replay: 32 exits over 9 nights instead of 92),
+  so check the trimmed count on live nights before building it. The replay
+  (`portfolio/churn_replay.py`) has no trade sizing yet; the follow-up needs it to model
+  trimming.
+
+## Buffer for band exits
+
+- **Raised:** 2026-11-10, packet 64 (Decision 3: deferred until the replay counts band exits).
+- **Problem:** the packet 64 buffer keeps held names by side rank only; a held name that
+  leaves the LONG/SHORT candidate band (turns NEUTRAL) is closed at once. Replay (read-only,
+  `python -m portfolio.churn_replay`) at the chosen settings (blend 5 days, low_vol 13-17,
+  exit rank 35): 58 of 358 exits over 2026-05-05 to 11-09 are band exits (about one in six);
+  3 of 32 over 2026-10-27 to 11-09. Regime smoothing already cut the short window's band
+  exits from 12 to 4 at exit rank 20.
+- **Fix (if wanted):** a wider exit band on the composite (e.g. keep a long while
+  composite >= 70, a short while <= 30); held-name prices exist since packet 63. Layer 3 gives
+  NEUTRAL names no side-band `combined_score`, so the rule must use `composite_score`, and the
+  replay should count how many band exits would stay inside the wider band before choosing.

@@ -85,6 +85,10 @@ regime_state = sa.Table(
     sa.Column("vix_close", sa.Float),
     sa.Column("regime", sa.String),
     sa.Column("computed_at", sa.String),
+    # Packet 64: blend inputs; NULL on rows written before it
+    sa.Column("vix_smoothed", sa.Float),
+    sa.Column("high_vol_share", sa.Float),
+    sa.Column("low_vol_share", sa.Float),
 )
 
 crowding_flags = sa.Table(

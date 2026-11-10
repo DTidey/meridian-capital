@@ -92,13 +92,16 @@ scoring:
     short_interest: 0.05
     institutional:  0.05
 
-  regime_weights:
+  regime_weights:                # linear blend across VIX bands on a trailing mean (packet 64)
+    vix_smoothing_days: 5         # trailing VIX closes averaged before blending (replay, spec 64)
     low_vol:
-      vix_below: 15
+      vix_full:  13               # smoothed VIX <= vix_full: full low_vol weights
+      vix_none:  17               # smoothed VIX >= vix_none: base weights
       momentum:  0.28
       value:     0.10
     high_vol:
-      vix_above: 25
+      vix_none:  20               # smoothed VIX <= vix_none: base weights
+      vix_full:  30               # smoothed VIX >= vix_full: full high_vol weights
       quality:   0.28
       value:     0.22
       momentum:  0.10
@@ -163,6 +166,7 @@ analysis:
 portfolio:
   num_longs:              20
   num_shorts:             20
+  incumbent_exit_rank:    35      # keep a held name while its side rank <= this (replay, spec 64)
   gross_exposure:         1.50
   target_long_gross:      0.80    # long + short = gross_exposure; net within both net bounds
   target_short_gross:     0.70

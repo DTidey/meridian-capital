@@ -36,6 +36,7 @@ from factors.db import factor_scores as factor_scores_table  # noqa: E402
 from portfolio import mvo_optimizer as mvo_opt  # noqa: E402
 from portfolio import optimizer as tilt_opt  # noqa: E402
 from portfolio.beta import compute_betas, portfolio_beta  # noqa: E402
+from portfolio.book_selection import exit_rank  # noqa: E402
 from portfolio.book_targets import book_targets, scale_book_targets  # noqa: E402
 from portfolio.factor_exposure import compute_exposures  # noqa: E402
 from portfolio.rebalance import generate_trades  # noqa: E402
@@ -264,6 +265,7 @@ def _print_current(conn) -> None:
 
 def run(args) -> None:
     config = _load_config(args.config)
+    exit_rank(config)  # validate portfolio.incumbent_exit_rank before any DB work
     score_date = _resolve_score_date(config, args.date)
     _setup_logging(args.verbose)
 
@@ -313,7 +315,9 @@ def run(args) -> None:
         config = with_nav(config, nav)
         config = _tail_risk_config(conn, score_date, config, _ROOT / "cache")
 
-        target = optimizer.optimise(candidates, prices, betas, config, score_date, conn)
+        target = optimizer.optimise(
+            candidates, prices, betas, config, score_date, conn, current=current
+        )
         if target.empty:
             logger.error("Optimiser returned empty portfolio")
             sys.exit(1)

@@ -19,6 +19,7 @@ from data.db import (
     sp500_universe,
 )
 from data.institutional import summarise_rows
+from factors.regime_weights import smoothing_days, window_days
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,8 @@ def load_scoring_data(
     ins_txns = _load_insider_txns(conn, cutoff)
     ins_flags = _load_insider_flags(conn, cutoff)
     institution = _load_institutional(conn, cutoff)
-    vix = _load_vix(conn, cutoff)
+    regime_cfg = config.get("scoring", {}).get("regime_weights", {}) or {}
+    vix = _load_vix(conn, cutoff, window_days(smoothing_days(regime_cfg)))
 
     logger.debug(
         "Loaded: %d universe, %d price rows, %d fund rows",
@@ -281,8 +283,9 @@ def _load_institutional(conn: sa.engine.Connection, cutoff: date) -> pd.DataFram
     return df
 
 
-def _load_vix(conn: sa.engine.Connection, cutoff: date) -> pd.DataFrame:
-    start = (cutoff - timedelta(days=5)).isoformat()
+def _load_vix(conn: sa.engine.Connection, cutoff: date, lookback_days: int) -> pd.DataFrame:
+    """VIX closes in the lookback window ending on cutoff, newest first (packet 64)."""
+    start = (cutoff - timedelta(days=lookback_days)).isoformat()
     rows = conn.execute(
         sa.select(
             daily_prices.c.date,

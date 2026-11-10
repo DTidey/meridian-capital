@@ -136,7 +136,7 @@ class _Spy:
         self.calls["factors"] = list(tickers)
         return pd.DataFrame()
 
-    def optimise(self, candidates, prices, betas, config, score_date, conn):
+    def optimise(self, candidates, prices, betas, config, score_date, conn, current=None):
         self.calls["optimiser"] = candidates["ticker"].tolist()
         return _target()
 
