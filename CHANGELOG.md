@@ -34,6 +34,9 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- yfinance inplace warnings (packet `65-remove-yf-inplace-filter`): the packet 55 filter is
+  removed because yfinance 1.8.0 no longer calls pandas with `inplace`; a test runs the Layer 1
+  download path through real yfinance on stubbed responses and fails on any pandas deprecation.
 - Layer 4 churn (packet `64-churn-hysteresis`): an incumbent buffer keeps a held name while it
   is a candidate on the same side with side rank <= `portfolio.incumbent_exit_rank` (35); new
   names still enter at the top 20 and the book size is unchanged. Layer 2 regime weights blend
