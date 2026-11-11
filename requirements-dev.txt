@@ -4,7 +4,7 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements-dev.in
 #
-alpaca-py==0.44.0
+alpaca-py==0.45.0
     # via -r requirements.in
 altair==6.2.1
     # via streamlit
@@ -234,7 +234,6 @@ python-multipart==0.0.32
 pytz==2026.6
     # via
     #   -r requirements.in
-    #   alpaca-py
     #   yfinance
 pyyaml==6.0.3
     # via
@@ -303,6 +302,7 @@ truststore==0.10.4
     #   httpx2
 typing-extensions==4.15.0
     # via
+    #   alpaca-py
     #   altair
     #   anyio
     #   beautifulsoup4
