@@ -184,18 +184,6 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
 - **Fix:** decide whether a loss response should scale the whole book in Layer 4 (as packet 58
   does for tail risk) or stay a one-night cut on opening trades.
 
-## Optimiser sector cap is per side; pre-trade sector cap is gross
-
-- **Raised:** 2026-11-13, packet 66 (out of scope there).
-- **Problem:** both optimisers cap each side of a sector at `portfolio.max_sector_pct` (0.25)
-  and the sector net at 0.05, so a sector can be planned at well over 25% gross (2026-11-12:
-  Industrials 26.9%). Pre-trade check 5 caps a sector's gross (long + short) at 0.25. Since
-  packet 66 only adds in that sector are rejected, but Layer 4 plans them again every night,
-  and nothing trims the sector back under 25%.
-- **Fix:** decide whether the 25% is meant as gross (then add a sector-gross constraint to
-  both optimisers, and decide whether an over-limit sector should be actively trimmed) or per
-  side (then change check 5 to match).
-
 ## A held name with no stored close cannot be closed by the pipeline
 
 - **Raised:** 2026-11-05, packet 61 (out of scope there).

@@ -174,7 +174,7 @@ portfolio:
   net_exposure_max:       0.10
   max_position_pct:       0.05
   min_position_pct:       0.005
-  max_sector_pct:         0.25
+  max_sector_pct:         0.25    # per side; long + short combined: risk.pre_trade.max_sector_pct
   max_sector_net_pct:     0.05
   max_beta:               0.15
   turnover_budget_pct:    0.30    # NAV rotated per run; the move to target gross is exempt
@@ -208,7 +208,7 @@ risk:
     adv_lookback:         20
     adv_pct:              0.05
     max_position_pct:     0.05
-    max_sector_pct:       0.25
+    max_sector_pct:       0.25    # sector long + short gross; also Layer 4's limit (packet 66)
     max_gross:            1.65
     net_min:             -0.10
     net_max:              0.15
