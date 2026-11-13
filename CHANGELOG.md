@@ -95,6 +95,12 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Pre-trade sector check and Layer 4 position cap (packet `66-pretrade-sector-gross`): check 5
+  summed every sector of the pro-forma book, so one sector over 25% (Industrials 26.9% on
+  2026-11-12) rejected every opening trade in every sector; it now checks the trade's own
+  sector only and rejects only trades that add to their own size. Layer 4 targets are capped
+  at the 5% position limit after whole-share rounding, so the pre-trade POSITION_SIZE check no
+  longer rejects targets Layer 4 produced (CF, DVA, AIZ). Limits unchanged.
 - Held prices in Layer 4 (packet `63-held-prices-layer4`): a held name that left the LONG/SHORT
   candidate list was priced at 0.00 with a $0 cost estimate, so its trade counted as $0 in the
   turnover budget and the build-up gap. Layer 4 now loads prices for candidates plus held

@@ -325,7 +325,7 @@ Closing/covering trades skip checks 2-8 (only check 1 applies).
 | 2 | **Earnings window** | Earnings in the next 5 days -> no resize (Layer 4 already halved the weight, packet 58); the trade runs checks 3-8 and an approval is tagged `EARNINGS_WINDOW` |
 | 3 | **Liquidity** | Trade value > 5% of 20-day ADV for that ticker |
 | 4 | **Position size** | Resulting position > 5% of NAV (abs weight) |
-| 5 | **Sector concentration** | Resulting gross sector exposure > 25% of NAV |
+| 5 | **Sector concentration** | The trade adds to its own absolute weight and the resulting gross exposure of its own sector > 25% of NAV (packet 66; other sectors and reductions never fail it) |
 | 6 | **Gross / net** | Resulting gross > 165% OR net outside [-10%, +15%] |
 | 7 | **Net beta** | Resulting |net beta| > 0.20 |
 | 8 | **Pairwise correlation** | Correlation of new ticker vs any existing same-book position over 60 days > 0.80 |

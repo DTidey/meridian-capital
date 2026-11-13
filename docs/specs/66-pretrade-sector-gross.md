@@ -132,15 +132,18 @@ _cap_shares(shares, price, nav, cap) -> float  # sign(shares) * floor(cap * nav 
 - Trade list shows no target above 5% of NAV at the latest close.
 
 ## Test guidance
-- AC1 -> `tests/test_pretrade_sector_gross_2026_11_12.py::TestSectorCheck::test_other_sector_trade_passes`
+- AC1 -> `tests/test_pretrade_sector_gross_2026_11_12.py::TestSectorCheck::test_other_sector_trade_passes`,
+  `test_add_in_unbreached_sector_passes_beside_breach`
 - AC2 -> `TestSectorCheck::test_reducing_flip_in_breaching_sector_passes`
 - AC3 -> `TestSectorCheck::test_adding_trade_in_breaching_sector_rejected`,
   `test_larger_flip_in_breaching_sector_rejected`, `test_trade_taking_own_sector_over_rejected`
 - AC4 -> `TestPositionCap::test_long_and_short_capped`, `test_rounding_up_capped`,
-  `test_stricter_pre_trade_cap_used`, `test_held_oversized_trimmed_to_cap`
+  `test_stricter_pre_trade_cap_used`, `test_held_oversized_trimmed_to_cap`,
+  `test_float_boundary_never_above_cap`, `test_share_dearer_than_cap_goes_to_zero`
 - AC5 -> `TestPositionCap::test_capped_target_approved_by_pre_trade`
 - AC6 -> `TestRegression20261112::test_run_outcome`
-- AC7 -> `TestPositionCap::test_targets_under_cap_unchanged`, `test_unpriced_not_capped`
+- AC7 -> `TestPositionCap::test_targets_under_cap_unchanged`, `test_unpriced_not_capped`,
+  `test_nan_close_not_capped`
 
 ## Decision log
 - 2026-11-13: Judge "reduces gross" by the trade's own absolute weight (target vs current) rather
