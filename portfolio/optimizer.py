@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from data.db import earnings_calendar
 from portfolio.book_selection import select_book
 from portfolio.book_targets import book_targets
+from portfolio.limits import sector_gross_cap
 from portfolio.transaction_costs import compute_adv
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ def optimise(
     min_pos = float(pcfg.get("min_position_pct", 0.005))
     max_sector = float(pcfg.get("max_sector_pct", 0.25))
     max_sector_net = float(pcfg.get("max_sector_net_pct", 0.05))
+    max_sector_gross = sector_gross_cap(config)  # long + short, shared with pre-trade
     max_beta = float(pcfg.get("max_beta", 0.15))
     adv_max_pct = float(pcfg.get("adv_max_pct", 0.05))
     adv_days = int(pcfg.get("adv_lookback_days", 20))
@@ -94,6 +96,8 @@ def optimise(
     combined = _enforce_sector_neutral(
         combined, max_sector, max_sector_net, long_gross, short_gross
     )
+    gross_targets = {"LONG": long_gross, "SHORT": short_gross}
+    combined = _cap_sector_gross(combined, max_sector_gross, gross_targets, max_pos)
     longs = combined[combined["direction"] == "LONG"].copy()
     shorts = combined[combined["direction"] == "SHORT"].copy()
 
@@ -104,6 +108,7 @@ def optimise(
 
     combined = pd.concat([longs, shorts], ignore_index=True)
     combined = _adjust_beta(combined, betas, max_beta, long_gross, short_gross, min_pos, max_pos)
+    combined = _cap_sector_gross(combined, max_sector_gross, None, max_pos)  # scale down only
 
     # 8. Compute share counts and current prices
     combined = _add_shares_and_prices(combined, prices, nav)
@@ -272,6 +277,64 @@ def _enforce_sector_neutral(
         if total > 0:
             df.loc[mask, "weight"] = df.loc[mask, "weight"] / total * target
     return df
+
+
+def _cap_sector_gross(
+    combined: pd.DataFrame,
+    cap: float,
+    targets: dict[str, float] | None,
+    max_pos: float,
+) -> pd.DataFrame:
+    """Hold every sector's long + short gross at or below cap (weights positive here).
+
+    A sector over the cap has both sides scaled by the same factor, so its net shrinks too.
+    With targets ({direction: gross}), each book is refilled to its gross from names in sectors
+    below the cap, within max_pos, until no sector is over; without, it only scales down.
+    """
+    df = combined.copy()
+    capped: set[str] = set()
+    for _ in range(df["sector"].nunique() + 1):
+        gross = df.groupby("sector")["weight"].sum()
+        over = gross[gross > cap * (1 + 1e-12)]
+        if over.empty:
+            break
+        for sector, sector_gross in over.items():
+            df.loc[df["sector"] == sector, "weight"] *= cap / sector_gross
+        capped |= set(over.index)
+        if targets is None:
+            break
+        df = _refill_books(df, capped, targets, max_pos)
+    if targets is not None:
+        _warn_gross_shortfall(df, targets, cap)
+    return df
+
+
+def _refill_books(
+    df: pd.DataFrame, capped: set[str], targets: dict[str, float], max_pos: float
+) -> pd.DataFrame:
+    """Scale each book's names outside the capped sectors up to the book's gross, <= max_pos."""
+    out = df.copy()
+    for direction, target in targets.items():
+        book = out["direction"] == direction
+        free = book & ~out["sector"].isin(capped)
+        room = target - out.loc[book & ~free, "weight"].sum()
+        if free.any() and room > out.loc[free, "weight"].sum():
+            out.loc[free, "weight"] = _bounded_scale(out.loc[free, "weight"], 0.0, max_pos, room)
+    return out
+
+
+def _warn_gross_shortfall(df: pd.DataFrame, targets: dict[str, float], cap: float) -> None:
+    for direction, target in targets.items():
+        total = df.loc[df["direction"] == direction, "weight"].sum()
+        if total < target - 1e-9:
+            logger.warning(
+                "Optimizer: %s book %.3f is below its gross target %.3f; sectors capped at %.2f "
+                "long + short leave no more room",
+                direction,
+                total,
+                target,
+                cap,
+            )
 
 
 def _adjust_beta(

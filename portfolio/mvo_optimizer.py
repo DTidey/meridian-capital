@@ -11,6 +11,7 @@ from data.db import daily_prices
 from portfolio import optimizer as tilt
 from portfolio.book_selection import exit_rank, select_book
 from portfolio.book_targets import book_targets
+from portfolio.limits import sector_gross_cap
 from portfolio.transaction_costs import estimate_cost
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ def _mvo(
     min_pos = float(pcfg.get("min_position_pct", 0.005))
     max_sector = float(pcfg.get("max_sector_pct", 0.25))
     max_sector_net = float(pcfg.get("max_sector_net_pct", 0.05))
+    max_sector_gross = sector_gross_cap(config)  # long + short, shared with pre-trade
     max_beta = float(pcfg.get("max_beta", 0.15))
     lam = float(mvo_cfg.get("risk_aversion", 1.0))
     cov_days = int(mvo_cfg.get("cov_lookback_days", 120))
@@ -101,8 +103,7 @@ def _mvo(
         short_gross,
         min_pos,
         max_pos,
-        max_sector,
-        max_sector_net,
+        (max_sector, max_sector_net, max_sector_gross),
         max_beta,
         betas,
         sector_of,
@@ -124,6 +125,7 @@ def _mvo(
         raise RuntimeError(f"SLSQP: {result.message}")
 
     w_opt = result.x
+    _check_sector_gross(tickers, w_opt, sector_of, max_sector_gross)
     return _weights_to_df(all_cands, w_opt, n_long, prices, betas, nav)
 
 
@@ -224,12 +226,12 @@ def _build_constraints(
     short_gross,
     min_pos,
     max_pos,
-    max_sector,
-    max_sector_net,
+    sector_limits,
     max_beta,
     betas,
     sector_of,
 ):
+    max_sector, max_sector_net, max_sector_gross = sector_limits  # per side, net, long + short
     long_idx = list(range(n_long))
     short_idx = list(range(n_long, n_long + n_short))
 
@@ -260,6 +262,14 @@ def _build_constraints(
             constraints.append(
                 {"type": "ineq", "fun": lambda w, ss=s_short: max_sector + sum(w[i] for i in ss)}
             )
+        constraints.append(
+            {
+                "type": "ineq",
+                "fun": lambda w, sl=s_long, ss=s_short: (
+                    max_sector_gross - sum(w[i] for i in sl) + sum(w[i] for i in ss)
+                ),
+            }
+        )
         if s_long and s_short:
             constraints.append(
                 {
@@ -272,6 +282,17 @@ def _build_constraints(
 
     bounds = [(min_pos, max_pos)] * n_long + [(-max_pos, -min_pos)] * n_short
     return constraints, bounds
+
+
+def _check_sector_gross(tickers, weights, sector_of, cap) -> None:
+    """Raise (-> conviction-tilt fallback) if a sector's long + short gross ends over cap."""
+    gross: dict[str, float] = {}
+    for ticker, w in zip(tickers, weights, strict=True):
+        sector = sector_of.get(ticker)
+        gross[sector] = gross.get(sector, 0.0) + abs(w)
+    over = {s: g for s, g in gross.items() if g > cap + 1e-6}
+    if over:
+        raise RuntimeError(f"SLSQP: sector gross over {cap:.2f}: {over}")
 
 
 def _weights_to_df(

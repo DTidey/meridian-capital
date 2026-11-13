@@ -24,7 +24,9 @@ _CONFIG = {
         "adv_lookback_days": 5,
         "max_position_pct": 1.0,  # rotation fixtures hold 10-15% names; cap tested in packet 66
     },
-    "risk": {"pre_trade": {"max_position_pct": 1.0}},
+    # Targets default to one sector ("Technology") at up to 150% gross; packet 66 caps a
+    # sector's combined gross in generate_trades, switched off here as for the position cap.
+    "risk": {"pre_trade": {"max_position_pct": 1.0, "max_sector_pct": 2.0}},
 }
 
 
@@ -491,7 +493,8 @@ def test_buffer_exit_generates_full_closure(tmp_db):
             "max_sector_net_pct": 1.0,
             "max_beta": 5.0,
             "adv_max_pct": 1.0,
-        }
+        },
+        "risk": _CONFIG["risk"],  # sector limits off, as max_sector_pct 1.0 above
     }
     # L4 (rank 4) is kept by the buffer; L7 (rank 7) and S9 (rank 9) are beyond rank 5
     current = _current_df([("L4", 40.0), ("L7", 25.0), ("S9", -30.0)])

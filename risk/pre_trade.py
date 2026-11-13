@@ -16,6 +16,7 @@ from data.db import daily_prices, earnings_calendar
 from factors.db import factor_scores as factor_scores_table
 from portfolio.beta import compute_betas, portfolio_beta
 from portfolio.db import portfolio_positions, position_approvals
+from portfolio.limits import sector_gross_cap
 from risk.db import risk_log
 from risk.risk_state import is_halted
 
@@ -395,7 +396,7 @@ def _load_config(config: dict) -> dict:
         "adv_lookback": int(pt.get("adv_lookback", 20)),
         "adv_pct": float(pt.get("adv_pct", 0.05)),
         "max_position_pct": float(pt.get("max_position_pct", 0.05)),
-        "max_sector_pct": float(pt.get("max_sector_pct", 0.25)),
+        "max_sector_pct": sector_gross_cap(config),
         "max_gross": float(pt.get("max_gross", 1.65)),
         "net_min": float(pt.get("net_min", -0.10)),
         "net_max": float(pt.get("net_max", 0.15)),

@@ -40,8 +40,14 @@ _CONFIG = {
             "top5_multiplier": 1.50,
             "top10_multiplier": 1.25,
         },
-    }
+    },
+    # Packet 66: the sector limit is long + short combined. 1.50 gross over 5 sectors is 0.30
+    # each, which a 0.25 combined limit cannot hold; 0.50 is the most the per-side 0.25 and net
+    # 0.05 caps allowed before, so these gross-target tests keep their behaviour.
+    "risk": {"pre_trade": {"max_sector_pct": 0.50}},
 }
+# Sector limit off (configs whose per-side cap of 1.0 already meant "never binds")
+_NO_SECTOR_LIMIT = {"pre_trade": {"max_sector_pct": 2.0}}
 
 _SCORE_DATE = "2026-03-01"
 
@@ -129,7 +135,7 @@ class TestOptimizerWeights:
                 "max_sector_net_pct": 1.0,
             }
         )
-        config = {"portfolio": cfg}
+        config = {"portfolio": cfg, "risk": _NO_SECTOR_LIMIT}
         candidates = _build_candidates()
         betas = _build_betas(candidates)
         prices = _build_prices(candidates)
@@ -195,7 +201,7 @@ def _loose_config():
             "max_sector_net_pct": 1.0,
         }
     )
-    return {"portfolio": cfg}
+    return {"portfolio": cfg, "risk": _NO_SECTOR_LIMIT}
 
 
 class TestConvictionTilt:
@@ -412,7 +418,7 @@ class TestAdjustBeta:
 # Packet 64: incumbent buffer (AC3, AC5)
 # ---------------------------------------------------------------------------
 
-_BUFFER_CFG = {"portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 15}}
+_BUFFER_CFG = {**_CONFIG, "portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 15}}
 
 
 def test_select_book_used_and_gross_preserved(tmp_db, monkeypatch):
@@ -462,7 +468,8 @@ def test_buffered_name_gets_no_tilt(tmp_db):
             "max_beta": 5.0,
             "max_sector_pct": 1.0,
             "max_sector_net_pct": 1.0,
-        }
+        },
+        "risk": _NO_SECTOR_LIMIT,
     }
     candidates = _build_candidates()
     current = pd.DataFrame({"ticker": ["L06"], "shares": [10.0]})
