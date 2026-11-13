@@ -62,9 +62,10 @@ Spec: `docs/specs/66-pretrade-sector-gross.md`
 - New tests: 18 in `tests/test_pretrade_sector_gross_2026_11_12.py`, 13 in
   `tests/test_optimizer_sector_gross.py`; the regression and optimiser tests failed before the
   fix (MOS rejected with the 11-12 reason; Industrials planned at 27.3% by conviction-tilt).
-- `make lint`: pass. `make test`: 1808 passed.
-- `make security`: Bandit clean; pip-audit fails on `soupsieve==2.9` (CVE-2026-126192,
-  CVE-2026-126190), a transitive pin this packet does not touch; known, out of scope.
+- Rebased onto `main` at `0e983ed` (packet 67, soupsieve 4.0); only the day log
+  `log/changelog-2026-11-13.md` conflicted (both entries kept, packets in order).
+- `make lint`: pass. `make test`: 1812 passed. `make security`: pass (Bandit clean; pip-audit
+  "No known vulnerabilities found" with soupsieve 4.0 from packet 67).
 
 ## GitHub Checks
 
@@ -79,8 +80,12 @@ Spec: `docs/specs/66-pretrade-sector-gross.md`
 - First run after merge plans reductions in any sector above 25% combined (Industrials); with
   the turnover budget a trimmed reduction keeps that sector over in the pro-forma book, and its
   adds are rejected that night (deliberate: all-or-nothing adds, no active trimming).
-- Refilling after a sector cap can move another sector's net beyond the 5% net cap (as the
-  existing renormalisation already could); pre-trade does not check sector net.
-- "Unknown" sector names are capped in Layer 4 but not checked by pre-trade (stricter in Layer 4).
+- Sector net cap after top-up: when conviction-tilt refills each book from sectors with room,
+  the long and short sides of a sector can grow by different factors, which can take that
+  sector's net past `max_sector_net_pct` (5%). The existing renormalisation could already do
+  this; the pre-trade check does not test sector net.
+- Names with no sector: the pre-trade check skips a ticker with no sector in `factor_scores`
+  (check 5 passes it, and it counts toward no sector). Layer 4 labels such names "Unknown" and
+  caps them as one sector, so Layer 4 is the stricter side here.
 
 Generated with [Claude Code](https://claude.com/claude-code)
