@@ -1,6 +1,8 @@
 """Packet 45: pip-audit runs with no ignores; the packet 36 pillow ignores are gone.
 
 Packet 47: filelock pinned at the version that fixes its October 2026 advisories.
+
+Packet 67: soupsieve pinned at the version that fixes its November 2026 advisories.
 """
 
 from __future__ import annotations
@@ -77,6 +79,14 @@ class TestPins:
             if pin:
                 assert _version(pin) >= (4, 2, 1), requirements
 
+    def test_soupsieve_at_fixed_version(self):
+        # CVE-2026-126192 is fixed in 2.10 but CVE-2026-126190 only in 4.0; 3.x has neither fix.
+        for requirements in _REQUIREMENTS:
+            assert _version(_pin(requirements, "soupsieve")) >= (4, 0), requirements
+
+    def test_soupsieve_pins_agree(self):
+        assert _pin("requirements.txt", "soupsieve") == _pin("requirements-dev.txt", "soupsieve")
+
     def test_certifi_at_fixed_version(self):
         for requirements in _REQUIREMENTS:
             assert _version(_pin(requirements, "certifi")) >= (2026, 10, 19), requirements
@@ -90,6 +100,9 @@ class TestVersionParsing:
         assert _version("21.14.12") >= (21, 14, 9)
         assert _version("3.29.4") < (4, 2, 1) <= _version("4.2.4")
         assert _version("4.2.0") < (4, 2, 1) <= _version("4.10.0")
+        # soupsieve: 2.10 sorts before 2.9 as a string; two-part 4.0 meets the (4, 0) floor.
+        assert _version("2.9") < _version("2.10") < (4, 0)
+        assert _version("3.0.4") < (4, 0) <= _version("4.0")
 
 
 class TestAdversarial:
@@ -104,3 +117,11 @@ class TestAdversarial:
 
     def test_commented_pin_does_not_count(self):
         assert _pin_in("#   pillow==13.0.0\n", "pillow") is None
+
+    def test_soupsieve_lookalike_does_not_count(self):
+        text = "soupsieve-ext==4.0\nsoupsieve==2.9\n"
+        assert _pin_in(text, "soupsieve") == "2.9"
+
+    def test_soupsieve_pin_in_via_comment_does_not_count(self):
+        text = "beautifulsoup4==4.15.0\n    # via soupsieve==4.0\nsoupsieve==2.9\n"
+        assert _pin_in(text, "soupsieve") == "2.9"
