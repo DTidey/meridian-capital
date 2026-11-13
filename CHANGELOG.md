@@ -81,6 +81,8 @@ Release policy:
   agent rules (packet `14-merge-10rules-into-agents`).
 
 ### Security
+- soupsieve 2.9 -> 4.0 (via beautifulsoup4) clears CVE-2026-126192 and CVE-2026-126190, which
+  failed `make security` on every PR (packet `67-soupsieve-4`).
 - filelock 3.29.4 -> 4.2.4 (dev only) clears three new advisories that failed `make security`
   on every PR (packet `47-filelock-4`).
 - pillow 12.3.0 -> 13.0.0 (with streamlit 1.66.1, the first to allow it) and virtualenv
