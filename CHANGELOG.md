@@ -95,6 +95,15 @@ Release policy:
   virtualenv) to clear pip-audit advisories (packet `10-dependency-security-bumps`).
 
 ### Fixed
+- Pre-trade sector check and Layer 4 sector / position limits (packet
+  `66-pretrade-sector-gross`): check 5 summed every sector of the pro-forma book, so one sector
+  over 25% (Industrials 26.9% on 2026-11-12) rejected every opening trade in every sector; it
+  now checks the trade's own sector only and rejects only trades that add to their own size.
+  Both optimisers now cap each sector's combined long + short gross at the pre-trade limit
+  (`risk.pre_trade.max_sector_pct`, one shared value; they only capped each side before), and
+  `generate_trades` keeps whole-share targets within that limit and the 5% position limit, so
+  Layer 4 no longer plans trades the pre-trade check rejects (Industrials adds; CF, DVA, AIZ).
+  Limit values unchanged.
 - Held prices in Layer 4 (packet `63-held-prices-layer4`): a held name that left the LONG/SHORT
   candidate list was priced at 0.00 with a $0 cost estimate, so its trade counted as $0 in the
   turnover budget and the build-up gap. Layer 4 now loads prices for candidates plus held

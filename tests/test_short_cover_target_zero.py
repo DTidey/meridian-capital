@@ -29,7 +29,9 @@ _CONFIG = {
         "turnover_budget_pct": 0.20,
         "transaction_costs": {"spread_hl_fraction": 0.05, "market_impact_coef": 0.10},
         "adv_lookback_days": 5,
+        "max_position_pct": 1.0,  # fixtures hold 10%+ names; cap tested in packet 66
     },
+    "risk": {"pre_trade": {"max_position_pct": 1.0}},
     "execution": {"limit_slippage_pct": 0.015, "max_adv_pct": 0.02, "shortable_cache_days": 7},
 }
 

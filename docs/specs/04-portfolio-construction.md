@@ -14,7 +14,7 @@ Layer 4 consumes the ranked long/short candidate list produced by Layer 3 (`comb
 - AC2: The conviction-tilt optimiser applies a 1.5x weight multiplier to the top-5% scoring positions and a 1.25x multiplier to the top-10% scoring positions (within each book), then re-normalises each book to its gross target.
 - AC3: For any ticker with earnings within `earnings_blackout_days` (default 5) days, the optimiser halves the position weight and redistributes the surplus equally across remaining positions in the same book.
 - AC4: The liquidity cap limits each position to no more than `adv_max_pct` (default 5%) of its 20-day average daily volume; positions exceeding this cap are trimmed and the surplus is redistributed.
-- AC5: Sector neutrality is enforced so that the net sector weight (long minus short) for any GICS sector does not exceed `max_sector_net_pct` (default 5% of NAV); the portfolio net beta is kept within `max_beta` (default 0.15) by scaling the short book.
+- AC5: Sector neutrality is enforced so that the net sector weight (long minus short) for any GICS sector does not exceed `max_sector_net_pct` (default 5% of NAV), and (since packet 66) its combined long + short gross does not exceed `risk.pre_trade.max_sector_pct` (25%, the limit the pre-trade check enforces); the portfolio net beta is kept within `max_beta` (default 0.15) by scaling the short book.
 - AC6: The MVO optimiser uses SLSQP to maximise `mu^T w - lambda * w^T Sigma w` subject to long/short gross targets, position bounds, beta constraint, and per-sector caps; if `result.success == False` or any exception occurs, it falls back to conviction-tilt and logs a warning.
 - AC7: The rebalance generator diffs the current `portfolio_positions` against the target, maps deltas to BUY/SELL/SHORT/COVER/HOLD actions, respects the per-run `turnover_budget_pct` (default 30%) and estimates transaction costs for each trade. Since packet 57 the budget limits rotation only: per book, trades that move the book toward its target gross (opens and adds below target, reductions and closures above it) are exempt up to |target gross - current gross|. Over budget, full closures are kept and spend the budget first; the rest of each book (budget split between books by trade value) is kept by conviction `|combined_score - 50|`, highest first, skipping any trade that does not fit. Trimmed trades are written to `position_approvals` with status `TRIMMED` (never acted on) and the run prints a turnover summary.
 - AC8: When `--rebalance` is run without `--whatif`, the system writes proposed trades to `position_approvals` (status PENDING), upserts `portfolio_positions`, and appends a snapshot row to `portfolio_history`. (Superseded by packet 44: `docs/specs/44-book-of-record.md`: rebalance writes approvals only; positions and history come from the broker.)
@@ -162,6 +162,7 @@ portfolio:
   max_position_pct:       0.05        # max single position (5% of NAV)
   min_position_pct:       0.005       # min meaningful position (0.5%)
   max_sector_pct:         0.25        # single-side sector cap (25%)
+  # combined long + short sector gross: risk.pre_trade.max_sector_pct (25%, packet 66)
   max_sector_net_pct:     0.05        # sector net exposure cap (5%)
   max_beta:               0.15        # portfolio net beta cap
   turnover_budget_pct:    0.30        # max fraction of NAV rotated per run; build-up to target gross exempt (packet 57)
@@ -339,7 +340,7 @@ Primary optimiser. Always produces a valid result.
 
 6. **Position bounds:** Clamp each weight to `[min_position_pct, max_position_pct]`. Re-normalise.
 
-7. **Sector neutrality:** For each GICS sector, compute `net_sector_weight = Σ(long_weights) − Σ(short_weights)`. If `|net_sector_weight| > max_sector_net_pct`, scale down the dominant-side positions in that sector proportionally until the constraint is met.
+7. **Sector neutrality:** For each GICS sector, compute `net_sector_weight = Σ(long_weights) − Σ(short_weights)`. If `|net_sector_weight| > max_sector_net_pct`, scale down the dominant-side positions in that sector proportionally until the constraint is met. Then (packet 66) any sector whose long + short gross exceeds `risk.pre_trade.max_sector_pct` has both sides scaled down to it, and each book is refilled to its gross target from names in sectors below the limit, within `max_position_pct`; after the beta step a second pass only scales down. If the sectors cannot hold a book's gross, the book is left short of it with a warning.
 
 8. **Beta adjustment:** Compute `net_beta = portfolio_beta(weights, betas)`. If `|net_beta| > max_beta`, scale the short book up or down until the constraint is satisfied (keeps long book fixed to avoid over-trading the higher-conviction side). Since packet 52: reweight within each book (longs by exp(-k beta), shorts by exp(+k beta), bounded, gross kept), k found by bisection; a warning if the limit cannot be reached.
 
@@ -382,6 +383,7 @@ min  −μᵀw + λ wᵀΣw
 5. `|wᵀβ| ≤ max_beta` (beta constraint, implemented as two inequality constraints)
 6. For each sector s: `|Σ_{i∈s} w_i| ≤ max_sector_net_pct` (inequality)
 7. For each sector s, each side: `Σ_{i∈s,L} w_i ≤ max_sector_pct` and `Σ_{i∈s,S} |w_i| ≤ max_sector_pct`
+8. For each sector s (packet 66): `Σ_{i∈s} |w_i| ≤ risk.pre_trade.max_sector_pct`; a solution more than 1e-6 over it raises and falls back to conviction-tilt
 
 **Initial guess:** conviction-tilt weights (warm start for faster convergence).
 

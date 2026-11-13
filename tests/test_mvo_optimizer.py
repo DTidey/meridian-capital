@@ -105,7 +105,10 @@ _CONFIG = {
             "max_iter": 500,
         },
         "transaction_costs": {"spread_hl_fraction": 0.05, "market_impact_coef": 0.10},
-    }
+    },
+    # All candidates are "Technology" and the per-side cap of 0.90 never binds; packet 66's
+    # combined (long + short) sector limit is switched off to match.
+    "risk": {"pre_trade": {"max_sector_pct": 2.0}},
 }
 
 
@@ -203,7 +206,7 @@ def test_select_book_used(tmp_db, monkeypatch):
     _seed_prices(tmp_db, tickers + ["SPY"])
     prices = _make_prices_dict(tickers)
     betas = pd.Series(dict.fromkeys(tickers, 1.0))
-    config = {"portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 8}}
+    config = {**_CONFIG, "portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 8}}
     current = pd.DataFrame({"ticker": ["L6", "S7"], "shares": [10.0, -10.0]})
 
     result = optimise(cands, prices, betas, config, "2024-03-30", tmp_db, current)
@@ -218,6 +221,6 @@ def test_select_book_used(tmp_db, monkeypatch):
 def test_bad_exit_rank_raises_before_fallback(tmp_db):
     """Packet 64 AC10: a bad exit rank raises, not a silent conviction-tilt fallback."""
     cands = _make_candidates()
-    config = {"portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 3}}
+    config = {**_CONFIG, "portfolio": {**_CONFIG["portfolio"], "incumbent_exit_rank": 3}}
     with pytest.raises(ValueError, match="incumbent_exit_rank"):
         optimise(cands, {}, pd.Series(dtype=float), config, "2024-03-30", tmp_db)

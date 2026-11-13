@@ -1,12 +1,14 @@
 """Diff current vs target to generate a trade list."""
 
 import logging
+import math
 from datetime import UTC, datetime
 
 import pandas as pd
 import sqlalchemy as sa
 
 from portfolio.db import position_approvals
+from portfolio.limits import position_cap, sector_gross_cap
 from portfolio.transaction_costs import estimate_cost
 
 logger = logging.getLogger(__name__)
@@ -43,31 +45,24 @@ def generate_trades(
         if not current.empty and "shares" in current.columns
         else {}
     )
+    tgt_cols = [c for c in ("shares", "direction", "combined_score", "sector") if c in target]
     tgt_map = (
-        target.set_index("ticker")[["shares", "direction", "combined_score"]].to_dict(
-            orient="index"
-        )
-        if not target.empty
-        else {}
+        target.set_index("ticker")[tgt_cols].to_dict(orient="index") if not target.empty else {}
     )
 
     all_tickers = set(cur_map) | set(tgt_map)
+    price_of = {t: _last_close(prices.get(t, pd.DataFrame())) for t in all_tickers}
+    planned = _planned_shares(tgt_map, price_of, nav, config)
     rows = []
     for ticker in all_tickers:
         cur_shares = cur_map.get(ticker, 0.0)
         tgt_info = tgt_map.get(ticker, {})
-        tgt_shares = round(tgt_info.get("shares", 0.0))  # Alpaca limit orders are whole shares
         direction = tgt_info.get("direction") or _infer_direction(cur_shares)
+        price_df = prices.get(ticker, pd.DataFrame())
+        price = price_of[ticker]
+        tgt_shares = planned.get(ticker, 0)
         delta = tgt_shares - cur_shares
         action = map_action(cur_shares, tgt_shares, delta)
-
-        price_df = prices.get(ticker, pd.DataFrame())
-        close_col = "close" if (not price_df.empty and "close" in price_df.columns) else "adj_close"
-        price = (
-            float(price_df[close_col].iloc[-1])
-            if (not price_df.empty and close_col in price_df.columns)
-            else 0.0
-        )
         cost = (
             estimate_cost(ticker, abs(delta), price, price_df, config)
             if abs(delta) >= _HOLD_THRESHOLD
@@ -142,6 +137,79 @@ def map_action(cur: float, tgt: float, delta: float) -> str:
     if tgt < 0 and cur < 0 and delta < 0:
         return "SHORT"
     return "HOLD"
+
+
+def _last_close(price_df: pd.DataFrame) -> float:
+    close_col = "close" if (not price_df.empty and "close" in price_df.columns) else "adj_close"
+    if price_df.empty or close_col not in price_df.columns:
+        return 0.0
+    return float(price_df[close_col].iloc[-1])
+
+
+def _planned_shares(
+    tgt_map: dict[str, dict], price_of: dict[str, float], nav: float, config: dict
+) -> dict[str, float]:
+    """Whole-share targets within the position cap and, per sector, the sector gross cap."""
+    cap = position_cap(config)
+    # Alpaca limit orders are whole shares
+    shares = {
+        t: _cap_shares(round(info.get("shares", 0.0)), price_of[t], nav, cap)
+        for t, info in tgt_map.items()
+    }
+    by_sector: dict[str, dict[str, float]] = {}
+    for t, info in tgt_map.items():
+        sector = info.get("sector")
+        if isinstance(sector, str) and sector and price_of[t] > 0:
+            by_sector.setdefault(sector, {})[t] = float(info.get("shares", 0.0))
+    sector_cap = sector_gross_cap(config)
+    for raw in by_sector.values():
+        shares.update(_cap_sector_shares(shares, raw, price_of, nav, sector_cap))
+    return shares
+
+
+def _cap_shares(shares: float, price: float, nav: float, cap: float) -> float:
+    """Whole shares worth at most cap x NAV at price, sign kept; unpriced targets unchanged.
+
+    Optimiser renormalisation and whole-share rounding can land a target just above the cap,
+    which the pre-trade POSITION_SIZE check would reject (packet 66).
+    """
+    if not price > 0 or nav <= 0 or abs(shares) * price / nav <= cap:  # `not >` catches NaN
+        return shares
+    limit = math.floor(cap * nav / price)
+    if limit * price / nav > cap:  # float edge: the floor still prices a hair above the cap
+        limit -= 1
+    return math.copysign(limit, shares) + 0.0
+
+
+def _cap_sector_shares(
+    shares: dict[str, float],
+    raw: dict[str, float],
+    price_of: dict[str, float],
+    nav: float,
+    cap: float,
+) -> dict[str, float]:
+    """One sector's whole shares (tickers in raw) with combined |value| <= cap x NAV.
+
+    The optimisers plan a sector up to the cap; rounding to whole shares can tip it over, which
+    the pre-trade sector check would reject (packet 66). Truncate toward zero (scaled if the
+    plan itself is over), then take shares off the largest position until within the cap.
+    """
+    out = {t: shares[t] for t in raw}
+    if nav <= 0 or _value(out, price_of) <= cap * nav:
+        return out
+    raw_value = _value(raw, price_of)
+    scale = min(1.0, cap * nav / raw_value) if raw_value > 0 else 0.0
+    for t in out:
+        whole = min(abs(out[t]), math.floor(abs(raw[t]) * scale))
+        out[t] = math.copysign(whole, out[t]) + 0.0
+    while _value(out, price_of) > cap * nav:  # float edge after flooring
+        largest = max(out, key=lambda t: abs(out[t]) * price_of[t])
+        out[largest] -= math.copysign(1.0, out[largest])
+    return out
+
+
+def _value(shares: dict[str, float], price_of: dict[str, float]) -> float:
+    return sum(abs(s) * price_of[t] for t, s in shares.items())
 
 
 def _warn_missing_prices(trades: pd.DataFrame) -> None:
