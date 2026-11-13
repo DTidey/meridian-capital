@@ -28,7 +28,9 @@ _CONFIG = {
         "transaction_costs": {"spread_hl_fraction": 0.05, "market_impact_coef": 0.10},
         "mvo": {"cov_lookback_days": 130},
         "beta_lookback_days": 60,
-    }
+        "max_position_pct": 1.0,  # fixtures hold 10%+ names; cap tested in packet 66
+    },
+    "risk": {"pre_trade": {"max_position_pct": 1.0}},
 }
 
 
@@ -240,7 +242,7 @@ class TestRunWiring:
 
 
 def _trades(current_rows, target_rows, prices, budget=0.30):
-    config = {"portfolio": {**_CONFIG["portfolio"], "turnover_budget_pct": budget}}
+    config = {**_CONFIG, "portfolio": {**_CONFIG["portfolio"], "turnover_budget_pct": budget}}
     current = pd.DataFrame(current_rows, columns=["ticker", "shares"])
     target = pd.DataFrame(target_rows, columns=["ticker", "shares", "direction", "combined_score"])
     return generate_trades(current, target, prices, config, None, _SCORE_DATE, commit=False)

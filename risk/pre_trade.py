@@ -169,10 +169,10 @@ def _evaluate_trade(
         ticker, action, target_shares, price, nav, positions_df
     )
 
-    # Check 5 — sector concentration
-    sector = sector_map.get(ticker)
+    # Check 5 — sector concentration (the trade's own sector, adds only)
+    current_weight = current_shares * price / nav if nav > 0 else 0.0
     reject, reason = _check_sector_concentration(
-        proforma_weights, sector_map, sector, cfg["max_sector_pct"]
+        proforma_weights, sector_map, ticker, current_weight, cfg["max_sector_pct"]
     )
     if reject:
         return "REJECTED", reason, None
@@ -233,25 +233,27 @@ def _evaluate_trade(
 def _check_sector_concentration(
     proforma_weights: pd.Series,
     sector_map: dict[str, str],
-    new_ticker_sector: str | None,
+    ticker: str,
+    current_weight: float,
     max_sector_pct: float,
 ) -> tuple[bool, str]:
-    """Return (reject, reason). Gross sector exposure = sum of abs weights in sector."""
-    if not new_ticker_sector:
+    """Return (reject, reason) for the trade's own sector (sum of abs weights, packet 66).
+
+    Only a trade that adds to its own absolute weight can be rejected, so a reduction passes
+    while its sector is still over the limit, and other sectors' breaches never block it.
+    """
+    sector = sector_map.get(ticker)
+    if not sector or abs(proforma_weights[ticker]) <= abs(current_weight):
         return False, ""
 
-    sector_gross: dict[str, float] = {}
-    for tkr, wt in proforma_weights.items():
-        sec = sector_map.get(tkr)
-        if sec:
-            sector_gross[sec] = sector_gross.get(sec, 0.0) + abs(wt)
-
-    for sec, gross_exp in sector_gross.items():
-        if gross_exp > max_sector_pct:
-            return (
-                True,
-                f"SECTOR_CONCENTRATION: {sec} pro-forma gross {gross_exp:.1%} > max {max_sector_pct:.1%}",
-            )
+    gross_exp = sum(
+        abs(wt) for tkr, wt in proforma_weights.items() if sector_map.get(tkr) == sector
+    )
+    if gross_exp > max_sector_pct:
+        return (
+            True,
+            f"SECTOR_CONCENTRATION: {sector} pro-forma gross {gross_exp:.1%} > max {max_sector_pct:.1%}",
+        )
     return False, ""
 
 

@@ -57,7 +57,12 @@ def _config(**overrides):
     return {
         "portfolio": pcfg,
         "risk": {
-            "pre_trade": {"max_gross": 1.65, "net_min": -0.10, "net_max": 0.15},
+            "pre_trade": {
+                "max_gross": 1.65,
+                "net_min": -0.10,
+                "net_max": 0.15,
+                "max_position_pct": 0.15,  # as portfolio.max_position_pct above
+            },
             "tail_risk": {
                 "vix_caution": 25.0,
                 "vix_stress": 35.0,

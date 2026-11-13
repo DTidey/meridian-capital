@@ -1,6 +1,7 @@
 """Diff current vs target to generate a trade list."""
 
 import logging
+import math
 from datetime import UTC, datetime
 
 import pandas as pd
@@ -32,6 +33,7 @@ def generate_trades(
     pcfg = config.get("portfolio", {})
     nav = float(pcfg.get("nav_usd", 10_000_000))
     turnover = float(pcfg.get("turnover_budget_pct", 0.30))
+    cap = _position_cap(config)
 
     if not current.empty and current["ticker"].duplicated().any():
         # Last-wins would size the trade from one lot only (e.g. cover 5 of a -15 short).
@@ -56,10 +58,7 @@ def generate_trades(
     for ticker in all_tickers:
         cur_shares = cur_map.get(ticker, 0.0)
         tgt_info = tgt_map.get(ticker, {})
-        tgt_shares = round(tgt_info.get("shares", 0.0))  # Alpaca limit orders are whole shares
         direction = tgt_info.get("direction") or _infer_direction(cur_shares)
-        delta = tgt_shares - cur_shares
-        action = map_action(cur_shares, tgt_shares, delta)
 
         price_df = prices.get(ticker, pd.DataFrame())
         close_col = "close" if (not price_df.empty and "close" in price_df.columns) else "adj_close"
@@ -68,6 +67,10 @@ def generate_trades(
             if (not price_df.empty and close_col in price_df.columns)
             else 0.0
         )
+        tgt_shares = round(tgt_info.get("shares", 0.0))  # Alpaca limit orders are whole shares
+        tgt_shares = _cap_shares(tgt_shares, price, nav, cap)
+        delta = tgt_shares - cur_shares
+        action = map_action(cur_shares, tgt_shares, delta)
         cost = (
             estimate_cost(ticker, abs(delta), price, price_df, config)
             if abs(delta) >= _HOLD_THRESHOLD
@@ -142,6 +145,27 @@ def map_action(cur: float, tgt: float, delta: float) -> str:
     if tgt < 0 and cur < 0 and delta < 0:
         return "SHORT"
     return "HOLD"
+
+
+def _position_cap(config: dict) -> float:
+    """Sizing cap: the stricter of Layer 4's and the pre-trade check's max_position_pct."""
+    sizing = float(config.get("portfolio", {}).get("max_position_pct", 0.05))
+    pre_trade = config.get("risk", {}).get("pre_trade", {})
+    return min(sizing, float(pre_trade.get("max_position_pct", 0.05)))
+
+
+def _cap_shares(shares: float, price: float, nav: float, cap: float) -> float:
+    """Whole shares worth at most cap x NAV at price, sign kept; unpriced targets unchanged.
+
+    Optimiser renormalisation and whole-share rounding can land a target just above the cap,
+    which the pre-trade POSITION_SIZE check would reject (packet 66).
+    """
+    if not price > 0 or nav <= 0 or abs(shares) * price / nav <= cap:  # `not >` catches NaN
+        return shares
+    limit = math.floor(cap * nav / price)
+    if limit * price / nav > cap:  # float edge: the floor still prices a hair above the cap
+        limit -= 1
+    return math.copysign(limit, shares) + 0.0
 
 
 def _warn_missing_prices(trades: pd.DataFrame) -> None:

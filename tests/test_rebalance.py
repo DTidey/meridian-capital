@@ -22,7 +22,9 @@ _CONFIG = {
             "market_impact_coef": 0.10,
         },
         "adv_lookback_days": 5,
-    }
+        "max_position_pct": 1.0,  # rotation fixtures hold 10-15% names; cap tested in packet 66
+    },
+    "risk": {"pre_trade": {"max_position_pct": 1.0}},
 }
 
 
@@ -200,7 +202,10 @@ class TestTurnoverBudget:
 
 
 def _cfg(nav=1_000_000, budget=0.20):
-    return {"portfolio": {**_CONFIG["portfolio"], "nav_usd": nav, "turnover_budget_pct": budget}}
+    return {
+        **_CONFIG,
+        "portfolio": {**_CONFIG["portfolio"], "nav_usd": nav, "turnover_budget_pct": budget},
+    }
 
 
 def _book_from_cash(nav=100_000.0):
