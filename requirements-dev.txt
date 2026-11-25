@@ -233,7 +233,7 @@ pytz==2026.6
     # via
     #   -r requirements.in
     #   yfinance
-pyyaml==6.0.3
+pyyaml==6.0.4
     # via
     #   -r requirements.in
     #   bandit
