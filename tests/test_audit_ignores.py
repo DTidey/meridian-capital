@@ -3,12 +3,17 @@
 Packet 47: filelock pinned at the version that fixes its October 2026 advisories.
 
 Packet 67: soupsieve pinned at the version that fixes its November 2026 advisories.
+
+Packet 69: virtualenv pinned at the version that fixes PYSEC-2026-4402.
 """
 
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
 _REQUIREMENTS = ["requirements.txt", "requirements-dev.txt"]
@@ -62,7 +67,8 @@ class TestPins:
             assert _version(_pin(requirements, "streamlit")) >= (1, 66, 1), requirements
 
     def test_virtualenv_at_fixed_version(self):
-        assert _version(_pin("requirements-dev.txt", "virtualenv")) >= (21, 14, 9)
+        # PYSEC-2026-4402 is fixed in 21.14.13 (packet 69); the earlier floor was 21.14.9.
+        assert _version(_pin("requirements-dev.txt", "virtualenv")) >= (21, 14, 13)
 
     def test_shared_pins_agree(self):
         # virtualenv is dev-only (via pre-commit), so it is not in requirements.txt.
@@ -103,6 +109,9 @@ class TestVersionParsing:
         # soupsieve: 2.10 sorts before 2.9 as a string; two-part 4.0 meets the (4, 0) floor.
         assert _version("2.9") < _version("2.10") < (4, 0)
         assert _version("3.0.4") < (4, 0) <= _version("4.0")
+        # virtualenv: 21.14.12 is the vulnerable pin; 21.14.9 sorts after it as a string.
+        assert _version("21.14.12") < (21, 14, 13) <= _version("21.14.13")
+        assert _version("21.14.9") < (21, 14, 13) <= _version("21.15.0")
 
 
 class TestAdversarial:
@@ -125,3 +134,19 @@ class TestAdversarial:
     def test_soupsieve_pin_in_via_comment_does_not_count(self):
         text = "beautifulsoup4==4.15.0\n    # via soupsieve==4.0\nsoupsieve==2.9\n"
         assert _pin_in(text, "soupsieve") == "2.9"
+
+    def test_virtualenv_lookalike_does_not_count(self):
+        text = "virtualenv-clone==21.14.13\nvirtualenv==21.14.12\n"
+        assert _pin_in(text, "virtualenv") == "21.14.12"
+
+    def test_virtualenv_pin_in_via_comment_does_not_count(self):
+        text = "pre-commit==4.0.0\n    #   virtualenv==21.14.13\nvirtualenv==21.14.12\n"
+        assert _pin_in(text, "virtualenv") == "21.14.12"
+
+    def test_virtualenv_missing_pin_is_reported(self, tmp_path, monkeypatch):
+        # Only a lookalike, no real pin: the floor test must report it missing, not pass.
+        (tmp_path / "requirements-dev.txt").write_text("virtualenv-clone==21.14.13\n")
+        assert _pin_in("virtualenv-clone==21.14.13\n", "virtualenv") is None
+        monkeypatch.setattr(sys.modules[__name__], "_ROOT", tmp_path)
+        with pytest.raises(AssertionError, match="virtualenv not pinned in requirements-dev.txt"):
+            TestPins().test_virtualenv_at_fixed_version()

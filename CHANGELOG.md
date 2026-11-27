@@ -81,6 +81,8 @@ Release policy:
   agent rules (packet `14-merge-10rules-into-agents`).
 
 ### Security
+- virtualenv 21.14.12 -> 21.14.13 (dev only, via pre-commit) clears PYSEC-2026-4402, which
+  failed `make security` on `main` and every PR (packet `69-virtualenv-cve`).
 - soupsieve 2.9 -> 4.0 (via beautifulsoup4) clears CVE-2026-126192 and CVE-2026-126190, which
   failed `make security` on every PR (packet `67-soupsieve-4`).
 - filelock 3.29.4 -> 4.2.4 (dev only) clears three new advisories that failed `make security`
