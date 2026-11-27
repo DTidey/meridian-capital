@@ -7,6 +7,12 @@ import pytest
 import run_all
 
 
+@pytest.fixture(autouse=True)
+def _market_open(monkeypatch):
+    """Keep the packet 68 market-day check offline: every day is a trading day here."""
+    monkeypatch.setattr(run_all, "closed_reason", lambda day: None)
+
+
 def _layer1_cmd(monkeypatch, argv: list[str]) -> list[str]:
     """Run run_all.main, stopping after Layer 1; return the Layer 1 command."""
     cmds = []
@@ -66,7 +72,8 @@ def test_book_sync_runs_between_layers_3_and_4(monkeypatch):
 def test_book_sync_command_and_whatif(monkeypatch):
     steps = {label: (cmd, skip) for label, cmd, skip in _commands(monkeypatch, ["--whatif"])}
     cmd, skip = steps["Book sync"]
-    assert cmd[1:] == ["run_execution.py", "--sync"]
+    assert cmd[1:3] == ["run_execution.py", "--sync"]
+    assert cmd[3] == "--date"  # packet 68: the run's one score date
     assert skip is False
 
 

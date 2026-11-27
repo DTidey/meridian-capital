@@ -10,7 +10,6 @@ import argparse
 import logging
 import sys
 import time
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -71,6 +70,7 @@ from factors import (
 )
 from factors.db import crowding_flags, factor_scores, regime_state  # noqa: E402
 from factors.loader import load_scoring_data  # noqa: E402
+from factors.score_date import resolve_score_date  # noqa: E402
 
 
 def _load_config() -> dict:
@@ -233,7 +233,7 @@ def main() -> None:
     regime_mod.validate(scoring_cfg.get("regime_weights", {}) or {})  # bad bands stop here
 
     # Score date
-    score_date = args.date or (scoring_cfg.get("score_date") or date.today().isoformat())
+    score_date = resolve_score_date(args.date, scoring_cfg)
     logger.info("=" * 60)
     logger.info("Meridian Capital Partners — Layer 2 Factor Scoring")
     logger.info("Score date: %s", score_date)
