@@ -42,7 +42,7 @@ class _Alpaca:
         return [_entry(d, self.close_hour_utc) for d in self.trading_days if d == filters.start]
 
 
-def _run(monkeypatch, score_date, alpaca, argv=(), cmds=None):
+def _run(monkeypatch, score_date, alpaca, argv=(), cmds=None, run_day=None):
     """Run run_all.main with layers faked; return (labels run, exit code)."""
     labels = []
 
@@ -54,8 +54,9 @@ def _run(monkeypatch, score_date, alpaca, argv=(), cmds=None):
 
     monkeypatch.setattr(run_all, "_run", fake_run)
     monkeypatch.setattr(run_all, "_load_config", lambda: {"scoring": {"score_date": score_date}})
-    if score_date is not None:  # the fixed score date is "today" here (historical: own tests)
-        monkeypatch.setattr(run_all, "run_date", lambda: score_date)
+    run_day = run_day or score_date  # the fixed score date is "today" here unless given
+    if run_day is not None:
+        monkeypatch.setattr(run_all, "run_date", lambda: run_day)
     monkeypatch.setattr(market_calendar, "get_client", alpaca)
     monkeypatch.setattr("sys.argv", ["run_all.py", "--no-filings", "--no-13f", *argv])
     try:
@@ -146,10 +147,19 @@ def test_whatif_and_tickers_skipped_on_holiday(monkeypatch):
     assert (labels, code) == ([], 0)
 
 
-def test_bad_config_score_date_fails_open(monkeypatch, capsys):
-    labels, _ = _run(monkeypatch, "26/11/2026", _Alpaca(trading_days=[]))
-    assert labels[0].startswith("Layer 1")
-    assert "WARNING: market calendar check failed" in capsys.readouterr().out
+def test_bad_config_score_date_refused_before_calendar(monkeypatch, capsys):
+    """A malformed scoring.score_date is not the run date: AC12 stops the run before the
+    calendar check and before any layer (production behaviour; the run date stays valid)."""
+    checked = []
+    monkeypatch.setattr(run_all, "closed_reason", lambda day: checked.append(day))
+    alpaca = _Alpaca(trading_days=[date(2026, 11, 27)])
+    labels, code = _run(monkeypatch, "26/11/2026", alpaca, run_day="2026-11-27")
+    assert code == 1
+    assert labels == []
+    assert checked == [] and alpaca.requests == []
+    out = capsys.readouterr().out
+    assert "ERROR: score date 26/11/2026 is not the run date 2026-11-27" in out
+    assert "WARNING: market calendar check failed" not in out
 
 
 def test_response_for_other_dates_fails_open(monkeypatch, capsys):

@@ -101,8 +101,9 @@ none touches an external network or a real database.
     `test_response_for_other_dates_fails_open`
   - `--whatif` / `--tickers` on a holiday: `test_whatif_and_tickers_skipped_on_holiday`
 - Additional adversarial cases:
-  - Malformed `scoring.score_date` (`26/11/2026`) fails open, not into a skip:
-    `test_bad_config_score_date_fails_open`
+  - Malformed `scoring.score_date` (`26/11/2026`) with a valid run date (2026-11-27) is not
+    the run date, so AC12 refuses it: exit 1, ERROR line, neither the calendar check nor
+    any layer runs, no calendar WARNING (`test_bad_config_score_date_refused_before_calendar`)
   - Unexpected exception type from the client (RuntimeError) fails open:
     `test_unexpected_exception_type_fails_open`
   - Raw dict response (client in raw-data mode), `None` response, entry without `date`: all
