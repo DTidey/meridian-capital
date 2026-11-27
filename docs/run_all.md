@@ -15,3 +15,15 @@ python run_all.py --tickers AAPL MSFT NVDA --no-execution --no-reporting
 
 # Full run with stress tests, dry-run on Alpaca
 python run_all.py --no-filings --no-13f --stress --dry-run
+
+# Market holidays (packet 68): before Layer 1, run_all checks the score date (the date Layer 2
+# scores: scoring.score_date in config.yaml, else today). Weekends are closed; weekdays are
+# checked against Alpaca's trading calendar (one call, existing ALPACA_* keys). On a closed day
+# it prints one line and exits 0 without running any layer:
+#   Market closed on 2026-11-26 (holiday): skipping the nightly run
+# Early-close half-days are trading days and run normally. If the calendar lookup fails it
+# prints "WARNING: market calendar check failed for <date> (<error>): running the pipeline"
+# and runs; the Layer 2 SPY freshness guard still stops a real holiday.
+
+# Force a run on a day the calendar says is closed
+python run_all.py --no-filings --no-13f --ignore-market-calendar

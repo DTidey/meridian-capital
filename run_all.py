@@ -14,15 +14,29 @@ Usage:
     python run_all.py --whatif               # preview only: no commits in portfolio/risk/execution
     python run_all.py --stress               # include stress tests in risk check
     python run_all.py --forms 4              # Layer 1 fetches only these SEC form types
+    python run_all.py --ignore-market-calendar  # run even if the market is closed
+
+On a day the US market is closed (weekend or holiday, per Alpaca's calendar) for the score
+date, the run is skipped with exit 0 before Layer 1. A failed calendar lookup never skips.
 """
 
 import argparse
 import subprocess
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
+import yaml
+from dotenv import load_dotenv
+
 _ROOT = Path(__file__).parent
+load_dotenv(_ROOT / ".env")
+sys.path.insert(0, str(_ROOT))
+
+from execution.market_calendar import closed_reason  # noqa: E402
+from factors.score_date import resolve_score_date  # noqa: E402
+
 _PYTHON = sys.executable
 
 GREEN = "\033[32m"
@@ -54,6 +68,34 @@ def _run(label: str, cmd: list[str], skip: bool = False) -> bool:
         return False
 
 
+def _load_config() -> dict:
+    with open(_ROOT / "config.yaml") as f:
+        return yaml.safe_load(f)
+
+
+def _market_closed(ignore_calendar: bool) -> bool:
+    """True when the market is closed on Layer 2's score date; any lookup error runs."""
+    if ignore_calendar:
+        print("Market calendar check skipped (--ignore-market-calendar): running the pipeline")
+        return False
+    score_date = "unknown date"
+    try:
+        score_date = resolve_score_date(None, _load_config().get("scoring") or {})
+        reason = closed_reason(date.fromisoformat(score_date))
+    except Exception as exc:  # fail open: a lookup error must never skip a trading day
+        print(
+            f"{YELLOW}WARNING: market calendar check failed for {score_date} ({exc}): "
+            f"running the pipeline{RESET}",
+            flush=True,
+        )
+        return False
+    if reason:
+        print(f"Market closed on {score_date} ({reason}): skipping the nightly run")
+        return True
+    print(f"Market open on {score_date}: running the pipeline", flush=True)
+    return False
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Meridian Capital Partners — full pipeline")
     p.add_argument("--no-filings", action="store_true", help="Skip SEC filings (Layer 1)")
@@ -67,12 +109,20 @@ def main() -> None:
     p.add_argument(
         "--forms", nargs="+", metavar="FORM", help="SEC form types for Layer 1, e.g. --forms 4"
     )
+    p.add_argument(
+        "--ignore-market-calendar",
+        action="store_true",
+        help="Run even if the market is closed on the score date",
+    )
     args = p.parse_args()
 
     t_start = time.time()
     print(f"\n{BOLD}{'═' * 60}")
     print("  MERIDIAN CAPITAL PARTNERS — Pipeline Runner")
     print(f"{'═' * 60}{RESET}")
+
+    if _market_closed(args.ignore_market_calendar):
+        return
 
     failures: list[str] = []
 

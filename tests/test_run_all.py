@@ -7,6 +7,12 @@ import pytest
 import run_all
 
 
+@pytest.fixture(autouse=True)
+def _market_open(monkeypatch):
+    """Keep the packet 68 market-day check offline: every day is a trading day here."""
+    monkeypatch.setattr(run_all, "closed_reason", lambda day: None)
+
+
 def _layer1_cmd(monkeypatch, argv: list[str]) -> list[str]:
     """Run run_all.main, stopping after Layer 1; return the Layer 1 command."""
     cmds = []

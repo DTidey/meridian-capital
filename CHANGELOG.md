@@ -34,6 +34,11 @@ Release policy:
   without editing `config.yaml` (packet `12-llm-provider-env`).
 
 ### Changed
+- Market holidays (packet `68-holiday-skip`): `run_all.py` checks the score date before
+  Layer 1 (weekends locally, weekdays against Alpaca's trading calendar) and on a closed day
+  prints `Market closed on <date> (<reason>): skipping the nightly run` and exits 0 instead of
+  failing at Layer 2's SPY guard. Calendar errors never skip (WARNING, then run);
+  `--ignore-market-calendar` forces a run; the score date is shared with Layer 2.
 - yfinance inplace warnings (packet `65-remove-yf-inplace-filter`): the packet 55 filter is
   removed because yfinance 1.8.0 no longer calls pandas with `inplace`; a test runs the Layer 1
   download path through real yfinance on stubbed responses and fails on any pandas deprecation.
