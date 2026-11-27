@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import requests
 
@@ -36,6 +36,21 @@ def _with_timeout(client):
     return client
 
 
+def _listed_dates(entries) -> list[date]:
+    """Dates in a calendar response; anything but a list/tuple of dated entries is unusable.
+
+    Checked before emptiness is read as a holiday, so a malformed answer can never skip a day.
+    """
+    if not isinstance(entries, list | tuple):
+        raise CalendarUnavailable(f"unusable calendar response: {type(entries).__name__}")
+    listed = [getattr(e, "date", None) for e in entries]
+    for d in listed:
+        # datetime is a date subclass; a calendar day must be a plain date
+        if not isinstance(d, date) or isinstance(d, datetime):
+            raise CalendarUnavailable(f"unusable calendar entry date: {d!r}")
+    return listed
+
+
 def closed_reason(day: date, client_factory=None) -> str | None:
     """'weekend' or 'holiday' when the market is closed on day; None on a trading day.
 
@@ -49,7 +64,7 @@ def closed_reason(day: date, client_factory=None) -> str | None:
 
         client = _with_timeout((client_factory or get_client)())
         entries = client.get_calendar(GetCalendarRequest(start=day, end=day))
-        listed = [e.date for e in entries]
+        listed = _listed_dates(entries)
     except CalendarUnavailable:
         raise
     except Exception as exc:

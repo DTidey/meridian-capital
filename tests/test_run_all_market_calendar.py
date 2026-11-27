@@ -261,3 +261,17 @@ def test_stalled_calendar_warns_and_runs(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "WARNING: market calendar check failed for 2026-11-30" in out
     assert "Timeout" in out
+
+
+def test_empty_dict_response_warns_and_runs(monkeypatch, capsys):
+    """Review 3: a malformed (empty, non-list) calendar answer must not skip the day."""
+
+    class _EmptyDict(_Alpaca):
+        def get_calendar(self, filters=None):
+            return {}
+
+    labels, code = _run(monkeypatch, "2026-11-30", _EmptyDict())
+    assert code == 0 and labels[0].startswith("Layer 1")
+    out = capsys.readouterr().out
+    assert "WARNING: market calendar check failed for 2026-11-30" in out
+    assert "skipping" not in out

@@ -191,3 +191,42 @@ def test_client_without_session_is_unavailable():
     with pytest.raises(CalendarUnavailable, match="timeout"):
         closed_reason(MONDAY, factory(client))
     assert client.requests == []  # never called without a bound
+
+
+# Review 3: validate the response shape before reading emptiness as a holiday (AC5).
+
+_MALFORMED = {
+    "empty dict": {},
+    "empty string": "",
+    "None": None,
+    "dict with a date key": {"date": MONDAY},
+    "entry without date": [SimpleNamespace(open="09:30", close="16:00")],
+    "string date": [SimpleNamespace(date="2026-11-30")],
+    "empty set": set(),
+    "empty iterator": iter([]),
+    "datetime instead of date": [
+        SimpleNamespace(date=datetime(2026, 11, 30, 0, 0, tzinfo=UTC)),
+    ],
+    "None date": [SimpleNamespace(date=None)],
+}
+
+
+@pytest.mark.parametrize("response", _MALFORMED.values(), ids=_MALFORMED.keys())
+def test_malformed_response_is_unavailable_not_holiday(response):
+    client = FakeClient()
+    client.response = response
+    with pytest.raises(CalendarUnavailable):
+        closed_reason(MONDAY, factory(client))
+
+
+@pytest.mark.parametrize("empty", [[], ()], ids=["list", "tuple"])
+def test_empty_list_or_tuple_is_holiday(empty):
+    client = FakeClient()
+    client.response = empty
+    assert closed_reason(THANKSGIVING, factory(client)) == "holiday"
+
+
+def test_tuple_with_the_day_is_open():
+    client = FakeClient()
+    client.response = (entry(MONDAY),)
+    assert closed_reason(MONDAY, factory(client)) is None

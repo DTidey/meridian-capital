@@ -64,6 +64,23 @@
   bound DNS resolution or a trickling response. Docs now say "socket connect/read timeouts
   (5 s / 10 s)" with that caveat; no overall deadline in this packet.
 
+## Packet 68 review fix 3 (Codex on 09a7d38)
+
+- **Shape before emptiness.** `closed_reason` built `[e.date for e in entries]` and read an
+  empty result as a holiday, so an empty non-list (`{}`, `""`, empty set or iterator) would
+  skip a trading day. Now `_listed_dates` requires a list or tuple whose every entry has a
+  plain `datetime.date` `date`; anything else raises `CalendarUnavailable` (fail open). Only
+  an empty list or tuple is a holiday.
+- **`datetime` rejected.** It is a `date` subclass but never equals the requested `date`, so
+  accepting it would only move the failure to the "other dates" branch; rejecting it names
+  the real problem in the WARNING.
+- **Not reachable today.** alpaca-py 0.45.0 parses the response into `Calendar` models, so
+  production gets a list of dated entries or an exception; this closes the gap AC5 promises.
+- **Honest regression check.** Of the 10 malformed shapes Codex and I listed, 4 (the empty
+  non-lists) were read as holidays on 09a7d38; the other 6 already raised by accident
+  (TypeError / AttributeError / other-dates branch). The tests assert only the exception, so
+  they were not tuned to fail on the old code.
+
 ## Packet 69: virtualenv PYSEC-2026-4402
 
 - Pinned with `pip-compile --upgrade-package virtualenv==21.14.13` on `requirements-dev.in`

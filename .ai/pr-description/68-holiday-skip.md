@@ -34,7 +34,9 @@ guard stopped it and the run was reported FAILED. A market holiday is now a clea
 - [x] AC2: Weekend: skip line, no layer, exit 0, no Alpaca client.
 - [x] AC3: Normal trading day runs as before.
 - [x] AC4: Early-close half-day runs as before.
-- [x] AC5: Calendar lookup failure or socket timeout prints a WARNING and runs; never skips.
+- [x] AC5: Calendar lookup failure, socket timeout or unusable response (not a list/tuple of
+  entries with a plain `date`) prints a WARNING and runs; never skips. Only an empty list or
+  tuple means holiday.
 - [x] AC6: `--ignore-market-calendar` runs on a closed day without calling the calendar.
 - [x] AC7: `run_all.py` and `run_scoring.py` share `resolve_score_date`.
 - [x] AC8: Layer 2 SPY freshness guard unchanged.
@@ -57,12 +59,15 @@ guard stopped it and the run was reported FAILED. A market holiday is now a clea
 ## Validation
 
 - `make lint`: pass
-- `make test`: 1864 passed
+- `make test`: 1878 passed
 - Review fixes (Codex on ac79ffd): the 11 new timeout / one-date tests fail on ac79ffd and
   pass now; an unbounded SDK calendar call against a silent localhost socket was still
   blocked after 8 s
 - Review fix 2 (Codex on 8d6cf3d): 7 of the 10 new historical-date tests fail on 8d6cf3d (the
   fake `sync_book` got `2026-11-20`); the 3 normal-path ones pass on both
+- Review fix 3 (Codex on 09a7d38): an empty non-list calendar response (`{}`, `""`, empty
+  set or iterator) was read as "holiday"; those 4 cases and the run_all-level empty-dict test
+  fail on 09a7d38 and pass now. The other 6 malformed shapes already raised and pass on both
 - `make security`: bandit clean; pip-audit fails on a pre-existing advisory unrelated to this
   change: virtualenv 21.14.12 (dev only), PYSEC-2026-4402, fixed in 21.14.13. Needs its own
   dependency packet; requirements files are not touched here.

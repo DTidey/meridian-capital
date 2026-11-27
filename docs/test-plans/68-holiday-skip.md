@@ -35,7 +35,13 @@ none touches an external network or a real database.
   missing keys); `test_market_calendar.py::test_call_error_is_unavailable`,
   `test_missing_keys_is_unavailable`; stalled calendar end to end:
   `test_run_all_market_calendar.py::test_stalled_calendar_warns_and_runs` (WARNING with
-  `Timeout`, Layer 1 runs, exit 0)
+  `Timeout`, Layer 1 runs, exit 0); malformed responses (review 3):
+  `test_market_calendar.py::test_malformed_response_is_unavailable_not_holiday[...]` for
+  `{}`, `""`, `None`, a dict with a `date` key, an entry without `date`, a string date, an
+  empty set, an empty iterator, a `datetime` date and a `None` date;
+  `test_empty_list_or_tuple_is_holiday[list|tuple]`, `test_tuple_with_the_day_is_open`;
+  end to end `test_run_all_market_calendar.py::test_empty_dict_response_warns_and_runs`
+  (WARNING, Layer 1 runs, exit 0)
 - AC6: `test_run_all_market_calendar.py::test_override_runs_on_holiday` (no calendar request)
 - AC7: `test_score_date.py` (precedence CLI > config > today;
   `test_run_all_and_layer2_share_the_function`; `test_layer2_scores_the_resolved_date`);
@@ -92,6 +98,14 @@ none touches an external network or a real database.
     `test_default_factory_is_broker_get_client`
 
 ## Notes
+- Review fix 3 regression check: against 09a7d38, 5 tests fail: the `empty dict`,
+  `empty string`, `empty set` and `empty iterator` cases of
+  `test_malformed_response_is_unavailable_not_holiday` (each read as "holiday") and
+  `test_empty_dict_response_warns_and_runs` (the run was skipped). The `None`, dict with a
+  `date` key, entry without `date`, string date, `datetime` date and `None` date cases
+  already raised on 09a7d38 (TypeError / AttributeError / other-dates branch); they pass on
+  both and now guard the explicit shape check. The tests assert only that
+  `CalendarUnavailable` is raised, not the new message.
 - Review fix 2 regression check: against 8d6cf3d, 7 of the 10 AC12 tests fail; in each
   refusal case the fake `sync_book` received `2026-11-20`, the bug as reported. The 3 normal
   run-date / midnight cases pass on both, as intended.

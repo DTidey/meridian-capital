@@ -136,7 +136,10 @@ SPY guard then stops Layer 2, as today. A lookup error never skips a trading day
     `None` when `day` is a trading day (including half-days). `client_factory` defaults to
     `execution.broker.get_client`. Raises `CalendarUnavailable` when the client cannot be
     built or has no `requests.Session` to bound, the call raises or times out, the response is
-    not a list of entries with a `date`, or it lists only other dates.
+    unusable, or it lists only other dates. The response shape is checked before emptiness is
+    read: it must be a list or tuple whose every entry has a `date` that is a plain
+    `datetime.date` (not a `datetime`, string or `None`). An empty list or tuple is a holiday;
+    anything else empty (`{}`, `""`, a set, an iterator) is unusable.
   - `CALENDAR_TIMEOUT = (5.0, 10.0)`: (connect, read) seconds for the calendar request.
 - `run_all.py`:
   - New flag `--ignore-market-calendar`: skip the check and run.
@@ -179,8 +182,10 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - AC4: On an early-close half-day (calendar entry with a 13:00 ET close), `run_all.py` runs the
   pipeline as before.
 - AC5: If the calendar lookup fails (client cannot be built, the call raises or hits a
-  socket timeout, or the response is unusable), `run_all.py` prints a line starting
-  `WARNING: market calendar check failed` and runs the pipeline; it never skips.
+  socket timeout, or the response is unusable: not a list or tuple, or any entry without a
+  plain `datetime.date` `date`), `run_all.py` prints a line starting `WARNING: market calendar
+  check failed` and runs the pipeline; it never skips. Only an empty list or tuple means
+  holiday.
 - AC6: `--ignore-market-calendar` runs the pipeline on a closed day without calling the
   calendar.
 - AC7: `run_all.py` and `run_scoring.py` derive the score date with the same function,
@@ -235,6 +240,8 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - `scoring.score_date` set to today's date: equals the run date, runs normally.
 - Missing Alpaca keys on a weekday: fail open with a warning (Layer 6 would fail later anyway).
 - Calendar response with entries for other dates only: unusable, fail open.
+- Empty but not a list (`{}`, `""`, empty set or iterator): unusable, fail open; never a
+  holiday (review 3).
 - `--whatif` or `--tickers` runs on a closed day: skipped too (Layer 2 would fail anyway);
   `--ignore-market-calendar` forces them.
 - Calendar accepts the connection and never answers: read timeout, fail open (AC10, AC5).
@@ -254,7 +261,9 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - AC4 -> `test_run_all_market_calendar.py::test_half_day_runs`,
   `test_market_calendar.py::test_half_day_is_open`
 - AC5 -> `test_run_all_market_calendar.py::test_calendar_error_runs_with_warning`,
-  `test_stalled_calendar_warns_and_runs`, and the `test_market_calendar.py` unavailable cases
+  `test_stalled_calendar_warns_and_runs`, `test_empty_dict_response_warns_and_runs`, and the
+  `test_market_calendar.py` unavailable cases
+  (`test_malformed_response_is_unavailable_not_holiday[...]`)
 - AC6 -> `test_run_all_market_calendar.py::test_override_runs_on_holiday`
 - AC7 -> `test_score_date.py`
 - AC8 -> existing `test_scoring_freshness.py` (unchanged, still passing)
@@ -286,3 +295,7 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   so a forgotten backfill date fails visibly instead of silently stopping trading.
 - 2026-11-27 (review 2): timeouts described as socket connect / read timeouts, not an overall
   bound; no overall deadline in this packet.
+- 2026-11-27 (review 3): validate the response shape before reading emptiness: an empty
+  non-list (`{}`, `""`) iterated to no dates and was read as a holiday. The current SDK
+  validates responses, so production could not hit it, but AC5 promises any unusable
+  response runs. A `datetime` entry is rejected too: it never equals a `date`.
