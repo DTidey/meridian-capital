@@ -72,7 +72,8 @@ def test_book_sync_runs_between_layers_3_and_4(monkeypatch):
 def test_book_sync_command_and_whatif(monkeypatch):
     steps = {label: (cmd, skip) for label, cmd, skip in _commands(monkeypatch, ["--whatif"])}
     cmd, skip = steps["Book sync"]
-    assert cmd[1:] == ["run_execution.py", "--sync"]
+    assert cmd[1:3] == ["run_execution.py", "--sync"]
+    assert cmd[3] == "--date"  # packet 68: the run's one score date
     assert skip is False
 
 

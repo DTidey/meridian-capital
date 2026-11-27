@@ -73,14 +73,15 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _market_closed(ignore_calendar: bool) -> bool:
-    """True when the market is closed on Layer 2's score date; any lookup error runs."""
+def _market_closed(score_date: str, ignore_calendar: bool) -> bool:
+    """True when the market is closed on score_date; any lookup error runs."""
     if ignore_calendar:
-        print("Market calendar check skipped (--ignore-market-calendar): running the pipeline")
+        print(
+            f"Market calendar check skipped for {score_date} (--ignore-market-calendar): "
+            "running the pipeline"
+        )
         return False
-    score_date = "unknown date"
     try:
-        score_date = resolve_score_date(None, _load_config().get("scoring") or {})
         reason = closed_reason(date.fromisoformat(score_date))
     except Exception as exc:  # fail open: a lookup error must never skip a trading day
         print(
@@ -121,7 +122,11 @@ def main() -> None:
     print("  MERIDIAN CAPITAL PARTNERS — Pipeline Runner")
     print(f"{'═' * 60}{RESET}")
 
-    if _market_closed(args.ignore_market_calendar):
+    # One score date for the whole run: the calendar check and every layer that scores a date
+    # use it, so a run that passes local midnight cannot check one day and score the next.
+    score_date = resolve_score_date(None, _load_config().get("scoring") or {})
+    date_arg = ["--date", score_date]
+    if _market_closed(score_date, args.ignore_market_calendar):
         return
 
     failures: list[str] = []
@@ -151,7 +156,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Layer 2 — Factor scoring
     # ------------------------------------------------------------------
-    l2_cmd = [_PYTHON, "run_scoring.py"]
+    l2_cmd = [_PYTHON, "run_scoring.py", *date_arg]
     if args.tickers:
         l2_cmd += ["--ticker"] + args.tickers
     if not run("Layer 2 — Factor scoring", l2_cmd):
@@ -161,7 +166,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Layer 3 — AI analysis
     # ------------------------------------------------------------------
-    l3_cmd = [_PYTHON, "run_analysis.py"]
+    l3_cmd = [_PYTHON, "run_analysis.py", *date_arg]
     if args.tickers:
         l3_cmd += ["--ticker", args.tickers[0]]
     if not run("Layer 3 — AI analysis", l3_cmd):
@@ -171,7 +176,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Book sync — positions from Alpaca, the book of record (also in --whatif)
     # ------------------------------------------------------------------
-    sync_cmd = [_PYTHON, "run_execution.py", "--sync"]
+    sync_cmd = [_PYTHON, "run_execution.py", "--sync", *date_arg]
     synced = run("Book sync", sync_cmd, skip=args.no_execution)
     if not synced and not args.whatif:
         _summary(failures, t_start)  # never rebalance against a stale book
@@ -180,7 +185,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Layer 4 — Portfolio construction
     # ------------------------------------------------------------------
-    l4_cmd = [_PYTHON, "run_portfolio.py"]
+    l4_cmd = [_PYTHON, "run_portfolio.py", *date_arg]
     if args.whatif:
         l4_cmd.append("--whatif")
     else:
@@ -192,7 +197,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Layer 5 — Risk check
     # ------------------------------------------------------------------
-    l5_cmd = [_PYTHON, "run_risk_check.py"]
+    l5_cmd = [_PYTHON, "run_risk_check.py", *date_arg]
     if args.whatif:
         l5_cmd.append("--whatif")
     if args.stress:
@@ -204,11 +209,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Layer 6 — Execution
     # ------------------------------------------------------------------
-    l6_cmd = [_PYTHON, "run_execution.py", "--execute"]
+    l6_cmd = [_PYTHON, "run_execution.py", "--execute", *date_arg]
     if args.dry_run:
         l6_cmd.append("--dry-run")
     if args.whatif:
-        l6_cmd = [_PYTHON, "run_execution.py", "--status"]
+        l6_cmd = [_PYTHON, "run_execution.py", "--status", *date_arg]
     run("Layer 6 — Execution", l6_cmd, skip=args.no_execution)
 
     # ------------------------------------------------------------------

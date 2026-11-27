@@ -1,9 +1,12 @@
 """execution/market_calendar.py: is the score date a US market trading day (packet 68)."""
 
+import socket
+import time
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from execution import market_calendar
 from execution.market_calendar import CalendarUnavailable, closed_reason
@@ -27,6 +30,7 @@ class FakeClient:
         self.response = [] if response is None else response
         self.error = error
         self.requests = []
+        self._session = requests.Session()  # as alpaca-py's RESTClient has
 
     def get_calendar(self, filters=None):
         self.requests.append(filters)
@@ -110,3 +114,80 @@ def test_none_response_is_unavailable():
     client.response = None
     with pytest.raises(CalendarUnavailable):
         closed_reason(MONDAY, factory(client))
+
+
+# Timeouts: alpaca-py passes no timeout to requests, so a stalled connection would hang.
+
+
+@pytest.fixture
+def stalled_server():
+    """A localhost socket that accepts connections (via the backlog) and never answers."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    yield f"http://127.0.0.1:{srv.getsockname()[1]}"
+    srv.close()
+
+
+def real_client_factory(url: str):
+    from alpaca.trading.client import TradingClient
+
+    return lambda: TradingClient("key", "secret", paper=True, url_override=url)
+
+
+def test_timeout_is_finite_and_short():
+    connect, read = market_calendar.CALENDAR_TIMEOUT
+    assert 0 < connect <= 10 and 0 < read <= 30
+
+
+def test_dedicated_session_carries_the_timeout():
+    client = FakeClient([entry(MONDAY)])
+    closed_reason(MONDAY, factory(client))
+    assert isinstance(client._session, market_calendar._TimeoutSession)
+    assert client._session.timeout == market_calendar.CALENDAR_TIMEOUT
+
+
+def test_session_passes_timeout_to_requests(monkeypatch):
+    seen = {}
+
+    def fake_request(self, method, url, **kwargs):
+        seen.update(kwargs)
+        return "response"
+
+    monkeypatch.setattr(requests.Session, "request", fake_request)
+    session = market_calendar._TimeoutSession((1.0, 2.0))
+    assert session.request("GET", "http://example.invalid/v2/calendar") == "response"
+    assert seen["timeout"] == (1.0, 2.0)
+
+
+def test_real_sdk_client_uses_the_timeout(monkeypatch):
+    """The pinned alpaca-py routes get_calendar through client._session.request."""
+    seen = {}
+
+    def fake_request(self, method, url, **kwargs):
+        seen.update(kwargs, url=url)
+        resp = requests.Response()
+        resp.status_code = 200
+        resp._content = b'[{"date": "2026-11-30", "open": "09:30", "close": "16:00"}]'
+        return resp
+
+    monkeypatch.setattr(requests.Session, "request", fake_request)
+    assert closed_reason(MONDAY, real_client_factory("http://127.0.0.1:9")) is None
+    assert seen["timeout"] == market_calendar.CALENDAR_TIMEOUT
+    assert seen["url"].endswith("/v2/calendar")
+
+
+def test_stalled_calendar_times_out(monkeypatch, stalled_server):
+    monkeypatch.setattr(market_calendar, "CALENDAR_TIMEOUT", (0.5, 0.5))
+    t0 = time.monotonic()
+    with pytest.raises(CalendarUnavailable, match="Timeout"):
+        closed_reason(MONDAY, real_client_factory(stalled_server))
+    assert time.monotonic() - t0 < 5
+
+
+def test_client_without_session_is_unavailable():
+    client = FakeClient([entry(MONDAY)])
+    del client._session
+    with pytest.raises(CalendarUnavailable, match="timeout"):
+        closed_reason(MONDAY, factory(client))
+    assert client.requests == []  # never called without a bound

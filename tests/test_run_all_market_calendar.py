@@ -5,9 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 import run_all
 from execution import market_calendar
+from factors import score_date as score_date_mod
 
 SKIP_LINE = "Market closed on {d} ({reason}): skipping the nightly run"
 
@@ -28,6 +30,7 @@ class _Alpaca:
         self.error = error
         self.close_hour_utc = close_hour_utc
         self.requests = []
+        self._session = requests.Session()  # as alpaca-py's RESTClient has
 
     def __call__(self):
         if self.error:
@@ -39,12 +42,14 @@ class _Alpaca:
         return [_entry(d, self.close_hour_utc) for d in self.trading_days if d == filters.start]
 
 
-def _run(monkeypatch, score_date: str, alpaca: _Alpaca, argv=()):
+def _run(monkeypatch, score_date, alpaca, argv=(), cmds=None):
     """Run run_all.main with layers faked; return (labels run, exit code)."""
     labels = []
 
     def fake_run(label, cmd, skip=False):
         labels.append(label)
+        if cmds is not None:
+            cmds[label] = cmd
         return True
 
     monkeypatch.setattr(run_all, "_run", fake_run)
@@ -159,3 +164,98 @@ def test_unexpected_exception_type_fails_open(monkeypatch, capsys):
     labels, _ = _run(monkeypatch, "2026-11-30", _Alpaca(error=RuntimeError("boom")))
     assert labels[0].startswith("Layer 1")
     assert "WARNING: market calendar check failed" in capsys.readouterr().out
+
+
+# One score date per run (review fix): checked date == the date every scoring layer gets.
+
+_DATED_STEPS = (
+    "Layer 2",
+    "Layer 3",
+    "Book sync",
+    "Layer 4",
+    "Layer 5",
+    "Layer 6",
+)
+
+
+def _date_of(cmd):
+    return cmd[cmd.index("--date") + 1]
+
+
+class _MidnightDate(date):
+    """date.today() returns Thu 2026-11-26 on the first call, Fri 11-27 on every later call."""
+
+    calls = 0
+
+    @classmethod
+    def today(cls):
+        cls.calls += 1
+        return cls(2026, 11, 26) if cls.calls == 1 else cls(2026, 11, 27)
+
+
+@pytest.fixture
+def crossing_midnight(monkeypatch):
+    _MidnightDate.calls = 0
+    monkeypatch.setattr(score_date_mod, "date", _MidnightDate)
+
+
+def test_midnight_crossing_layer2_gets_checked_date(monkeypatch, crossing_midnight):
+    alpaca = _Alpaca(trading_days=[date(2026, 11, 26), date(2026, 11, 27)])
+    cmds = {}
+    _run(monkeypatch, None, alpaca, cmds=cmds)
+    assert alpaca.requests == [date(2026, 11, 26)]
+    layer2 = next(cmd for label, cmd in cmds.items() if label.startswith("Layer 2"))
+    assert _date_of(layer2) == "2026-11-26"
+    assert _MidnightDate.calls == 1  # resolved once; no second read of the clock
+
+
+def test_every_dated_layer_gets_the_one_score_date(monkeypatch, crossing_midnight):
+    cmds = {}
+    _run(monkeypatch, None, _Alpaca(trading_days=[date(2026, 11, 26)]), cmds=cmds)
+    for step in _DATED_STEPS:
+        cmd = next(c for label, c in cmds.items() if label.startswith(step))
+        assert _date_of(cmd) == "2026-11-26", step
+    layer1 = next(c for label, c in cmds.items() if label.startswith("Layer 1"))
+    layer7 = next(c for label, c in cmds.items() if label.startswith("Layer 7"))
+    assert "--date" not in layer1 and "--date" not in layer7
+
+
+def test_whatif_status_gets_the_score_date(monkeypatch):
+    cmds = {}
+    _run(monkeypatch, "2026-11-30", _Alpaca(trading_days=[date(2026, 11, 30)]), ["--whatif"], cmds)
+    layer6 = next(c for label, c in cmds.items() if label.startswith("Layer 6"))
+    assert "--status" in layer6 and _date_of(layer6) == "2026-11-30"
+
+
+def test_override_passes_the_same_date(monkeypatch, crossing_midnight, capsys):
+    alpaca = _Alpaca()
+    cmds = {}
+    _run(monkeypatch, None, alpaca, ["--ignore-market-calendar"], cmds)
+    assert alpaca.requests == []
+    for step in _DATED_STEPS:
+        cmd = next(c for label, c in cmds.items() if label.startswith(step))
+        assert _date_of(cmd) == "2026-11-26", step
+    assert "skipped for 2026-11-26" in capsys.readouterr().out
+
+
+def test_stalled_calendar_warns_and_runs(monkeypatch, capsys):
+    """A calendar that never answers times out and falls back to a normal run (AC5)."""
+    import socket
+
+    from alpaca.trading.client import TradingClient
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    url = f"http://127.0.0.1:{srv.getsockname()[1]}"
+    monkeypatch.setattr(market_calendar, "CALENDAR_TIMEOUT", (0.5, 0.5))
+    try:
+        labels, code = _run(
+            monkeypatch, "2026-11-30", lambda: TradingClient("k", "s", url_override=url)
+        )
+    finally:
+        srv.close()
+    assert code == 0 and labels[0].startswith("Layer 1")
+    out = capsys.readouterr().out
+    assert "WARNING: market calendar check failed for 2026-11-30" in out
+    assert "Timeout" in out
