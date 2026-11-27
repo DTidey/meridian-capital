@@ -13,8 +13,10 @@ Path: `docs/test-plans/68-holiday-skip.md`
   Book sync.
 - `docs/run_all.md`: skip behaviour and the flag.
 - Review fix 2: `factors/score_date.py` `run_date()` (one clock read per run);
-  `run_all.py` refuses a score date other than the run date unless `--no-execution`, and
-  never runs Book sync or Layer 6 for it. New `tests/test_run_all_historical_date.py`.
+  `run_all.py` refuses a score date other than the run date. New
+  `tests/test_run_all_historical_date.py`.
+- Review fix 4: the refusal applies with any flags, including `--no-execution` (Layers 4 and
+  5 still wrote live state on the past date). New `tests/test_run_all_live_state.py`.
 - Tests: `tests/test_market_calendar.py`, `tests/test_score_date.py`,
   `tests/test_run_all_market_calendar.py`; `tests/test_run_all.py` gets an autouse fixture
   that keeps the check offline (every day open).
@@ -68,16 +70,28 @@ none touches an external network or a real database.
 - AC12: `test_run_all_historical_date.py` (real `run_all` command building; the broker steps
   feed a fake `sync_book` with the `--date` that `run_execution.py` would use):
   - `test_historical_date_refused_before_any_layer[...]`: `scoring.score_date` 2026-11-20,
-    run date 2026-11-27, with no flags, `--whatif`, `--dry-run`, `--ignore-market-calendar`:
+    run date 2026-11-27, with no flags, `--whatif`, `--dry-run`, `--ignore-market-calendar`,
+    `--no-execution`, `--no-execution --whatif`, `--no-execution --no-reporting --tickers`:
     exit 1, ERROR line, "Pipeline failed at: Score date check", no layer run, `sync_book`
     and execute never called
   - `test_future_date_refused`
-  - `test_historical_no_execution_runs_analysis_only`: Layers 1-5 and 7 run, no Book sync or
-    Layer 6, note printed; `test_historical_layers_get_the_historical_date`
   - `test_run_date_is_synced_and_executed[None|2026-11-27]`: the normal path still syncs and
     executes the run date
   - `test_midnight_crossing_is_not_historical`: clock 11-27 then 11-28; one clock read, sync
     and execute get 11-27
+- AC12, real side effects: `test_run_all_live_state.py`. run_all's real commands drive the
+  real Layer 5 circuit-breaker sequence (`load_risk_state` -> `run_circuit_breakers` ->
+  `save_risk_state`, args parsed by `run_risk_check._parse_args`, as `run_risk_check.run`
+  does) against a temp cache dir holding a live `risk_state.json`, and a temp SQLite DB whose
+  `portfolio_nav` has a 10% drawdown on 2026-11-20 and none on 2026-11-27:
+  - `test_historical_run_leaves_halt_lock_and_risk_state_alone[...]` (`--no-execution`,
+    `--no-execution --whatif`, no flags): no `halt.lock`, `risk_state.json` unchanged, and
+    neither `run_portfolio.py` (`--rebalance` or not) nor `run_risk_check.py` is started
+  - `test_run_date_control_writes_live_state_without_halting`: on the run date Layer 4 gets
+    `--rebalance`, Layer 5 runs and updates `risk_state.json` (drawdown 0), no halt: proves
+    the harness writes for real
+  - `test_harness_halts_on_the_historical_drawdown`: the same code on the past date without
+    the guard writes `halt.lock`
 
 ## Edge cases
 - From spec:
@@ -98,6 +112,12 @@ none touches an external network or a real database.
     `test_default_factory_is_broker_get_client`
 
 ## Notes
+- Review fix 4 regression check: against 5caed0b's `run_all.py`, 5 tests fail:
+  `test_historical_run_leaves_halt_lock_and_risk_state_alone[--no-execution]` (real
+  `halt.lock` written), `[--no-execution --whatif]` (`risk_state.json` overwritten), and the
+  three `--no-execution` cases of `test_historical_date_refused_before_any_layer`. The
+  no-flags case passes on both (review 2 already refused it), as do the run-date control
+  and the harness self-check.
 - Review fix 3 regression check: against 09a7d38, 5 tests fail: the `empty dict`,
   `empty string`, `empty set` and `empty iterator` cases of
   `test_malformed_response_is_unavailable_not_holiday` (each read as "holiday") and

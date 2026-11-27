@@ -70,47 +70,30 @@ def _pipeline(monkeypatch, score_date, argv=(), pin_run_day=True):
     return ran, synced, executed, code
 
 
-@pytest.mark.parametrize("argv", [(), ("--whatif",), ("--dry-run",), ("--ignore-market-calendar",)])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        (),
+        ("--whatif",),
+        ("--dry-run",),
+        ("--ignore-market-calendar",),
+        ("--no-execution",),
+        ("--no-execution", "--whatif"),
+        ("--no-execution", "--no-reporting", "--tickers", "AAPL"),
+    ],
+)
 def test_historical_date_refused_before_any_layer(monkeypatch, capsys, argv):
     ran, synced, executed, code = _pipeline(monkeypatch, "2026-11-20", argv)
     assert code == 1
     assert ran == [] and synced == [] and executed == []
     out = capsys.readouterr().out
     assert "ERROR: score date 2026-11-20 is not the run date 2026-11-27" in out
-    assert "--no-execution" in out
     assert "Pipeline failed at: Score date check" in out
 
 
 def test_future_date_refused(monkeypatch):
     ran, synced, _, code = _pipeline(monkeypatch, "2026-12-01")
     assert (ran, synced, code) == ([], [], 1)
-
-
-def test_historical_no_execution_runs_analysis_only(monkeypatch, capsys):
-    ran, synced, executed, code = _pipeline(monkeypatch, "2026-11-20", ["--no-execution"])
-    assert code == 0
-    assert synced == [] and executed == []
-    assert not any(label.startswith(("Book sync", "Layer 6")) for label in ran)
-    assert [label.split(" ")[1] for label in ran] == ["1", "2", "3", "4", "5", "7"]
-    assert "historical run, Book sync and Layer 6 are not run" in capsys.readouterr().out
-
-
-def test_historical_layers_get_the_historical_date(monkeypatch):
-    cmds = {}
-
-    def record(label, cmd, skip=False):
-        if not skip:
-            cmds[label] = cmd
-        return True
-
-    monkeypatch.setattr(run_all, "_run", record)
-    monkeypatch.setattr(run_all, "_load_config", lambda: {"scoring": {"score_date": "2026-11-20"}})
-    monkeypatch.setattr(run_all, "run_date", lambda: RUN_DAY)
-    monkeypatch.setattr(market_calendar, "get_client", _OpenAlpaca())
-    monkeypatch.setattr("sys.argv", ["run_all.py", "--no-execution"])
-    run_all.main()
-    layer2 = next(c for label, c in cmds.items() if label.startswith("Layer 2"))
-    assert layer2[layer2.index("--date") + 1] == "2026-11-20"
 
 
 @pytest.mark.parametrize("configured", [None, RUN_DAY])

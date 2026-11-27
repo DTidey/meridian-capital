@@ -97,25 +97,21 @@ def _market_closed(score_date: str, ignore_calendar: bool) -> bool:
     return False
 
 
-def _historical_refused(score_date: str, run_day: str, no_execution: bool) -> bool:
-    """True when a score date other than the run date would reach Book sync or Layer 6.
+def _historical_refused(score_date: str, run_day: str) -> bool:
+    """True (after printing an ERROR) when the score date is not the run date.
 
-    Book sync writes today's broker book and NAV under the score date, and Layer 6 trades
-    against it, so a backfill date (scoring.score_date) is allowed only with --no-execution.
+    run_all.py runs for the run date only, whatever the flags: Layers 4-6 and Book sync write
+    live state that is not keyed by the score date (cache/halt.lock, cache/risk_state.json,
+    PENDING approvals built from today's book, the broker book and NAV), and Layers 2-3 mix
+    today's inputs and "latest" files with the past date.
     """
     if score_date == run_day:
         return False
-    if no_execution:
-        print(
-            f"Score date {score_date} is not the run date {run_day}: historical run, "
-            "Book sync and Layer 6 are not run (--no-execution)"
-        )
-        return False
     print(
         f"{RED}ERROR: score date {score_date} is not the run date {run_day} "
-        "(scoring.score_date in config.yaml): Book sync would store today's broker book and "
-        "NAV under that date and Layer 6 would trade against it. Nothing was run; use "
-        f"--no-execution for a historical run, or set scoring.score_date to null.{RESET}"
+        "(scoring.score_date in config.yaml): run_all.py only runs for today, because its "
+        "layers write live trading state (halt lock, risk state, approvals, broker book). "
+        f"Nothing was run; set scoring.score_date to null.{RESET}"
     )
     return True
 
@@ -151,10 +147,8 @@ def main() -> None:
     run_day = run_date()
     score_date = resolve_score_date(None, _load_config().get("scoring") or {}, today=run_day)
     date_arg = ["--date", score_date]
-    if _historical_refused(score_date, run_day, args.no_execution):
+    if _historical_refused(score_date, run_day):
         _summary(["Score date check"], t_start)
-    # Belt and braces: Book sync and Layer 6 only ever run for the run date.
-    no_broker = args.no_execution or score_date != run_day
     if _market_closed(score_date, args.ignore_market_calendar):
         return
 
@@ -206,7 +200,7 @@ def main() -> None:
     # Book sync — positions from Alpaca, the book of record (also in --whatif)
     # ------------------------------------------------------------------
     sync_cmd = [_PYTHON, "run_execution.py", "--sync", *date_arg]
-    synced = run("Book sync", sync_cmd, skip=no_broker)
+    synced = run("Book sync", sync_cmd, skip=args.no_execution)
     if not synced and not args.whatif:
         _summary(failures, t_start)  # never rebalance against a stale book
         return
@@ -243,7 +237,7 @@ def main() -> None:
         l6_cmd.append("--dry-run")
     if args.whatif:
         l6_cmd = [_PYTHON, "run_execution.py", "--status", *date_arg]
-    run("Layer 6 — Execution", l6_cmd, skip=no_broker)
+    run("Layer 6 — Execution", l6_cmd, skip=args.no_execution)
 
     # ------------------------------------------------------------------
     # Layer 7 — Reporting

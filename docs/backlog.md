@@ -268,3 +268,15 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   `run_all.py`.
 - **Fix:** refuse `--sync` for a date other than today in `run_execution.py` (or make the
   snapshot date always today), keeping `--execute --date` for the packet 62 execute button.
+
+## Historical (backfill) runs
+
+- **Raised:** 2026-11-27, packet 68 review 4.
+- **Problem:** `run_all.py` now refuses any score date other than today, even with
+  `--no-execution`, because every step that takes the score date writes shared or current
+  state: `cache/halt.lock` and `cache/risk_state.json` (Layer 5, the risk state even under
+  `--whatif`), PENDING approvals built from today's book (Layer 4), the broker book and NAV
+  (Book sync, Layer 6), `output/scored_universe_latest.csv` and the LLM analysis cache
+  (Layers 2-3). Layer scripts run by hand with `--date <past>` have the same problems.
+- **Fix:** if backfills are needed, a dedicated mode that runs Layers 2-3 only, writes no
+  "latest" files, and keeps Layers 4-6 and Book sync off; or a separate cache dir for Layer 5.

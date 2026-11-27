@@ -96,27 +96,45 @@ Friday full run with filings and 13-F can run for hours). `run_all.py` calls
 per-layer `analysis.score_date` in `config.yaml` no longer overrides `scoring.score_date`
 (both are null today); a layer run on its own still reads its own key.
 
-### Never sync or execute a historical score date (decision, review fix 2)
-`execution/book_sync.py` `sync_book(score_date)` replaces that date's `portfolio_history`
-snapshot with today's broker positions and overwrites that date's `portfolio_nav` row, and
-Book sync runs under `--whatif` too; Layer 6 trades against the date's approvals. Before this
-packet `run_execution.py` always used `date.today()`; passing `--date` (AC11) would let a
-backfill `scoring.score_date` (e.g. `2026-11-20`) reach both. So `run_all.py` reads the run
-date once at start (`factors.score_date.run_date`) and resolves the score date from that same
-read. If the score date differs from the run date (past or future):
-- without `--no-execution` (including `--whatif`, `--dry-run`, `--ignore-market-calendar`):
-  print `ERROR: score date <d> is not the run date <today> ...`, report the run as failed at
-  "Score date check" and exit 1 before the calendar check and before any layer;
-- with `--no-execution`: print `Score date <d> is not the run date <today>: historical run,
-  Book sync and Layer 6 are not run (--no-execution)` and run the other layers for that date.
-  Book sync and Layer 6 are also skipped by the date test itself, not only by the flag.
+### run_all.py runs for the run date only (decision, review fixes 2 and 4)
+`run_all.py` reads the run date once at start (`factors.score_date.run_date`) and resolves
+the score date from that same read, so a run that crosses midnight is never "historical". If
+the score date differs from the run date (past or future, i.e. `scoring.score_date` is set to
+another day), `run_all.py` prints `ERROR: score date <d> is not the run date <today> ...`,
+reports the run as failed at "Score date check" and exits 1 before the calendar check and
+before any layer, whatever the flags (`--no-execution`, `--whatif`, `--dry-run`,
+`--ignore-market-calendar`, `--tickers`).
 
-Why stop rather than silently drop sync/execution: a historical run is a deliberate,
-hand-started backfill (`docs/run_all.md` has no other backfill story, and the cron never sets
-`scoring.score_date`). A date left in `config.yaml` by mistake would otherwise turn every
-nightly run into a quiet no-trade run that reports success; a hard stop is visible at the
-06:30 check. `--no-execution` keeps the analysis-only backfill possible. The run date is a
-single clock read, so a run that crosses midnight is never "historical".
+Review 2 allowed a historical run with `--no-execution`; review 4 showed that path still ran
+Layers 4 and 5 on the past date with writes. Audit of what each step `run_all.py` starts
+writes, and under which key (shared = not keyed by the score date):
+
+| Step | Writes | Key | Shared / current state |
+|---|---|---|---|
+| Layer 1 `run_data.py` | prices, fundamentals, estimates, short interest, market caps, SEC data | own data dates; snapshots dated today | no score date; always today's data |
+| Layer 2 `run_scoring.py` | `factor_scores`, `regime_state`, `crowding_flags`; `output/scored_universe_latest.csv` | score date; CSV unkeyed | the "latest" CSV is overwritten |
+| Layer 3 `run_analysis.py` | `ai_scores`, `combined_scores`, `output/reports_<date>/`; `analysis_results` LLM cache | score date; cache by ticker / analyzer / model with TTL | cache shared; inputs (filings, transcripts) are today's, so a past date gets look-ahead and LLM cost |
+| Book sync `run_execution.py --sync` | `portfolio_positions`; `portfolio_history`, `portfolio_nav` | current; score date | rewrites the current book and the date's snapshot and NAV from today's broker |
+| Layer 4 `run_portfolio.py --rebalance` | `position_approvals` (PENDING trades) | score date | built from today's `portfolio_positions`; actionable approvals (packet 62 execute button) |
+| Layer 4 `--whatif` | none | - | - |
+| Layer 5 `run_risk_check.py` | `cache/halt.lock` (kill switch, drawdown > 8%); `cache/risk_state.json` (saved even under `--whatif`); predicted covariance parquet (dated and "latest"); `cache/fred_hy_spread.parquet`; `position_approvals` updates, `risk_events`, `risk_log` | halt lock and risk state unkeyed; approvals and logs by score date | the halt lock blocks the next live run; risk state is read by the dashboard and the next run |
+| Layer 6 `run_execution.py --execute` | Alpaca orders, `execution_orders`; calls `sync_book` | score date | live orders and the current book |
+| Layer 6 `--status` (whatif) | none | - | - |
+| Layer 7 `run_reporting.py --all` | reports, tear sheet, LP letter | today (no `--date` passed) | unaffected by the score date |
+
+Options considered: (a) refuse every historical `run_all.py` run; (b) run only layers whose
+writes are all keyed by the score date; (c) isolate state in a separate cache dir. (b) leaves
+nothing useful: every step that takes the score date writes shared state (Layers 2, 3, 5),
+builds actionable approvals from today's book (Layer 4) or touches the live book (Book sync,
+Layer 6); only Layer 1, which has no score date, would be left. (c) would need cache-dir
+plumbing through Layer 5 and still leave the CSV, the LLM cache and the approvals. So (a):
+historical runs were never a documented `run_all.py` use (`docs/run_all.md` had no backfill
+before review 2 added one; before this packet a set `scoring.score_date` moved only Layer 2,
+while Layers 3-6 used today). The analysis-only backfill that review 2 documented is withdrawn;
+`docs/backlog.md` records the narrowed use case.
+
+Why stop rather than skip: a date left in `config.yaml` by mistake fails visibly at the 06:30
+check instead of quietly turning every nightly run into a no-trade run.
 
 ### Fail open (decision)
 The calendar must not become a new single point of failure. If the lookup fails for any
@@ -201,12 +219,12 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - AC11: `run_all.py` resolves the score date once and passes that exact date with `--date` to
   Layers 2-6 and Book sync (also with `--whatif` and `--ignore-market-calendar`); if the run
   crosses local midnight after the check, Layer 2 still scores the checked date.
-- AC12: If the score date differs from the run date (read once at start), `run_all.py` never
-  runs Book sync or Layer 6 for it: without `--no-execution` (any other flags, including
-  `--whatif`) it prints an `ERROR: score date ... is not the run date ...` line and exits 1
-  before any layer; with `--no-execution` it runs the other layers for that date. A score date
-  equal to the run date (null config, or a run that crosses midnight) syncs and executes as
-  before.
+- AC12: If the score date differs from the run date (read once at start), `run_all.py` prints
+  an `ERROR: score date ... is not the run date ...` line and exits 1 before any layer,
+  whatever the flags (including `--no-execution` and `--whatif`). No layer runs, so nothing
+  writes `cache/halt.lock`, `cache/risk_state.json`, approvals, the broker book or NAV for a
+  past date. A score date equal to the run date (null config, or a run that crosses midnight)
+  runs every layer as before.
 
 ## Security considerations
 - Auth/authz impact: none. Uses the existing Alpaca keys through `get_client`; the calendar
@@ -226,17 +244,18 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - Network or external service impact (review fix): the calendar request has socket connect /
   read timeouts (5 s / 10 s), so an Alpaca that accepts the connection and never answers
   cannot hold the nightly run. They do not bound DNS resolution or a trickling response.
-- Data integrity (review fix 2): a historical or future score date never reaches Book sync
-  (which rewrites `portfolio_history` and `portfolio_nav` for that date) or Layer 6.
+- Data integrity (review fixes 2 and 4): a historical or future score date never reaches any
+  layer, so it cannot rewrite the broker book, `portfolio_history` or `portfolio_nav`, set the
+  shared `cache/halt.lock`, overwrite `cache/risk_state.json`, or create approvals or orders.
 - Security notes for reviewers/testers: the fail-open path is the safety property: confirm
-  no exception from the check can lead to a skip; and that no path passes a date other than
-  the run date to `run_execution.py`.
+  no exception from the check can lead to a skip; and that no path starts a layer with a date
+  other than the run date.
 
 ## Edge cases
 - Special closures (e.g. national days of mourning): not in any fixed list; Alpaca omits them,
   so they are reported as `holiday`.
-- `scoring.score_date` set in `config.yaml` (backfill): refused unless `--no-execution`
-  (AC12); then the check uses that date, as Layer 2 does.
+- `scoring.score_date` set in `config.yaml` to another day (backfill): refused with any flags
+  (AC12).
 - `scoring.score_date` set to today's date: equals the run date, runs normally.
 - Missing Alpaca keys on a weekday: fail open with a warning (Layer 6 would fail later anyway).
 - Calendar response with entries for other dates only: unusable, fail open.
@@ -246,8 +265,7 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   `--ignore-market-calendar` forces them.
 - Calendar accepts the connection and never answers: read timeout, fail open (AC10, AC5).
 - Run crosses local midnight (Friday full run): Layers 2-6 still get the checked date (AC11).
-- Malformed `scoring.score_date`: it differs from the run date, so it is refused (AC12)
-  unless `--no-execution`; then the check fails open and the layers fail on it as before.
+- Malformed `scoring.score_date`: it differs from the run date, so it is refused (AC12).
 - `config.yaml` unreadable: `run_all.py` now stops before Layer 1 with a traceback (exit 1);
   every layer would fail on it anyway. Never a skip.
 
@@ -272,7 +290,8 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   `test_dedicated_session_carries_the_timeout`, `test_session_passes_timeout_to_requests`,
   `test_real_sdk_client_uses_the_timeout`, `test_stalled_calendar_times_out`,
   `test_client_without_session_is_unavailable`
-- AC12 -> `test_run_all_historical_date.py` (all tests)
+- AC12 -> `test_run_all_historical_date.py` (all tests), `test_run_all_live_state.py` (real
+  Layer 5 circuit-breaker sequence against a temp cache dir)
 - AC11 -> `test_run_all_market_calendar.py::test_midnight_crossing_layer2_gets_checked_date`,
   `test_every_dated_layer_gets_the_one_score_date`, `test_whatif_status_gets_the_score_date`,
   `test_override_passes_the_same_date`
@@ -295,6 +314,9 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   so a forgotten backfill date fails visibly instead of silently stopping trading.
 - 2026-11-27 (review 2): timeouts described as socket connect / read timeouts, not an overall
   bound; no overall deadline in this packet.
+- 2026-11-27 (review 4): refuse every historical `run_all.py` run, including
+  `--no-execution`: Layers 4 and 5 still ran on the past date with writes (halt lock, risk
+  state, approvals). Option (a) over (b) / (c): see the audit table.
 - 2026-11-27 (review 3): validate the response shape before reading emptiness: an empty
   non-list (`{}`, `""`) iterated to no dates and was read as a holiday. The current SDK
   validates responses, so production could not hit it, but AC5 promises any unusable

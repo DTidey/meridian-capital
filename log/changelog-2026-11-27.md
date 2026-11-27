@@ -81,6 +81,29 @@
   (TypeError / AttributeError / other-dates branch). The tests assert only the exception, so
   they were not tuned to fail on the old code.
 
+## Packet 68 review fix 4 (Codex on 5caed0b)
+
+- **`--no-execution` was not enough.** Review 2 let a historical score date run with
+  `--no-execution`; Layers 4 and 5 still ran on the past date with writes. Reproduced with the
+  real circuit-breaker code against a temp cache: a 10% drawdown on the past date wrote
+  `halt.lock` (which blocks the next live run), and with `--whatif` `save_risk_state` still
+  overwrote `risk_state.json`.
+- **Audit result (table in spec 68).** Every step that takes the score date writes shared or
+  current state: Layer 2 the "latest" CSV, Layer 3 the LLM cache with today's inputs, Layer 4
+  PENDING approvals from today's book, Layer 5 the halt lock / risk state / "latest" covariance,
+  Book sync and Layer 6 the broker book, NAV and orders. Only Layer 1 (no score date) and
+  Layer 7 (no `--date`) are clean.
+- **Option (a), refuse all.** (b) "date-keyed layers only" leaves nothing useful; (c) a
+  separate cache dir is plumbing through Layer 5 and still leaves the CSV, LLM cache and
+  approvals. Historical runs were never a documented `run_all.py` use before review 2, so the
+  narrowing costs nothing real; backlog item "Historical (backfill) runs".
+- **Test on real side effects.** `tests/test_run_all_live_state.py` drives the real Layer 5
+  sequence (`load_risk_state` -> `run_circuit_breakers` -> `save_risk_state`) from run_all's
+  real commands, with a run-date control that does write `risk_state.json` and a harness
+  self-check that the past date does write `halt.lock` without the guard.
+- **Defence-in-depth flag removed.** The `no_broker` skip (dates differ) is dead code now that
+  any differing date exits first; Book sync and Layer 6 are skipped by `--no-execution` again.
+
 ## Packet 69: virtualenv PYSEC-2026-4402
 
 - Pinned with `pip-compile --upgrade-package virtualenv==21.14.13` on `requirements-dev.in`

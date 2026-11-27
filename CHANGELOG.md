@@ -40,8 +40,9 @@ Release policy:
   failing at Layer 2's SPY guard. Calendar errors and socket timeouts (5 s connect / 10 s
   read) never skip (WARNING, then run); `--ignore-market-calendar` forces a run; the score
   date is resolved once and passed with `--date` to Layers 2-6 and Book sync. A score date
-  other than the run date (backfill `scoring.score_date`) stops the run before any layer
-  unless `--no-execution`, so Book sync and Layer 6 never write or trade a past date.
+  other than the run date (backfill `scoring.score_date`) stops the run before any layer,
+  with any flags, so no layer writes the halt lock, risk state, approvals, book or NAV for a
+  past date.
 - yfinance inplace warnings (packet `65-remove-yf-inplace-filter`): the packet 55 filter is
   removed because yfinance 1.8.0 no longer calls pandas with `inplace`; a test runs the Layer 1
   download path through real yfinance on stubbed responses and fails on any pandas deprecation.

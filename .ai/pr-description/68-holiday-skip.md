@@ -23,9 +23,11 @@ guard stopped it and the run was reported FAILED. A market holiday is now a clea
   `--date` to Layers 2-6 and Book sync, so a run that crosses local midnight cannot check one
   day and score the next.
 - Historical score date: if `scoring.score_date` differs from the run date (read once at
-  start), `run_all.py` stops with an ERROR and exit 1 before any layer, unless
-  `--no-execution`, which runs the other layers for that date. Book sync (which rewrites that
-  date's `portfolio_history` and `portfolio_nav`) and Layer 6 never see a historical date.
+  start), `run_all.py` stops with an ERROR and exit 1 before any layer, whatever the flags
+  (including `--no-execution` and `--whatif`). An audit (spec 68) found every step that takes
+  the score date writes shared or current state: the halt lock and `risk_state.json`
+  (Layer 5), PENDING approvals from today's book (Layer 4), the broker book and NAV (Book
+  sync, Layer 6), the "latest" CSV and the LLM cache (Layers 2-3).
 - `--ignore-market-calendar` forces a run. Half-days run normally.
 
 ## Acceptance Criteria
@@ -45,21 +47,21 @@ guard stopped it and the run was reported FAILED. A market holiday is now a clea
   calendar that never answers raises `CalendarUnavailable` after the read timeout.
 - [x] AC11: The score date is resolved once and passed with `--date` to Layers 2-6 and Book
   sync; crossing midnight leaves Layer 2 on the checked date.
-- [x] AC12: A score date other than the run date never reaches Book sync or Layer 6: exit 1
-  before any layer, or other layers only with `--no-execution`.
+- [x] AC12: A score date other than the run date stops `run_all.py` with exit 1 before any
+  layer, with any flags; nothing writes the halt lock, risk state, approvals, book or NAV.
 
 ## Security Review
 
 - [x] Security considerations reviewed in `docs/specs/68-holiday-skip.md`: read-only Alpaca
   calendar call with the existing keys; `run_all.py` now loads `.env` like the layer scripts;
   fail-open on every error; socket connect / read timeouts (5 s / 10 s); a historical score
-  date never reaches Book sync or Layer 6 (data integrity of `portfolio_history` /
-  `portfolio_nav`); no new dependency.
+  date never reaches any layer (no halt lock, `risk_state.json`, approvals, broker book,
+  `portfolio_history` or `portfolio_nav` written for it); no new dependency.
 
 ## Validation
 
 - `make lint`: pass
-- `make test`: 1878 passed
+- `make test`: 1884 passed
 - Review fixes (Codex on ac79ffd): the 11 new timeout / one-date tests fail on ac79ffd and
   pass now; an unbounded SDK calendar call against a silent localhost socket was still
   blocked after 8 s
@@ -68,6 +70,10 @@ guard stopped it and the run was reported FAILED. A market holiday is now a clea
 - Review fix 3 (Codex on 09a7d38): an empty non-list calendar response (`{}`, `""`, empty
   set or iterator) was read as "holiday"; those 4 cases and the run_all-level empty-dict test
   fail on 09a7d38 and pass now. The other 6 malformed shapes already raised and pass on both
+- Review fix 4 (Codex on 5caed0b): with `--no-execution` and a past date, the real Layer 5
+  circuit-breaker sequence wrote `halt.lock` (and with `--whatif` overwrote `risk_state.json`)
+  in a temp cache dir; those 2 tests and the 3 `--no-execution` refusal cases fail on 5caed0b
+  and pass now
 - `make security`: bandit clean; pip-audit fails on a pre-existing advisory unrelated to this
   change: virtualenv 21.14.12 (dev only), PYSEC-2026-4402, fixed in 21.14.13. Needs its own
   dependency packet; requirements files are not touched here.
@@ -80,6 +86,8 @@ guard stopped it and the run was reported FAILED. A market holiday is now a clea
   env var.
 - A historical `scoring.score_date` left in `config.yaml` now fails the nightly run at
   "Score date check" (exit 1) until it is set back to null.
+- Narrowed use case: no historical (backfill) runs through `run_all.py`, not even
+  `--no-execution`; review 2's documented analysis-only backfill is withdrawn (backlog item).
 - `run_execution.py --sync --date <past>` run by hand can still rewrite a past snapshot;
   only `run_all.py` is guarded here (backlog item added).
 - The timeout uses alpaca-py's private `client._session`; if an upgrade removes it, every
