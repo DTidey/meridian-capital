@@ -10,15 +10,20 @@ Path: `docs/test-plans/69-virtualenv-cve.md`
 ## Acceptance criteria coverage
 - AC1: `make security` ("No known vulnerabilities found");
   `TestNoAuditIgnores::test_security_target_has_no_ignores`
-- AC2: `TestPins::test_virtualenv_at_fixed_version`
+- AC2: `TestPins::test_virtualenv_at_fixed_version`,
+  `TestAdversarial::test_virtualenv_missing_pin_is_reported`
 - AC3: `git diff origin/main -- requirements*.txt` shows only virtualenv; `make lint`;
   `make test`
 
 ## Edge cases
-- From spec: numeric version comparison (`TestVersionParsing::test_versions_compare_numerically`).
+- From spec: numeric version comparison: 21.14.12 (the vulnerable pin) and 21.14.9 fail the
+  21.14.13 floor; 21.14.13 and 21.15.0 pass it
+  (`TestVersionParsing::test_versions_compare_numerically`).
 - Additional adversarial cases:
-  - 21.14.12 (the vulnerable pin) and 21.14.9 fail the 21.14.13 floor; 21.14.13 and 21.15.0 pass
-    it (`TestVersionParsing::test_versions_compare_numerically`)
+  - A lock with only a lookalike (`virtualenv-clone==21.14.13`) and no real virtualenv pin: the
+    lookup returns None and the floor test fails with "virtualenv not pinned" instead of passing
+    (`TestAdversarial::test_virtualenv_missing_pin_is_reported`; without the guard in `_pin` it
+    raises `AttributeError` instead, so the test fails)
   - A lookalike package (`virtualenv-clone==21.14.13`) does not satisfy the virtualenv pin
     (`TestAdversarial::test_virtualenv_lookalike_does_not_count`)
   - A `virtualenv==21.14.13` inside a pip-compile `# via` comment does not count

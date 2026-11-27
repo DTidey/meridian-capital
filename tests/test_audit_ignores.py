@@ -10,7 +10,10 @@ Packet 69: virtualenv pinned at the version that fixes PYSEC-2026-4402.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
 _REQUIREMENTS = ["requirements.txt", "requirements-dev.txt"]
@@ -139,3 +142,11 @@ class TestAdversarial:
     def test_virtualenv_pin_in_via_comment_does_not_count(self):
         text = "pre-commit==4.0.0\n    #   virtualenv==21.14.13\nvirtualenv==21.14.12\n"
         assert _pin_in(text, "virtualenv") == "21.14.12"
+
+    def test_virtualenv_missing_pin_is_reported(self, tmp_path, monkeypatch):
+        # Only a lookalike, no real pin: the floor test must report it missing, not pass.
+        (tmp_path / "requirements-dev.txt").write_text("virtualenv-clone==21.14.13\n")
+        assert _pin_in("virtualenv-clone==21.14.13\n", "virtualenv") is None
+        monkeypatch.setattr(sys.modules[__name__], "_ROOT", tmp_path)
+        with pytest.raises(AssertionError, match="virtualenv not pinned in requirements-dev.txt"):
+            TestPins().test_virtualenv_at_fixed_version()
