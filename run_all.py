@@ -35,7 +35,7 @@ load_dotenv(_ROOT / ".env")
 sys.path.insert(0, str(_ROOT))
 
 from execution.market_calendar import closed_reason  # noqa: E402
-from factors.score_date import resolve_score_date  # noqa: E402
+from factors.score_date import resolve_score_date, run_date  # noqa: E402
 
 _PYTHON = sys.executable
 
@@ -97,6 +97,29 @@ def _market_closed(score_date: str, ignore_calendar: bool) -> bool:
     return False
 
 
+def _historical_refused(score_date: str, run_day: str, no_execution: bool) -> bool:
+    """True when a score date other than the run date would reach Book sync or Layer 6.
+
+    Book sync writes today's broker book and NAV under the score date, and Layer 6 trades
+    against it, so a backfill date (scoring.score_date) is allowed only with --no-execution.
+    """
+    if score_date == run_day:
+        return False
+    if no_execution:
+        print(
+            f"Score date {score_date} is not the run date {run_day}: historical run, "
+            "Book sync and Layer 6 are not run (--no-execution)"
+        )
+        return False
+    print(
+        f"{RED}ERROR: score date {score_date} is not the run date {run_day} "
+        "(scoring.score_date in config.yaml): Book sync would store today's broker book and "
+        "NAV under that date and Layer 6 would trade against it. Nothing was run; use "
+        f"--no-execution for a historical run, or set scoring.score_date to null.{RESET}"
+    )
+    return True
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Meridian Capital Partners — full pipeline")
     p.add_argument("--no-filings", action="store_true", help="Skip SEC filings (Layer 1)")
@@ -124,8 +147,14 @@ def main() -> None:
 
     # One score date for the whole run: the calendar check and every layer that scores a date
     # use it, so a run that passes local midnight cannot check one day and score the next.
-    score_date = resolve_score_date(None, _load_config().get("scoring") or {})
+    # The run date is read once, so crossing midnight never makes today's date "historical".
+    run_day = run_date()
+    score_date = resolve_score_date(None, _load_config().get("scoring") or {}, today=run_day)
     date_arg = ["--date", score_date]
+    if _historical_refused(score_date, run_day, args.no_execution):
+        _summary(["Score date check"], t_start)
+    # Belt and braces: Book sync and Layer 6 only ever run for the run date.
+    no_broker = args.no_execution or score_date != run_day
     if _market_closed(score_date, args.ignore_market_calendar):
         return
 
@@ -177,7 +206,7 @@ def main() -> None:
     # Book sync — positions from Alpaca, the book of record (also in --whatif)
     # ------------------------------------------------------------------
     sync_cmd = [_PYTHON, "run_execution.py", "--sync", *date_arg]
-    synced = run("Book sync", sync_cmd, skip=args.no_execution)
+    synced = run("Book sync", sync_cmd, skip=no_broker)
     if not synced and not args.whatif:
         _summary(failures, t_start)  # never rebalance against a stale book
         return
@@ -214,7 +243,7 @@ def main() -> None:
         l6_cmd.append("--dry-run")
     if args.whatif:
         l6_cmd = [_PYTHON, "run_execution.py", "--status", *date_arg]
-    run("Layer 6 — Execution", l6_cmd, skip=args.no_execution)
+    run("Layer 6 — Execution", l6_cmd, skip=no_broker)
 
     # ------------------------------------------------------------------
     # Layer 7 — Reporting

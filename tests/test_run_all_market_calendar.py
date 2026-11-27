@@ -54,6 +54,8 @@ def _run(monkeypatch, score_date, alpaca, argv=(), cmds=None):
 
     monkeypatch.setattr(run_all, "_run", fake_run)
     monkeypatch.setattr(run_all, "_load_config", lambda: {"scoring": {"score_date": score_date}})
+    if score_date is not None:  # the fixed score date is "today" here (historical: own tests)
+        monkeypatch.setattr(run_all, "run_date", lambda: score_date)
     monkeypatch.setattr(market_calendar, "get_client", alpaca)
     monkeypatch.setattr("sys.argv", ["run_all.py", "--no-filings", "--no-13f", *argv])
     try:

@@ -258,3 +258,13 @@ picked up, give it a spec in `docs/specs/` and remove it from this list.
   composite >= 70, a short while <= 30); held-name prices exist since packet 63. Layer 3 gives
   NEUTRAL names no side-band `combined_score`, so the rule must use `composite_score`, and the
   replay should count how many band exits would stay inside the wider band before choosing.
+
+## Book sync against a past date from the CLI
+
+- **Raised:** 2026-11-27, packet 68 review.
+- **Problem:** `run_execution.py --sync --date <past>` (and `--execute --date <past>`) run by
+  hand still call `sync_book` with that date, which replaces that date's `portfolio_history`
+  snapshot with today's broker book and overwrites its `portfolio_nav`. Packet 68 guards only
+  `run_all.py`.
+- **Fix:** refuse `--sync` for a date other than today in `run_execution.py` (or make the
+  snapshot date always today), keeping `--execute --date` for the packet 62 execute button.

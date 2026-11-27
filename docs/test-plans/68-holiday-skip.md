@@ -12,6 +12,9 @@ Path: `docs/test-plans/68-holiday-skip.md`
   Review fix: resolves the score date once and passes it with `--date` to Layers 2-6 and
   Book sync.
 - `docs/run_all.md`: skip behaviour and the flag.
+- Review fix 2: `factors/score_date.py` `run_date()` (one clock read per run);
+  `run_all.py` refuses a score date other than the run date unless `--no-execution`, and
+  never runs Book sync or Layer 6 for it. New `tests/test_run_all_historical_date.py`.
 - Tests: `tests/test_market_calendar.py`, `tests/test_score_date.py`,
   `tests/test_run_all_market_calendar.py`; `tests/test_run_all.py` gets an autouse fixture
   that keeps the check offline (every day open).
@@ -56,6 +59,19 @@ none touches an external network or a real database.
   - `test_every_dated_layer_gets_the_one_score_date`: Layers 2-6 and Book sync get the same
     `--date`; Layers 1 and 7 get none
   - `test_whatif_status_gets_the_score_date`, `test_override_passes_the_same_date`
+- AC12: `test_run_all_historical_date.py` (real `run_all` command building; the broker steps
+  feed a fake `sync_book` with the `--date` that `run_execution.py` would use):
+  - `test_historical_date_refused_before_any_layer[...]`: `scoring.score_date` 2026-11-20,
+    run date 2026-11-27, with no flags, `--whatif`, `--dry-run`, `--ignore-market-calendar`:
+    exit 1, ERROR line, "Pipeline failed at: Score date check", no layer run, `sync_book`
+    and execute never called
+  - `test_future_date_refused`
+  - `test_historical_no_execution_runs_analysis_only`: Layers 1-5 and 7 run, no Book sync or
+    Layer 6, note printed; `test_historical_layers_get_the_historical_date`
+  - `test_run_date_is_synced_and_executed[None|2026-11-27]`: the normal path still syncs and
+    executes the run date
+  - `test_midnight_crossing_is_not_historical`: clock 11-27 then 11-28; one clock read, sync
+    and execute get 11-27
 
 ## Edge cases
 - From spec:
@@ -76,6 +92,11 @@ none touches an external network or a real database.
     `test_default_factory_is_broker_get_client`
 
 ## Notes
+- Review fix 2 regression check: against 8d6cf3d, 7 of the 10 AC12 tests fail; in each
+  refusal case the fake `sync_book` received `2026-11-20`, the bug as reported. The 3 normal
+  run-date / midnight cases pass on both, as intended.
+- The stalled-socket timeout tests cover an accepted connection that never answers; requests'
+  timeouts do not bound DNS resolution or a trickling response, and no test claims they do.
 - Flaky risks: none; dates are fixed through config or a fake `date` class.
 - Determinism considerations: the existing `tests/test_run_all.py` would otherwise depend on
   the weekday the suite runs and on the network; its autouse fixture stubs the check.

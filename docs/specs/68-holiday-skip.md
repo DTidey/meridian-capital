@@ -2,7 +2,7 @@
 
 **Spec file:** `docs/specs/68-holiday-skip.md`
 **Spec slug:** holiday-skip
-**Status:** Implemented (2026-11-27; review fixes 2026-11-27)
+**Status:** Implemented (2026-11-27; review fixes 1 and 2 2026-11-27)
 **Owner:** DTidey
 **Date:** 2026-11-27
 
@@ -77,8 +77,13 @@ This uses the SDK's private `_session` attribute; if a future alpaca-py drops it
 raises `CalendarUnavailable` before any call (fail open with a WARNING every night, visible,
 never a hang). Rejected: a thread with `join(timeout)` (leaves a blocked thread, no socket
 timeout); patching `requests.Session.request` globally (affects every HTTP call in the
-process). A 429 rate limit makes the SDK retry 3 times, 3 s apart, so the worst case stays
-bounded (about a minute).
+process).
+
+These are requests' per-socket timeouts: connect is the TCP connect, read is the longest
+wait between bytes. They do not bound DNS resolution or a response that keeps trickling bytes,
+and a 429 rate limit makes the SDK retry 3 times, 3 s apart; so they stop the reproduced
+failure (an accepted connection that never answers) but are not an overall deadline. An
+overall deadline is out of scope for this packet.
 
 ### One score date per run (decision, review fix)
 The check and the layers must use the same date even if the run crosses local midnight (the
@@ -90,6 +95,28 @@ Friday full run with filings and 13-F can run for hours). `run_all.py` calls
 `--ignore-market-calendar` path passes the same date. Side effect: under `run_all.py`, a
 per-layer `analysis.score_date` in `config.yaml` no longer overrides `scoring.score_date`
 (both are null today); a layer run on its own still reads its own key.
+
+### Never sync or execute a historical score date (decision, review fix 2)
+`execution/book_sync.py` `sync_book(score_date)` replaces that date's `portfolio_history`
+snapshot with today's broker positions and overwrites that date's `portfolio_nav` row, and
+Book sync runs under `--whatif` too; Layer 6 trades against the date's approvals. Before this
+packet `run_execution.py` always used `date.today()`; passing `--date` (AC11) would let a
+backfill `scoring.score_date` (e.g. `2026-11-20`) reach both. So `run_all.py` reads the run
+date once at start (`factors.score_date.run_date`) and resolves the score date from that same
+read. If the score date differs from the run date (past or future):
+- without `--no-execution` (including `--whatif`, `--dry-run`, `--ignore-market-calendar`):
+  print `ERROR: score date <d> is not the run date <today> ...`, report the run as failed at
+  "Score date check" and exit 1 before the calendar check and before any layer;
+- with `--no-execution`: print `Score date <d> is not the run date <today>: historical run,
+  Book sync and Layer 6 are not run (--no-execution)` and run the other layers for that date.
+  Book sync and Layer 6 are also skipped by the date test itself, not only by the flag.
+
+Why stop rather than silently drop sync/execution: a historical run is a deliberate,
+hand-started backfill (`docs/run_all.md` has no other backfill story, and the cron never sets
+`scoring.score_date`). A date left in `config.yaml` by mistake would otherwise turn every
+nightly run into a quiet no-trade run that reports success; a hard stop is visible at the
+06:30 check. `--no-execution` keeps the analysis-only backfill possible. The run date is a
+single clock read, so a run that crosses midnight is never "historical".
 
 ### Fail open (decision)
 The calendar must not become a new single point of failure. If the lookup fails for any
@@ -151,10 +178,9 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - AC3: On a normal trading day, `run_all.py` runs the pipeline as before.
 - AC4: On an early-close half-day (calendar entry with a 13:00 ET close), `run_all.py` runs the
   pipeline as before.
-- AC5: If the calendar lookup fails (client cannot be built, the call raises or does not
-  answer within the timeout, or the response is unusable), `run_all.py` prints a line
-  starting `WARNING: market calendar check failed` and runs the pipeline; it never skips and
-  never blocks.
+- AC5: If the calendar lookup fails (client cannot be built, the call raises or hits a
+  socket timeout, or the response is unusable), `run_all.py` prints a line starting
+  `WARNING: market calendar check failed` and runs the pipeline; it never skips.
 - AC6: `--ignore-market-calendar` runs the pipeline on a closed day without calling the
   calendar.
 - AC7: `run_all.py` and `run_scoring.py` derive the score date with the same function,
@@ -163,12 +189,19 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
 - AC8: The Layer 2 SPY freshness guard is unchanged: on an open day with no SPY bar for the
   score date, Layer 2 still stops with exit 1.
 - AC9: `docs/run_all.md` documents the skip and the `--ignore-market-calendar` flag.
-- AC10: The calendar request has finite connect and read timeouts (`CALENDAR_TIMEOUT`, 5 s /
+- AC10: The calendar request has socket connect / read timeouts (`CALENDAR_TIMEOUT`, 5 s /
   10 s), applied through a session on the lookup's own client only; a calendar that accepts
-  the connection and never answers raises `CalendarUnavailable` within the timeout.
+  the connection and never answers raises `CalendarUnavailable` once the read timeout
+  passes. (Not an overall deadline: DNS resolution and a trickling response are not bounded.)
 - AC11: `run_all.py` resolves the score date once and passes that exact date with `--date` to
   Layers 2-6 and Book sync (also with `--whatif` and `--ignore-market-calendar`); if the run
   crosses local midnight after the check, Layer 2 still scores the checked date.
+- AC12: If the score date differs from the run date (read once at start), `run_all.py` never
+  runs Book sync or Layer 6 for it: without `--no-execution` (any other flags, including
+  `--whatif`) it prints an `ERROR: score date ... is not the run date ...` line and exits 1
+  before any layer; with `--no-execution` it runs the other layers for that date. A score date
+  equal to the run date (null config, or a run that crosses midnight) syncs and executes as
+  before.
 
 ## Security considerations
 - Auth/authz impact: none. Uses the existing Alpaca keys through `get_client`; the calendar
@@ -185,24 +218,29 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   (none on weekends or with the override). A failure or timeout falls back to running.
 - Dependency or supply-chain impact: none; alpaca-py, PyYAML and python-dotenv are existing
   dependencies.
-- Network or external service impact (review fix): the calendar request is bounded by
-  5 s connect / 10 s read timeouts, so an unresponsive Alpaca cannot hold the nightly run.
+- Network or external service impact (review fix): the calendar request has socket connect /
+  read timeouts (5 s / 10 s), so an Alpaca that accepts the connection and never answers
+  cannot hold the nightly run. They do not bound DNS resolution or a trickling response.
+- Data integrity (review fix 2): a historical or future score date never reaches Book sync
+  (which rewrites `portfolio_history` and `portfolio_nav` for that date) or Layer 6.
 - Security notes for reviewers/testers: the fail-open path is the safety property: confirm
-  no exception from the check can lead to a skip, and no stall can block the run.
+  no exception from the check can lead to a skip; and that no path passes a date other than
+  the run date to `run_execution.py`.
 
 ## Edge cases
 - Special closures (e.g. national days of mourning): not in any fixed list; Alpaca omits them,
   so they are reported as `holiday`.
-- `scoring.score_date` set in `config.yaml` (backfill): the check uses that date, as Layer 2
-  does.
+- `scoring.score_date` set in `config.yaml` (backfill): refused unless `--no-execution`
+  (AC12); then the check uses that date, as Layer 2 does.
+- `scoring.score_date` set to today's date: equals the run date, runs normally.
 - Missing Alpaca keys on a weekday: fail open with a warning (Layer 6 would fail later anyway).
 - Calendar response with entries for other dates only: unusable, fail open.
 - `--whatif` or `--tickers` runs on a closed day: skipped too (Layer 2 would fail anyway);
   `--ignore-market-calendar` forces them.
 - Calendar accepts the connection and never answers: read timeout, fail open (AC10, AC5).
 - Run crosses local midnight (Friday full run): Layers 2-6 still get the checked date (AC11).
-- Malformed `scoring.score_date`: the check fails open and the same string is passed to the
-  layers, which fail as they did before this packet.
+- Malformed `scoring.score_date`: it differs from the run date, so it is refused (AC12)
+  unless `--no-execution`; then the check fails open and the layers fail on it as before.
 - `config.yaml` unreadable: `run_all.py` now stops before Layer 1 with a traceback (exit 1);
   every layer would fail on it anyway. Never a skip.
 
@@ -225,6 +263,7 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   `test_dedicated_session_carries_the_timeout`, `test_session_passes_timeout_to_requests`,
   `test_real_sdk_client_uses_the_timeout`, `test_stalled_calendar_times_out`,
   `test_client_without_session_is_unavailable`
+- AC12 -> `test_run_all_historical_date.py` (all tests)
 - AC11 -> `test_run_all_market_calendar.py::test_midnight_crossing_layer2_gets_checked_date`,
   `test_every_dated_layer_gets_the_one_score_date`, `test_whatif_status_gets_the_score_date`,
   `test_override_passes_the_same_date`
@@ -242,3 +281,8 @@ python run_all.py --no-filings --no-13f --ignore-market-calendar
   client, not a global patch or a watchdog thread; (5, 10) s is ample for one small GET.
 - 2026-11-27 (review): one score date per run, passed with `--date` to every dated layer, so
   the check and the scoring can never disagree across midnight.
+- 2026-11-27 (review 2): a score date other than the run date stops the run unless
+  `--no-execution`; Book sync and Layer 6 must never see a historical date. Stop, not skip,
+  so a forgotten backfill date fails visibly instead of silently stopping trading.
+- 2026-11-27 (review 2): timeouts described as socket connect / read timeouts, not an overall
+  bound; no overall deadline in this packet.

@@ -41,6 +41,29 @@
   only the check, so an unreadable `config.yaml` stops `run_all.py` before Layer 1 (exit 1)
   instead of warning and then failing in every layer. Never a skip.
 
+## Packet 68 review fixes 2 (Codex on 8d6cf3d)
+
+- **Historical score date reached Book sync.** Passing `--date` to every dated layer (review
+  fix 1) also passed a backfill `scoring.score_date` to `run_execution.py --sync`, and
+  `sync_book` replaces that date's `portfolio_history` snapshot with today's broker book and
+  overwrites its `portfolio_nav`; Book sync runs under `--whatif` too, and Layer 6 would trade
+  against that date. Before the packet `run_execution.py` always used `date.today()`.
+- **Stop, not skip.** A score date different from the run date exits 1 before any layer unless
+  `--no-execution`. Silently dropping sync/execution would let a date forgotten in
+  `config.yaml` turn every nightly run into a no-trade run reported as success; a failure at
+  "Score date check" shows up at the 06:30 check. `--no-execution` keeps the analysis-only
+  backfill. Future dates are refused the same way.
+- **One clock read.** `factors.score_date.run_date()` is read once and passed to
+  `resolve_score_date(today=...)`, so with a null config the score date equals the run date
+  by construction, and a run that crosses midnight is never seen as historical.
+- **Defence in depth.** Book sync and Layer 6 are skipped whenever the dates differ, not only
+  through `--no-execution`.
+- **Not covered:** running `run_execution.py --sync --date <past>` by hand; added to
+  `docs/backlog.md`.
+- **Timeout wording.** requests' connect/read timeouts are per socket operation: they do not
+  bound DNS resolution or a trickling response. Docs now say "socket connect/read timeouts
+  (5 s / 10 s)" with that caveat; no overall deadline in this packet.
+
 ## Packet 69: virtualenv PYSEC-2026-4402
 
 - Pinned with `pip-compile --upgrade-package virtualenv==21.14.13` on `requirements-dev.in`

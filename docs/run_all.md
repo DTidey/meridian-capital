@@ -23,10 +23,16 @@ python run_all.py --no-filings --no-13f --stress --dry-run
 #   Market closed on 2026-11-26 (holiday): skipping the nightly run
 # Early-close half-days are trading days and run normally. If the calendar lookup fails it
 # prints "WARNING: market calendar check failed for <date> (<error>): running the pipeline"
-# and runs; the Layer 2 SPY freshness guard still stops a real holiday. The calendar call
-# times out after 5 s (connect) / 10 s (read), so it cannot hold the run.
+# and runs; the Layer 2 SPY freshness guard still stops a real holiday. The calendar call has
+# socket timeouts of 5 s (connect) / 10 s (read); they do not bound DNS lookup or a response
+# that keeps trickling.
 # The score date is resolved once and passed with --date to Layers 2-6 and Book sync, so a run
 # that passes midnight scores the date that was checked.
+
+# Backfill: if scoring.score_date in config.yaml is not today's date, run_all stops before any
+# layer (ERROR, exit 1), because Book sync would store today's broker book and NAV under that
+# date and Layer 6 would trade against it. A historical run must skip the broker steps:
+python run_all.py --no-filings --no-13f --no-execution
 
 # Force a run on a day the calendar says is closed
 python run_all.py --no-filings --no-13f --ignore-market-calendar
